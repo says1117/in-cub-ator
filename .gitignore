@@ -62,3 +62,6 @@ coverage/
 # Large demo media (share through a drive instead)
 demo/backup-video/*
 !demo/backup-video/.gitkeep
+
+# Phase 4 test results (local runs)
+phase4_results_*.txt

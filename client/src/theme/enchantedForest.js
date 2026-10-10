@@ -1730,6 +1730,142 @@ function placeHeroOnPath(scene) {
   if (scene.shadow) scene.shadow.setPosition(hero.x, FEET_Y - 2);
 }
 
+// ---- footprints: each time a foot lands it presses a print into the path and kicks up dust.
+// The path scrolls away behind him, so the prints form a trail that fades out.
+
+function makePrintTexture(textures) {
+  if (textures.exists("efPrint")) return;
+  const { canvas, ctx } = makeCanvas(24, 16);
+  const draw = (dx, dy, color) => {
+    ctx.fillStyle = color;
+    const e = (x, y, rx, ry, rot = 0) => {
+      ctx.beginPath();
+      ctx.ellipse(x + dx, y + dy, rx, ry, rot, 0, TAU);
+      ctx.fill();
+    };
+    e(7, 8, 5.4, 4.4);             // heel
+    e(16, 3.2, 3.6, 2, 0.35);      // upper toe
+    e(18.6, 8, 4, 2.2);            // middle toe
+    e(16, 12.8, 3.6, 2, -0.35);    // lower toe
+  };
+  draw(1.2, 1.2, "rgba(255,240,205,0.5)");  // soft pale rim on the lower right
+  draw(0, 0, "rgba(240,186,96,0.8)");       // the dent, a warm firefly gold
+  draw(-0.4, -0.6, "rgba(176,104,44,0.6)"); // deepest part
+  setTexture(textures, "efPrint", canvas);
+}
+
+// One step of the walk is half a cycle of sin(time * 0.012), about a quarter of a second.
+const STEP_SECONDS = Math.PI / 0.012 / 1000;
+
+// Which print goes with which foot. false: the left foot makes the print on the left.
+// true: the left foot makes the print on the right (and the right foot the one on the left).
+const SWAP_FEET = true;
+
+function addFootprints(scene) {
+  const hero = scene.player;
+  if (!hero) return;
+  makePrintTexture(scene.textures);
+  const rand = Phaser.Math.FloatBetween;
+  const prints = [];
+  const puffs = [];
+  let lastStep = 0;
+
+  const stepOn = (landing) => {
+    const side = SWAP_FEET ? -landing : landing;
+    // the left print sits a little behind, the right print a little in front, so the trail zigzags
+    // the right print sits further forward: it is made a step after the left one, by which time
+    // the path has already slid away, so it needs a head start to line up with the foot
+    const x = hero.x + (side > 0 ? 17 : -7);
+    const y = scene.basePlayerY - 2 + side * 3.2;
+
+    const glowSprite = scene.add.image(x, y, "efGlow").setDepth(5.85).setBlendMode(Phaser.BlendModes.ADD);
+    glowSprite.setTint(0xfff3d6).setScale(0.55, 0.26).setAlpha(0.3);
+    const print = scene.add.image(x, y, "efPrint").setOrigin(0.5, 0.5).setDepth(5.8);
+    print.setScale(1.2, 0.72).setAlpha(0);
+    prints.push({ sprite: print, glow: glowSprite, age: 0 });
+
+    for (let i = 0; i < 4; i++) {
+      const puff = scene.add.image(x + rand(-5, 5), y - 1, "efGlow").setDepth(9.4).setTint(0xd2bfe9);
+      puff.setScale(rand(0.1, 0.2)).setAlpha(rand(0.3, 0.5));
+      puffs.push({
+        sprite: puff, age: 0, life: rand(0.55, 0.95),
+        vx: rand(-34, -8), vy: rand(-22, -8), grow: rand(0.12, 0.22),
+      });
+    }
+    // a couple of loose petals are kicked up too
+    for (let i = 0; i < 2; i++) {
+      const bit = scene.add.image(x, y - 2, "efPetal").setDepth(9.4).setTint(i ? 0xbb9df7 : 0xf1b4f4);
+      bit.setScale(rand(0.5, 0.8));
+      puffs.push({ sprite: bit, age: 0, life: rand(0.5, 0.8), vx: rand(-40, 10), vy: rand(-45, -22), grow: 0, spin: rand(-8, 8), gravity: 120 });
+    }
+    // two tiny white motes drift up from the print
+    for (let i = 0; i < 2; i++) {
+      const mote = scene.add.image(x + rand(-6, 6), y - 2, "efGlow").setDepth(9.5).setBlendMode(Phaser.BlendModes.ADD);
+      mote.setTint(0xfff6e0).setScale(rand(0.05, 0.08)).setAlpha(0.5);
+      puffs.push({ sprite: mote, age: 0, life: rand(0.8, 1.3), vx: rand(-14, -4), vy: rand(-26, -14), grow: 0, gravity: -2, peak: 0.55 });
+    }
+  };
+
+  const onUpdate = (time, delta) => {
+    const dt = Math.min(delta / 1000, 0.05);
+
+    // a foot lands each time the step wave crosses zero
+    if (scene.walking) {
+      const wave = Math.sin(time * 0.012);
+      const sign = wave > 0 ? 1 : -1;
+      if (lastStep !== 0 && sign !== lastStep) stepOn(lastStep > 0 ? -1 : 1);
+      lastStep = sign;
+    } else {
+      lastStep = 0;
+    }
+
+    // prints move with the path, so they stay put while the dragon stands still
+    const scroll = scene.walking ? (scene.speed || 85) * dt : 0;
+    for (let i = prints.length - 1; i >= 0; i--) {
+      const p = prints[i];
+      p.sprite.x -= scroll;
+      p.age += dt;
+      p.glow.x -= scroll;
+      // a print stays for two steps, then fades out over the next two
+      const holdFor = STEP_SECONDS * 2;
+      const fadeOver = STEP_SECONDS * 2;
+      const fade = p.age < holdFor ? 0.85 : Math.max(0, 0.85 * (1 - (p.age - holdFor) / fadeOver));
+      // the foot presses in: a quick stamp from a bit larger and lighter down to the final print
+      const stamp = Math.min(1, p.age / 0.09);
+      p.sprite.setScale(1.2 - 0.3 * stamp, 0.72 - 0.22 * stamp);
+      p.sprite.setAlpha(fade * stamp);
+      // a faint white flash on impact that settles to a barely-there shimmer
+      const flash = Math.max(0, 1 - p.age / 0.55);
+      p.glow.setAlpha(flash * flash * 0.34 + (fade / 0.85) * 0.07);
+      p.glow.setScale(0.55 + flash * 0.3, 0.26 + flash * 0.1);
+      if (fade <= 0 || p.sprite.x < -30) {
+        p.sprite.destroy();
+        p.glow.destroy();
+        prints.splice(i, 1);
+      }
+    }
+
+    for (let i = puffs.length - 1; i >= 0; i--) {
+      const q = puffs[i];
+      q.age += dt;
+      const k = q.age / q.life;
+      if (k >= 1) {
+        q.sprite.destroy();
+        puffs.splice(i, 1);
+        continue;
+      }
+      q.vy += (q.gravity || -6) * dt;
+      q.sprite.x += (q.vx - scroll / dt * 0) * dt - scroll;
+      q.sprite.y += q.vy * dt;
+      if (q.spin) q.sprite.rotation += q.spin * dt;
+      if (q.grow) q.sprite.setScale(q.sprite.scaleX + q.grow * dt);
+      q.sprite.setAlpha((1 - k) * (q.peak || (q.gravity ? 0.9 : 0.5)));
+    }
+  };
+  scene.events.on("update", onUpdate);
+  scene.events.once("shutdown", () => scene.events.off("update", onUpdate));
+}
+
 export function addForestAmbience(scene) {
   const rand = Phaser.Math.FloatBetween;
   dressDecorations(scene);
@@ -1747,6 +1883,7 @@ export function addForestAmbience(scene) {
   }
 
   placeHeroOnPath(scene);
+  addFootprints(scene);
 
   // fireflies: most behind the dragon, a few in front
   const colors = [0xffe98a, 0xfff3b8, 0xffd76a, 0x9ff4ff, 0xd9b8ff];

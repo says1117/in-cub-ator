@@ -381,5 +381,294 @@ class SimTests(unittest.TestCase):
         self.assertEqual(S.soil_pct(sim.raw()), 100.0)
 
 
+class SkillTests(unittest.TestCase):
+    def fight(self, skill, **stats):
+        creature = B.Stats(name="T", hp=stats.get("hp", 30), atk=stats.get("atk", 8), skill=skill)
+        return B.start(creature, B.Stats(name="boss", hp=40, atk=6, skill=""))
+
+    def test_thorn_burst_always_hits_but_the_boss_can_hit_back(self):
+        b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")  # guard would block a plain attack
+        self.assertEqual(b.boss_hp, 40 - 8)
+        self.assertEqual(b.creature_hp, 30)
+        b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "attack")
+        self.assertEqual((b.boss_hp, b.creature_hp), (32, 24))
+
+    def test_skill_needs_recharging(self):
+        b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")
+        self.assertEqual(b.skill_ready_in, C.SKILL_COOLDOWN_TURNS)
+        again = B.resolve_turn(b, B.SKILL, "guard")  # not ready: becomes a plain attack
+        self.assertEqual(again.last_move["creature"], "attack")
+        self.assertNotIn("skill", again.last_move)
+        self.assertEqual(again.skill_ready_in, C.SKILL_COOLDOWN_TURNS - 1)
+
+    def test_skill_is_ready_again_after_the_wait(self):
+        b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")
+        for _ in range(C.SKILL_COOLDOWN_TURNS):
+            b = B.resolve_turn(b, "guard", "guard")
+        self.assertEqual(b.skill_ready_in, 0)
+
+    def test_bark_shield_blocks_everything(self):
+        b = self.fight("bark_shield")
+        b = B.resolve_turn(b, B.SKILL, "attack")
+        self.assertEqual(b.creature_hp, 30)
+        self.assertEqual(b.boss_hp, 40 - 4)
+
+    def test_photosynthesis_heals_but_does_not_protect(self):
+        b = self.fight("photosynthesis")
+        b = B.resolve_turn(b, "special", "attack")   # the plant takes a hit first
+        hurt = b.creature_hp
+        self.assertLess(hurt, 30)
+        b = B.resolve_turn(b, B.SKILL, "attack")      # heal, but the attacking boss still hits
+        self.assertEqual(b.last_move["healed"], min(8, 30 - hurt))
+        self.assertEqual(b.creature_hp, hurt + b.last_move["healed"] - 6)
+
+    def test_no_skill_means_skill_is_a_plain_attack(self):
+        b = B.resolve_turn(self.fight(""), B.SKILL, "special")
+        self.assertEqual(b.last_move["creature"], "attack")
+        self.assertEqual(b.boss_hp, 40 - 8)
+
+    def test_wilted_plant_hits_weaker_but_never_zero(self):
+        weak = B.weakened(B.Stats(atk=8), C.WILTED_ATK_FACTOR)
+        self.assertLess(weak.atk, 8)
+        self.assertGreaterEqual(B.weakened(B.Stats(atk=1), 0.1).atk, 1)
+
+    def test_every_tier_is_winnable_even_with_no_skill(self):
+        for tier in (1, 2, 3):
+            wins = 0
+            for seed in range(3000):
+                rng = random.Random(seed)
+                fight = B.start(B.Stats(skill=""), B.boss_for_tier(tier))
+                while not B.winner(fight):
+                    fight = B.play_turn(fight, rng)
+                wins += B.winner(fight) == "creature"
+            self.assertGreaterEqual(wins / 3000, 0.40, f"tier {tier}")
+
+    def test_creatures_json_loads_and_ignores_the_comment(self):
+        creatures = B.load_creatures("creatures.json")
+        self.assertIn("04:A1:B2:C3", creatures)
+        self.assertTrue(all(c.skill in C.SKILLS for c in creatures.values()))
+
+
+class ManualBattleTests(unittest.TestCase):
+    def into_battle(self, manual=True, uid="04:A1:B2:C3", seed=3):
+        creatures = B.load_creatures("creatures.json")
+        e = GameEngine(creatures=creatures, rng=random.Random(seed))
+        e.manual = manual
+        e.on_pad("A", uid)
+        e.on_demo_boss(0.0, "A")
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        return e, C.BOSS_INTRO_SECONDS + 1.0
+
+    def test_battle_waits_for_the_player(self):
+        e, t = self.into_battle()
+        self.assertEqual(e.game.mode, S.BATTLE)
+        for i in range(8):
+            e.tick(t + i * 0.5)
+        self.assertEqual(e.battle.turn, 0)  # nothing happens until a move or the timeout
+
+    def test_a_move_plays_one_turn(self):
+        e, t = self.into_battle()
+        e.on_player_move("attack", t)
+        self.assertEqual(e.battle.turn, 1)
+        self.assertEqual(e.battle.last_move["creature"], "attack")
+
+    def test_moves_are_paced_and_checked(self):
+        e, t = self.into_battle()
+        e.on_player_move("attack", t)
+        e.on_player_move("attack", t + 0.1)       # too soon, the client is still showing the turn
+        self.assertEqual(e.battle.turn, 1)
+        e.on_player_move("dance", t + 5)          # not a move
+        self.assertEqual(e.battle.turn, 1)
+        e.on_player_move("guard", t + 5)
+        self.assertEqual(e.battle.turn, 2)
+
+    def test_game_picks_when_nobody_does(self):
+        e, t = self.into_battle()
+        e.tick(t + C.PLAYER_MOVE_TIMEOUT_SECONDS + 1.0)
+        self.assertEqual(e.battle.turn, 1)
+
+    def test_moves_outside_a_battle_do_nothing(self):
+        e = GameEngine()
+        e.manual = True
+        self.assertEqual(e.on_player_move("attack", 1.0), [])
+        self.assertIsNone(e.battle)
+
+    def test_not_manual_means_the_game_plays_itself(self):
+        e, t = self.into_battle(manual=False)
+        self.assertEqual(e.on_player_move("attack", t), [])
+        e.tick(t + C.BATTLE_TURN_SECONDS + 0.1)
+        self.assertGreaterEqual(e.battle.turn, 1)
+
+    def test_pad_picks_the_creature_and_its_skill(self):
+        e, _ = self.into_battle(uid="04:D4:E5:F6")
+        self.assertEqual(e.battle.creature.name, "Mossling")
+        snap = e.snapshot()["battle"]
+        self.assertEqual(snap["skill"]["name"], "Photosynthesis")
+        self.assertTrue(snap["skill"]["ready"])
+
+    def test_unknown_tag_uses_the_defaults(self):
+        e, _ = self.into_battle(uid="not-a-known-tag")
+        self.assertEqual(e.battle.creature.name, "Sprout")
+
+    def test_skill_shows_its_recharge_in_the_snapshot(self):
+        e, t = self.into_battle()
+        e.on_player_move("skill", t)
+        snap = e.snapshot()["battle"]
+        self.assertFalse(snap["skill"]["ready"])
+        self.assertEqual(snap["skill"]["ready_in"], C.SKILL_COOLDOWN_TURNS)
+
+    def test_a_full_manual_fight_ends_and_can_pay_out(self):
+        paid = False
+        for seed in range(30):
+            e, t = self.into_battle(seed=seed)
+            for _ in range(60):
+                t += C.BATTLE_TURN_SECONDS + 0.1
+                cmds = e.on_player_move("skill" if e.battle and e.battle.skill_ready_in == 0 else "attack", t) \
+                    if e.game.mode == S.BATTLE else []
+                if cmds:
+                    paid = True
+                    self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
+                if e.game.mode != S.BATTLE:
+                    break
+            self.assertNotEqual(e.game.mode, S.BATTLE)
+        self.assertTrue(paid)
+
+
+class HealthConsequenceTests(unittest.TestCase):
+    def test_condition_bands(self):
+        e = GameEngine()
+        for health, name in [(100, "healthy"), (59, "weary"), (29, "wilting"), (0, "wilted")]:
+            e.health = health
+            self.assertEqual(e.condition(), name)
+
+    def test_wilted_plant_fights_with_less_attack(self):
+        for health, weaker in [(100.0, False), (0.0, True)]:
+            e = GameEngine()
+            e.health = health
+            e.soil_pct = {"A": 10.0, "B": 10.0}   # still dry, so health does not recover
+            e.on_demo_boss(0.0, "A")
+            e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+            self.assertEqual(e.battle.creature.atk < C.DEFAULT_CREATURE_ATK, weaker)
+
+    def test_a_win_perks_the_plant_up(self):
+        e = GameEngine(rng=random.Random(1))
+        e.health = 10.0
+        e.on_demo_boss(0.0, "A")
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        e.battle = replace_boss_hp(e.battle, 1)
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1 + C.BATTLE_TURN_SECONDS * 40)
+        # a win lifts health by the bonus on top of any fading, so it can never stay at the floor
+        self.assertGreater(e.health, 10.0 - 1.0)
+
+    def test_a_wilted_plant_can_still_win_and_recover(self):
+        wins = 0
+        for seed in range(40):
+            e = GameEngine(rng=random.Random(seed))
+            e.health = 0.0
+            e.on_demo_boss(0.0, "A")
+            t = C.BOSS_INTRO_SECONDS + 0.1
+            e.tick(t)
+            for _ in range(80):
+                t += C.BATTLE_TURN_SECONDS + 0.1
+                e.tick(t)
+                if e.game.mode != S.BATTLE:
+                    break
+            wins += e.game.mode == S.REWARD
+        self.assertGreater(wins, 0)
+
+
+def replace_boss_hp(battle, hp):
+    from dataclasses import replace
+    return replace(battle, boss_hp=hp)
+
+
+class StaleTimerTests(unittest.TestCase):
+    def test_silence_counts_as_offline(self):
+        e = GameEngine()
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        e.tick(C.ESP32_STALE_SECONDS - 1)
+        self.assertFalse(e.game.stale)
+        e.tick(C.ESP32_STALE_SECONDS + 1)
+        self.assertTrue(e.game.stale)
+        self.assertTrue(e.snapshot()["meters"]["stale"])
+
+    def test_a_boss_is_dropped_when_the_readings_stop(self):
+        e = GameEngine()
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        e.on_demo_boss(1.0, "A")
+        e.tick(5.0)
+        self.assertEqual(e.game.mode, S.BATTLE)
+        e.tick(C.ESP32_STALE_SECONDS + 5)
+        self.assertEqual(e.game.mode, S.WALKING)
+        self.assertIsNone(e.battle)
+
+    def test_no_pump_while_the_link_is_silent(self):
+        paid = []
+        for seed in range(25):
+            e = GameEngine(rng=random.Random(seed))
+            e.on_soil_raw("A", DRY_RAW, 0.0)
+            e.tick(C.ESP32_STALE_SECONDS + 2)            # the readings stopped
+            self.assertTrue(e.game.stale)
+            e.on_demo_boss(C.ESP32_STALE_SECONDS + 3, "A")
+            t = C.ESP32_STALE_SECONDS + 3
+            for _ in range(240):
+                t += 0.5
+                paid += e.tick(t)
+            self.assertNotEqual(e.game.mode, S.BATTLE)   # the fight did finish
+        self.assertEqual(paid, [])
+
+    def test_readings_bring_it_back(self):
+        e = GameEngine()
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        e.tick(C.ESP32_STALE_SECONDS + 5)
+        self.assertTrue(e.game.stale)
+        e.on_soil_raw("A", WET_RAW, C.ESP32_STALE_SECONDS + 6)
+        self.assertFalse(e.game.stale)
+
+    def test_never_stale_before_the_first_reading(self):
+        e = GameEngine()
+        e.tick(1000.0)
+        self.assertFalse(e.game.stale)
+
+
+class BothPlantsDryTests(unittest.TestCase):
+    def waiting_game(self, a_pct, b_pct):
+        """Both plants are dry and waiting out a cooldown that a boss of any tier cannot skip."""
+        g = S.Game(mode=S.COOLDOWN, cooldown_until={"A": 100.0, "B": 100.0}, last_tier=3, mode_until=100.0)
+        for _ in range(C.SOIL_DRY_READINGS_N + 2):
+            g = S.on_soil(g, "A", a_pct, 10.0)
+            g = S.on_soil(g, "B", b_pct, 10.0)
+        self.assertEqual(g.mode, S.COOLDOWN)  # still waiting
+        return g
+
+    def test_the_thirstier_plant_goes_first_when_the_cooldown_ends(self):
+        for a_pct, b_pct, expected in [(40.0, 10.0, "B"), (10.0, 40.0, "A")]:
+            g = self.waiting_game(a_pct, b_pct)
+            g = S.on_tick(g, 101.0)
+            g = S.on_soil(g, "A", a_pct, 101.0)   # whichever plant reports first, the drier one wins
+            self.assertEqual((g.mode, g.boss_plant), (S.BOSS, expected), (a_pct, b_pct))
+            g2 = S.on_soil(S.on_tick(self.waiting_game(a_pct, b_pct), 101.0), "B", b_pct, 101.0)
+            self.assertEqual(g2.boss_plant, expected)
+
+    def test_the_boss_tier_follows_the_plant_it_picked(self):
+        g = S.on_soil(S.on_tick(self.waiting_game(40.0, 10.0), 101.0), "A", 40.0, 101.0)
+        self.assertEqual(g.tier, 2)
+
+    def test_one_dry_plant_still_works(self):
+        g = S.Game()
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            g = S.on_soil(g, "B", 30.0, 0)
+            g = S.on_soil(g, "A", 90.0, 0)
+        self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "B"))
+
+    def test_the_first_plant_to_get_there_gets_the_boss(self):
+        g = S.Game()
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            g = S.on_soil(g, "A", 40.0, 0)
+        for _ in range(C.SOIL_DRY_READINGS_N - 1):
+            g = S.on_soil(g, "B", 5.0, 0)
+        self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "A"))
+
+
 if __name__ == "__main__":
     unittest.main()

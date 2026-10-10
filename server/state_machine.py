@@ -22,12 +22,15 @@ class Game:
     stale: bool = False
     tier: int = 0        # strength of the active boss, set when it spawns
     last_tier: int = 0   # strength of the last boss, a harder one may skip the cooldown
+    last_pct: dict = None  # latest moisture of each plant, so the drier plant can be picked
 
     def __post_init__(self):
         if self.dry_streak is None:
             object.__setattr__(self, "dry_streak", {p: 0 for p in C.PLANTS})
         if self.cooldown_until is None:
             object.__setattr__(self, "cooldown_until", {p: 0.0 for p in C.PLANTS})
+        if self.last_pct is None:
+            object.__setattr__(self, "last_pct", {p: 100.0 for p in C.PLANTS})
 
 
 def soil_pct(raw: int) -> float:
@@ -63,16 +66,23 @@ def _to_walking(g: Game) -> Game:
 def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     streaks = dict(g.dry_streak)
     streaks[plant] = streaks[plant] + 1 if pct < C.SOIL_DRY_THRESHOLD_PCT else 0
-    g = replace(g, dry_streak=streaks)
+    seen = dict(g.last_pct)
+    seen[plant] = pct
+    g = replace(g, dry_streak=streaks, last_pct=seen)
 
     if g.mode in (WALKING, COOLDOWN):
-        tier = tier_for(pct)
-        if tier == 0:
-            g = replace(g, last_tier=0)  # moisture is fine, the next dip starts fresh
-        # A harder tier than the last boss may skip the cooldown
-        can_spawn = now >= g.cooldown_until[plant] or tier > g.last_tier
-        if tier >= 1 and streaks[plant] >= C.SOIL_DRY_READINGS_N and can_spawn:
-            return _summon(g, plant, now, C.SOURCE_SOIL, tier)
+        if all(tier_for(v) == 0 for v in seen.values()):
+            g = replace(g, last_tier=0)  # every plant is fine, the next dip starts fresh
+        # Any dry plant may call a boss. A harder tier than the last boss may skip the cooldown.
+        ready = [
+            p for p in C.PLANTS
+            if tier_for(seen[p]) >= 1
+            and streaks[p] >= C.SOIL_DRY_READINGS_N
+            and (now >= g.cooldown_until[p] or tier_for(seen[p]) > g.last_tier)
+        ]
+        if ready:
+            drier = min(ready, key=lambda p: seen[p])  # the thirstier plant goes first
+            return _summon(g, drier, now, C.SOURCE_SOIL, tier_for(seen[drier]))
     elif g.mode in (BOSS, BATTLE) and plant == g.boss_plant and g.source == C.SOURCE_SOIL:
         if pct > C.SOIL_WET_THRESHOLD_PCT:
             return _to_walking(g)

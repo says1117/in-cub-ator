@@ -24,11 +24,14 @@ class Feed:
 
     def _on_client_message(self, message):
         try:
-            action = json.loads(message).get("action")
+            data = json.loads(message)
+            action = data.get("action")
         except (ValueError, AttributeError):
             return
         if action == C.WS_ACTION_DEMO_BOSS:
             self.queue.put_nowait(("ws/" + action, ""))
+        elif action == C.WS_ACTION_MOVE:
+            self.queue.put_nowait(("ws/" + action, str(data.get("move", ""))))
 
     async def publish_if_changed(self):
         msg = json.dumps(self.engine.snapshot(), sort_keys=True)

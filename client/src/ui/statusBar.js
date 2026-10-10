@@ -15,6 +15,15 @@ const css = `
 #hud .hp .track{width:150px}
 #hud .hp .fill{background:#ff7a6a}
 #hud .reward{color:#7bd88f}
+#hud .health .fill{background:#5fd068}
+#hud .cond{margin-top:4px;color:#ffe08a}
+#hud .title{color:#ffe08a;margin-bottom:4px}
+#hud .moves{display:flex;gap:6px;margin-top:8px}
+#hud .moves button{position:static;flex:1;pointer-events:auto;background:#2d4a78;color:#fff;border:2px solid #6f95d6;padding:6px 4px;font:bold 12px ui-monospace,Menlo,monospace;cursor:pointer;text-shadow:none}
+#hud .moves button:hover:not(:disabled){background:#3f66a8}
+#hud .moves button:disabled{opacity:.4;cursor:default}
+#hud .moves button small{display:block;font-weight:normal;opacity:.8;font-size:10px}
+#hud .timer{margin-top:6px;opacity:.75}
 #hud button{position:absolute;top:8px;right:8px;pointer-events:auto;background:#ff5a6a;color:#0b0d12;border:0;padding:8px 12px;font:bold 12px inherit;cursor:pointer}
 #hud .conn{position:absolute;bottom:6px;right:8px;opacity:.6}
 `;
@@ -25,7 +34,10 @@ const meterRow = (label, id) =>
 const hpRow = (label, id, txt) =>
   `<div class="row hp"><span class="lbl">${label}</span><div class="track"><div class="fill" id="${id}"></div></div><span id="${txt}"></span></div>`;
 
-export function mountStatusBar(parent, { onDemoBoss }) {
+const MOVE_LABELS = { attack: "Attack", guard: "Guard", special: "Special", skill: "Skill" };
+const MOVE_KEYS = ["attack", "guard", "special", "skill"];
+
+export function mountStatusBar(parent, { onDemoBoss, onMove = () => {} }) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
@@ -37,6 +49,8 @@ export function mountStatusBar(parent, { onDemoBoss }) {
     <div class="bar">
       ${meterRow("WATER A", "wA")}${meterRow("WATER B", "wB")}
       ${meterRow("SUNLIGHT", "sun")}
+      <div class="health">${meterRow("HEALTH", "health")}</div>
+      <div class="cond" id="cond"></div>
       <div class="stale" id="stale"></div>
     </div>
     <div class="banner" id="banner">BOSS ALERT</div>
@@ -48,6 +62,22 @@ export function mountStatusBar(parent, { onDemoBoss }) {
 
   const $ = (id) => hud.querySelector("#" + id);
 
+  // Move buttons are rebuilt with every update, so listen once on the panel.
+  let canMove = false;
+  let skillReady = false;
+  const pick = (move) => {
+    if (!canMove || (move === "skill" && !skillReady)) return;
+    onMove(move);
+  };
+  $("panel").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-move]");
+    if (button && !button.disabled) pick(button.dataset.move);
+  });
+  window.addEventListener("keydown", (event) => {
+    const index = ["1", "2", "3", "4"].indexOf(event.key);
+    if (index >= 0) pick(MOVE_KEYS[index]);
+  });
+
   return {
     setConnected(on) {
       $("conn").textContent = on ? "server connected" : "server offline, retrying...";
@@ -58,21 +88,49 @@ export function mountStatusBar(parent, { onDemoBoss }) {
       const sun = s.meters.sunlight.A ?? s.meters.sunlight.B;
       $("sun").style.width = sun == null ? "0%" : `${sun}%`;
       $("stale").textContent = s.meters.stale ? "STALE: ESP32 offline" : "";
-      $("banner").style.display = s.mode === "boss" ? "block" : "none";
+
+      const h = s.health ?? 100;
+      $("health").style.width = `${h}%`;
+      $("health").style.background = h > 60 ? "#5fd068" : h > 30 ? "#e0c040" : "#e04a4a";
+      const conditions = { healthy: "", weary: "Weary", wilting: "Wilting", wilted: "WILTED: hits weaker, water it!" };
+      $("cond").textContent = conditions[s.condition] || "";
+
+      const banner = $("banner");
+      banner.textContent = s.boss ? `BOSS ALERT: ${s.boss.name}` : "BOSS ALERT";
+      banner.style.display = s.mode === "boss" ? "block" : "none";
 
       const panel = $("panel");
       let html = "";
       if (s.mode === "battle" && s.battle && s.boss) {
         const b = s.battle;
         const lm = b.last_move;
+        canMove = !!b.awaiting_move;
+        skillReady = !!(b.skill && b.skill.ready);
+        const skillLabel = b.skill
+          ? `${b.skill.name}<small>${b.skill.ready ? "ready" : `in ${b.skill.ready_in} turns`}</small>`
+          : "Skill<small>none</small>";
+        const moveButtons = MOVE_KEYS.map((m, i) => {
+          const off = !canMove || (m === "skill" && !skillReady);
+          const label = m === "skill" ? skillLabel : `${MOVE_LABELS[m]}<small>press ${i + 1}</small>`;
+          return `<button data-move="${m}"${off ? " disabled" : ""}>${label}</button>`;
+        }).join("");
+        const played = lm
+          ? `${lm.skill ? lm.skill + " (" + lm.creature + ")" : "you " + lm.creature}, boss ${lm.boss}: ${lm.hit}`
+          : "";
         html =
-          `<div>turn ${b.turn}  (boss of plant ${s.boss.plant}${s.boss.source === "demo" ? ", demo" : ""})</div>` +
+          `<div class="title">${b.creature || "Plant"} vs ${s.boss.name} (tier ${s.boss.tier}), turn ${b.turn}${s.boss.source === "demo" ? ", demo" : ""}</div>` +
           hpRow("BOSS", "bossHp", "bossTxt") + hpRow("PLANT", "plantHp", "plantTxt") +
-          (lm ? `<div>you ${lm.creature}, boss ${lm.boss}: ${lm.hit}</div>` : "");
+          (played ? `<div>${played}</div>` : "") +
+          (canMove ? `<div class="moves">${moveButtons}</div>` : "") +
+          (b.move_seconds_left != null ? `<div class="timer">pick a move: ${b.move_seconds_left}s</div>` : "");
       } else if (s.mode === "reward" && s.reward) {
         html = `<div class="reward">Watered plant ${s.reward.plant}: ${s.reward.size} ms</div>`;
       } else if (s.mode === "cooldown") {
         html = `<div>The boss retreats. Back to the walk...</div>`;
+      }
+      if (!(s.mode === "battle" && s.battle && s.boss)) {
+        canMove = false;
+        skillReady = false;
       }
       panel.innerHTML = html;
       panel.style.display = html ? "block" : "none";

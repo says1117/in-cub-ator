@@ -63,6 +63,7 @@ window.addEventListener("popstate", () => {
 let server;
 const hud = mountStatusBar(document.getElementById("app"), {
   onDemoBoss: () => server && server.sendDemoBoss(),
+  onMove: (move) => server && server.sendMove(move),
 });
 server = connectWsSource(
   (state) => {

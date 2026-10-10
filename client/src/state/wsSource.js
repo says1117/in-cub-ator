@@ -23,6 +23,12 @@ export function connectWsSource(onState, onConnection = () => {}) {
         socket.send(JSON.stringify({ action: "demo_boss" }));
       }
     },
+    // move is one of: attack, guard, special, skill
+    sendMove(move) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "move", move }));
+      }
+    },
     isConnected: () => socket && socket.readyState === WebSocket.OPEN,
   };
 }

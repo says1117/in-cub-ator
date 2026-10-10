@@ -1,6 +1,7 @@
 """Run the game server: python main.py"""
 import asyncio
 import logging
+import sys
 import time
 
 import api
@@ -8,6 +9,7 @@ import battle
 import config as C
 import mqtt_io
 from engine import GameEngine
+from moisture_sim import MoistureSim
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("main")
@@ -39,23 +41,47 @@ async def main():
     feed = api.Feed(engine, queue)
     client = mqtt_io.connect(loop, queue)
 
+    sim = None
+    if "--sim" in sys.argv:
+        # TEMPORARY: made-up moisture for plant A instead of a real sensor
+        sim = MoistureSim()
+        C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS
+        C.REWARD_MIN_GAP_SECONDS = C.SIM_COOLDOWN_SECONDS
+        log.info("SIMULATED moisture is on, cooldown %.0fs", C.COOLDOWN_SECONDS)
+
+    def send(cmd):
+        client.publish(cmd.topic, cmd.payload)
+        if sim and cmd.topic == C.TOPIC_CMD_PUMP.format(plant="A"):
+            sim.watered(int(cmd.payload))
+
     async def ticker():
         while True:
             await asyncio.sleep(0.2)
             for cmd in engine.tick(time.monotonic()):
-                client.publish(cmd.topic, cmd.payload)
+                send(cmd)
             await feed.publish_if_changed()
 
     async def consumer():
         while True:
             topic, payload = await queue.get()
             for cmd in route(engine, topic, payload, time.monotonic()):
-                client.publish(cmd.topic, cmd.payload)
+                send(cmd)
             await feed.publish_if_changed()
+
+    async def moisture_simulator():
+        client.publish(C.TOPIC_STATUS_ESP32, "online")
+        client.publish(C.TOPIC_SOIL.format(plant="B"), str(C.SOIL_RAW_WET))
+        while True:
+            client.publish(C.TOPIC_SOIL.format(plant="A"), str(sim.raw()))
+            await asyncio.sleep(1.0)
+            sim.step(1.0)
 
     async with feed.serve():
         log.info("ws on %s:%s, mqtt %s:%s", C.WS_HOST, C.WS_PORT, C.MQTT_HOST, C.MQTT_PORT)
-        await asyncio.gather(ticker(), consumer())
+        tasks = [ticker(), consumer()]
+        if sim:
+            tasks.append(moisture_simulator())
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

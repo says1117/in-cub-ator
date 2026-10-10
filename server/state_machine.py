@@ -20,6 +20,8 @@ class Game:
     dry_streak: dict = None
     cooldown_until: dict = None
     stale: bool = False
+    tier: int = 0        # strength of the active boss, set when it spawns
+    last_tier: int = 0   # strength of the last boss, a harder one may skip the cooldown
 
     def __post_init__(self):
         if self.dry_streak is None:
@@ -34,17 +36,28 @@ def soil_pct(raw: int) -> float:
     return max(0.0, min(100.0, (raw - C.SOIL_RAW_DRY) / span * 100.0))
 
 
-def _summon(g: Game, plant: str, now: float, source: str) -> Game:
+def tier_for(pct: float) -> int:
+    """0 = chill, 1 = dry, 2 = very dry, 3 = bone dry."""
+    if pct <= C.TIER3_AT_OR_BELOW_PCT:
+        return 3
+    if pct < C.TIER2_BELOW_PCT:
+        return 2
+    if pct < C.SOIL_DRY_THRESHOLD_PCT:
+        return 1
+    return 0
+
+
+def _summon(g: Game, plant: str, now: float, source: str, tier: int = 1) -> Game:
     streaks = dict(g.dry_streak)
     streaks[plant] = 0
     return replace(
-        g, mode=BOSS, boss_plant=plant, source=source,
+        g, mode=BOSS, boss_plant=plant, source=source, tier=tier, last_tier=tier,
         mode_until=now + C.BOSS_INTRO_SECONDS, dry_streak=streaks,
     )
 
 
 def _to_walking(g: Game) -> Game:
-    return replace(g, mode=WALKING, boss_plant=None, source=None)
+    return replace(g, mode=WALKING, boss_plant=None, source=None, tier=0)
 
 
 def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
@@ -53,8 +66,13 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     g = replace(g, dry_streak=streaks)
 
     if g.mode in (WALKING, COOLDOWN):
-        if streaks[plant] >= C.SOIL_DRY_READINGS_N and now >= g.cooldown_until[plant]:
-            return _summon(g, plant, now, C.SOURCE_SOIL)
+        tier = tier_for(pct)
+        if tier == 0:
+            g = replace(g, last_tier=0)  # moisture is fine, the next dip starts fresh
+        # A harder tier than the last boss may skip the cooldown
+        can_spawn = now >= g.cooldown_until[plant] or tier > g.last_tier
+        if tier >= 1 and streaks[plant] >= C.SOIL_DRY_READINGS_N and can_spawn:
+            return _summon(g, plant, now, C.SOURCE_SOIL, tier)
     elif g.mode in (BOSS, BATTLE) and plant == g.boss_plant and g.source == C.SOURCE_SOIL:
         if pct > C.SOIL_WET_THRESHOLD_PCT:
             return _to_walking(g)
@@ -65,7 +83,7 @@ def on_tick(g: Game, now: float) -> Game:
     if g.mode == BOSS and now >= g.mode_until:
         return replace(g, mode=BATTLE)
     if g.mode == REWARD and now >= g.mode_until:
-        return replace(g, mode=COOLDOWN, boss_plant=None, source=None,
+        return replace(g, mode=COOLDOWN, boss_plant=None, source=None, tier=0,
                        mode_until=max(g.cooldown_until.values()))
     if g.mode == COOLDOWN and now >= g.mode_until:
         return replace(g, mode=WALKING)
@@ -83,16 +101,16 @@ def on_battle_done(g: Game, won: bool, now: float) -> Tuple[Game, Optional[str]]
         g = replace(g, mode=REWARD, cooldown_until=cool,
                     mode_until=now + C.REWARD_DISPLAY_SECONDS)
         return g, plant
-    g = replace(g, mode=COOLDOWN, boss_plant=None, source=None,
+    g = replace(g, mode=COOLDOWN, boss_plant=None, source=None, tier=0,
                 cooldown_until=cool, mode_until=cool[plant])
     return g, None
 
 
-def on_demo(g: Game, plant: str, now: float) -> Game:
+def on_demo(g: Game, plant: str, now: float, tier: int = 1) -> Game:
     """Demo button. Spawns a boss whatever the soil says. Ignored if a boss, battle or
     reward is already active. Everything after the spawn is the normal flow."""
     if g.mode in (WALKING, COOLDOWN):
-        return _summon(g, plant, now, C.SOURCE_DEMO)
+        return _summon(g, plant, now, C.SOURCE_DEMO, tier)
     return g
 
 

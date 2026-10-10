@@ -1,1 +1,2 @@
-# server/requirements.txt: Python dependencies for the server. Owner: Role 2 (server).
+paho-mqtt>=2.0
+websockets>=12.0

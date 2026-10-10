@@ -65,3 +65,9 @@ demo/backup-video/*
 
 # Phase 4 test results (local runs)
 phase4_results_*.txt
+
+# From role2 (Alexin)
+server/CLAUDE.md
+server/AGENTS.md
+*.py[cod]
+*$py.class

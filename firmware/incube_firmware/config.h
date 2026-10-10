@@ -41,15 +41,18 @@ const int SOIL_WET_THRESHOLD = 2000;  // below this: watered, dismiss the boss
 
 // ---------- NFC pads ----------
 
-const unsigned long PAD_POLL_INTERVAL_MS = 300;  // time between checks of one reader
-const unsigned long PAD_READ_TIMEOUT_MS = 1000;  // how long one read may wait for a tag
-// Note: a blocking read delays everything else in loop(), including the pump shut-off check.
-// pads.cpp must keep this from overrunning pump deadlines (see the safety module).
-const int PAD_CONFIRM_READS = 2;                 // same UID this many times in a row before reporting it
-const int PAD_REMOVAL_MISSES = 3;                // empty reads in a row before reporting removal
-const int PAD_START_ATTEMPTS = 5;                // reader start-up retries (no reset wire on the readers)
-const unsigned long PAD_START_RETRY_MS = 200;
-const unsigned long PAD_RESTART_AFTER_MS = 30000;  // retry a reader that never started
+const unsigned long PAD_POLL_INTERVAL_MS = 300;   // time between tag searches on one reader
+const unsigned long PAD_READY_CHECK_MS = 5;       // how often to ask a busy reader "are you done?"
+const unsigned long PAD_ACK_TIMEOUT_MS = 30;      // a command must be acknowledged within this
+const unsigned long PAD_COMMAND_TIMEOUT_MS = 200; // set-up commands must answer within this
+const unsigned long PAD_SEARCH_TIMEOUT_MS = 500;  // a tag search must answer within this
+const int PAD_ACTIVATION_RETRIES = 10;            // how hard a search looks before answering "no tag" (tune on the bench)
+const int PAD_CONFIRM_READS = 2;                  // same UID this many times in a row before reporting it
+const int PAD_REMOVAL_MISSES = 3;                 // empty reads in a row before reporting removal
+const int PAD_FAILS_BEFORE_DOWN = 3;              // failed commands in a row before a reader is restarted
+const unsigned long PAD_RESTART_AFTER_MS = 5000;  // wait before restarting a reader that went down
+const unsigned long PAD_I2C_TIMEOUT_MS = 20;      // longest single I2C transfer
+// Reads never block loop(): each pass does at most one short I2C transfer per reader.
 
 // ---------- Safety limits (enforced in safety.cpp, not by the game) ----------
 // Starting values, TBD with Role 2. Keep them small until the pumps are proven.

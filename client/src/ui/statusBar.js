@@ -34,10 +34,7 @@ const meterRow = (label, id) =>
 const hpRow = (label, id, txt) =>
   `<div class="row hp"><span class="lbl">${label}</span><div class="track"><div class="fill" id="${id}"></div></div><span id="${txt}"></span></div>`;
 
-const MOVE_LABELS = { attack: "Attack", guard: "Guard", special: "Special", skill: "Skill" };
-const MOVE_KEYS = ["attack", "guard", "special", "skill"];
-
-export function mountStatusBar(parent, { onDemoBoss, onMove = () => {} }) {
+export function mountStatusBar(parent, { onDemoBoss }) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
@@ -62,22 +59,6 @@ export function mountStatusBar(parent, { onDemoBoss, onMove = () => {} }) {
 
   const $ = (id) => hud.querySelector("#" + id);
 
-  // Move buttons are rebuilt with every update, so listen once on the panel.
-  let canMove = false;
-  let skillReady = false;
-  const pick = (move) => {
-    if (!canMove || (move === "skill" && !skillReady)) return;
-    onMove(move);
-  };
-  $("panel").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-move]");
-    if (button && !button.disabled) pick(button.dataset.move);
-  });
-  window.addEventListener("keydown", (event) => {
-    const index = ["1", "2", "3", "4"].indexOf(event.key);
-    if (index >= 0) pick(MOVE_KEYS[index]);
-  });
-
   return {
     setConnected(on) {
       $("conn").textContent = on ? "server connected" : "server offline, retrying...";
@@ -101,45 +82,8 @@ export function mountStatusBar(parent, { onDemoBoss, onMove = () => {} }) {
 
       const panel = $("panel");
       let html = "";
-      if (s.mode === "battle" && s.battle && s.boss) {
-        const b = s.battle;
-        const lm = b.last_move;
-        canMove = !!b.awaiting_move;
-        skillReady = !!(b.skill && b.skill.ready);
-        const skillLabel = b.skill
-          ? `${b.skill.name}<small>${b.skill.ready ? "ready" : `in ${b.skill.ready_in} turns`}</small>`
-          : "Skill<small>none</small>";
-        const moveButtons = MOVE_KEYS.map((m, i) => {
-          const off = !canMove || (m === "skill" && !skillReady);
-          const label = m === "skill" ? skillLabel : `${MOVE_LABELS[m]}<small>press ${i + 1}</small>`;
-          return `<button data-move="${m}"${off ? " disabled" : ""}>${label}</button>`;
-        }).join("");
-        const played = lm
-          ? `${lm.skill ? lm.skill + " (" + lm.creature + ")" : "you " + lm.creature}, boss ${lm.boss}: ${lm.hit}`
-          : "";
-        html =
-          `<div class="title">${b.creature || "Plant"} vs ${s.boss.name} (tier ${s.boss.tier}), turn ${b.turn}${s.boss.source === "demo" ? ", demo" : ""}</div>` +
-          hpRow("BOSS", "bossHp", "bossTxt") + hpRow("PLANT", "plantHp", "plantTxt") +
-          (played ? `<div>${played}</div>` : "") +
-          (canMove ? `<div class="moves">${moveButtons}</div>` : "") +
-          (b.move_seconds_left != null ? `<div class="timer">pick a move: ${b.move_seconds_left}s</div>` : "");
-      } else if (s.mode === "reward" && s.reward) {
-        html = `<div class="reward">Watered plant ${s.reward.plant}: ${s.reward.size} ms</div>`;
-      } else if (s.mode === "cooldown") {
-        html = `<div>The boss retreats. Back to the walk...</div>`;
-      }
-      if (!(s.mode === "battle" && s.battle && s.boss)) {
-        canMove = false;
-        skillReady = false;
-      }
       panel.innerHTML = html;
       panel.style.display = html ? "block" : "none";
-      if (s.mode === "battle" && s.battle && s.boss) {
-        $("bossHp").style.width = `${100 * s.battle.boss_hp / s.boss.max_hp}%`;
-        $("plantHp").style.width = `${100 * s.battle.creature_hp / s.battle.creature_max_hp}%`;
-        $("bossTxt").textContent = `${s.battle.boss_hp}/${s.boss.max_hp}`;
-        $("plantTxt").textContent = `${s.battle.creature_hp}/${s.battle.creature_max_hp}`;
-      }
     },
   };
 }

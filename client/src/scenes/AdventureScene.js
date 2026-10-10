@@ -1,5 +1,8 @@
 import Phaser from "phaser";
 import { paintEnchantedForest, addForestAmbience } from "../theme/enchantedForest.js";
+import { createBossEntrance } from "../render/bossEntrance.js";
+import { ensureDragonBackTexture } from "../render/dragonBack.js";
+import { preloadBossArt } from "../data/bosses.js";
 
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
@@ -11,6 +14,7 @@ export default class AdventureScene extends Phaser.Scene {
       "characterPhoto",
       "/assets/characters/IMG_4990.png"
     );
+    preloadBossArt(this);
   }
 
   create() {
@@ -189,6 +193,50 @@ export default class AdventureScene extends Phaser.Scene {
 
     // Fireflies, drifting petals and a soft vignette
     addForestAmbience(this);
+
+    // Boss arrival (client/src/render/bossEntrance.js) and the cut to the battle screen
+    this.entrance = createBossEntrance(this);
+    this.lastServerMode = null;
+    this.inBattleScene = false;
+    this.cutting = false;
+
+    // The battle screen stops itself and wakes this scene when the fight is over.
+    this.events.on(Phaser.Scenes.Events.WAKE, () => {
+      this.inBattleScene = false;
+      this.cutting = false;
+      this.entrance.cleanup();
+      this.cameras.main.fadeIn(450, 7, 5, 26);
+    });
+  }
+
+  // Leave the forest for the battle screen. This scene sleeps, so nothing here is rebuilt.
+  cutToBattle(instant = false) {
+    if (this.cutting || this.inBattleScene) return;
+    this.cutting = true;
+
+    const go = () => {
+      // The boss can leave during the flashes (wet soil, sensor lost). Then stay in the forest.
+      const state = this.registry.get("serverState");
+      if (!state || state.mode !== "battle") {
+        this.cutting = false;
+        this.entrance.cancel();
+        this.cameras.main.fadeIn(300, 7, 5, 26);
+        return;
+      }
+      ensureDragonBackTexture(this);
+      this.inBattleScene = true;
+      this.scene.launch("BossScene");
+      this.scene.sleep();
+    };
+    if (instant) return go();
+
+    const cam = this.cameras.main;
+    cam.flash(110, 255, 255, 255);
+    this.time.delayedCall(170, () => cam.flash(110, 255, 255, 255));
+    this.time.delayedCall(340, () => {
+      cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, go);
+      cam.fade(260, 7, 5, 26);
+    });
   }
 
   // ==========================================
@@ -1813,6 +1861,24 @@ export default class AdventureScene extends Phaser.Scene {
   // Server modes where the dragon stands still: boss appears, fights, and the reward moment.
   syncWithServer() {
     const state = this.registry.get("serverState");
+    const mode = state ? state.mode : null;
+
+    if (mode !== this.lastServerMode) {
+      const was = this.lastServerMode;
+      this.lastServerMode = mode;
+      if (mode === "boss" && was !== "boss") {
+        this.entrance.start(state);
+      } else if (mode !== "battle" && this.entrance.isActive() && !this.cutting) {
+        // the boss left before the fight started (the soil got wet, or the sensor dropped out)
+        this.entrance.cancel();
+      }
+    }
+    if (mode === "battle" && !this.inBattleScene && !this.cutting) {
+      // Page opened mid-fight: go straight in. Otherwise wait for the arrival to finish.
+      if (!this.entrance.isActive()) this.cutToBattle(true);
+      else if (this.entrance.isDone()) this.cutToBattle();
+    }
+
     const stand = state && ["boss", "battle", "reward"].includes(state.mode);
     const shouldWalk = !stand;
 

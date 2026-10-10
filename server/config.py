@@ -25,7 +25,7 @@ SOIL_WET_THRESHOLD_PCT = 55   # above this dismisses a boss (hysteresis)
 SOIL_DRY_READINGS_N = 5
 
 # Timings (seconds)
-BOSS_INTRO_SECONDS = 3.0
+BOSS_INTRO_SECONDS = 5.2  # long enough for the boss arrival animation on the client
 BATTLE_TURN_SECONDS = 1.2
 REWARD_DISPLAY_SECONDS = 4.0
 COOLDOWN_SECONDS = 60.0
@@ -79,7 +79,7 @@ SKILLS = {
 TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
 BOSS_TIERS = {            # tier: (name, hp, attack)
-    1: ("Drought Boss", 24, 6),
+    1: ("Drought Chomper", 24, 6),
     2: ("Parched Brute", 32, 7),
     3: ("Desert Dragon", 40, 7),
 }

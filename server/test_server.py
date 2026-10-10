@@ -596,7 +596,7 @@ class StaleTimerTests(unittest.TestCase):
         e = GameEngine()
         e.on_soil_raw("A", WET_RAW, 0.0)
         e.on_demo_boss(1.0, "A")
-        e.tick(5.0)
+        e.tick(1.0 + C.BOSS_INTRO_SECONDS)
         self.assertEqual(e.game.mode, S.BATTLE)
         e.tick(C.ESP32_STALE_SECONDS + 5)
         self.assertEqual(e.game.mode, S.WALKING)

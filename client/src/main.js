@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import AdventureScene from "./scenes/AdventureScene.js";
+import BossScene from "./scenes/BossScene.js";
 import StorageScene from "./scenes/StorageScene.js";
 import "./style.css";
 import { connectWsSource } from "./state/wsSource.js";
@@ -8,6 +9,7 @@ import { mountStatusBar } from "./ui/statusBar.js";
 const routes = {
   "/": "AdventureScene",
   "/adventure": "AdventureScene",
+  "/boss": "BossScene",
   "/storage": "StorageScene"
 };
 
@@ -29,10 +31,11 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [AdventureScene, StorageScene]
+  scene: [AdventureScene, StorageScene, BossScene]
 };
 
 const game = new Phaser.Game(config);
+if (import.meta.env.DEV) window.__game = game;   // dev only: lets you poke at the game from the browser console
 
 // Navigate between URLs and scenes
 function navigate(path) {
@@ -63,7 +66,6 @@ window.addEventListener("popstate", () => {
 let server;
 const hud = mountStatusBar(document.getElementById("app"), {
   onDemoBoss: () => server && server.sendDemoBoss(),
-  onMove: (move) => server && server.sendMove(move),
 });
 server = connectWsSource(
   (state) => {
@@ -72,3 +74,4 @@ server = connectWsSource(
   },
   (connected) => hud.setConnected(connected)
 );
+game.registry.set("sendMove", (move) => server && server.sendMove(move));

@@ -1312,18 +1312,35 @@ function plantTree(scene, life, key, spec, getX, y, scale, flip, depth, alpha = 
   });
   strand(spec.frontStrands, "bright", depth + 0.003);
 
-  life.trees.push({ getX, y, scale, parts });
+  // key, spec and flip are kept so a tree can be snapped later (see bossEntrance.js)
+  life.trees.push({ getX, y, scale, parts, key, spec, flip, depth, broken: null });
 }
 
 function updateTrees(life, t, dt) {
   for (const tree of life.trees) {
     const x = tree.getX();
     const hidden = x < -260 || x > 1060;
+    // A snapped tree: everything above the break swings around it by broken.angle.
+    const snap = tree.broken;
+    const cos = snap ? Math.cos(snap.angle) : 1;
+    const sin = snap ? Math.sin(snap.angle) : 0;
+    const lean = snap ? snap.angle : 0;
     for (const part of tree.parts) {
-      const px = x + part.lx * tree.scale;
-      const py = tree.y + part.ly * tree.scale;
+      let lx = part.lx;
+      let ly = part.ly;
+      if (snap && part.kind !== "base") {
+        const dy = ly - snap.pivotY;
+        ly = snap.pivotY + lx * sin + dy * cos;
+        lx = lx * cos - dy * sin;
+      }
+      const px = x + lx * tree.scale;
+      const py = tree.y + ly * tree.scale;
       if (part.kind === "base") {
         part.sprite.setPosition(px, py);
+        continue;
+      }
+      if (part.kind === "top") {
+        part.sprite.setPosition(px, py).setRotation(lean);
         continue;
       }
       if (hidden) {
@@ -1334,14 +1351,14 @@ function updateTrees(life, t, dt) {
       if (part.kind === "clump") {
         // the crown leans with the wind and rustles
         const rustle = Math.sin(t * 1.4 + part.phase) * 0.012 + Math.sin(t * 5.3 + part.phase * 2) * 0.006 * (0.4 + w);
-        part.sprite.setRotation(-w * 0.022 * part.sway + rustle);
+        part.sprite.setRotation(-w * 0.022 * part.sway + rustle + lean);
         part.sprite.setPosition(px - w * 2.4 * part.sway * tree.scale, py + Math.sin(t * 1.1 + part.phase) * 0.8);
       } else {
         // a hanging strand is a damped pendulum pushed by the wind
         const target = w * part.gain + Math.sin(t * 2.4 + part.phase) * 0.035 * (0.5 + w);
         part.vel += (-(part.angle - target) * part.stiff - part.vel * 3.4) * dt;
         part.angle += part.vel * dt;
-        part.sprite.setRotation(part.angle);
+        part.sprite.setRotation(part.angle);   // strands keep hanging down, even on a fallen tree
         part.sprite.setPosition(px - w * 1.6 * tree.scale, py);
       }
     }
@@ -1694,6 +1711,7 @@ function bringForestToLife(scene) {
     const which = treeCount++ % decorSpecs.length;
     const sprite = item.sprite;
     plantTree(scene, life, `efDecor${which}`, decorSpecs[which], () => sprite.x, sprite.y, sprite.scaleX, sprite.flipX, sprite.depth);
+    life.trees[life.trees.length - 1].source = sprite;
     sprite.setVisible(false);
   }
 
@@ -1711,6 +1729,7 @@ function bringForestToLife(scene) {
     updateGroundLife(scene, life, life.t);
     petals.update(life.t, dt, scene.walking, scene.speed || 85);
   };
+  scene.forestLife = life;
   scene.events.on("update", onUpdate);
   scene.events.once("shutdown", () => scene.events.off("update", onUpdate));
 }

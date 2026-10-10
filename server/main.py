@@ -54,7 +54,7 @@ async def main():
             await feed.publish_if_changed()
 
     async with feed.serve():
-        log.info("ws on %s:%s, mqtt %s:%s", C.WS_PORT, C.WS_HOST, C.MQTT_HOST, C.MQTT_PORT)
+        log.info("ws on %s:%s, mqtt %s:%s", C.WS_HOST, C.WS_PORT, C.MQTT_HOST, C.MQTT_PORT)
         await asyncio.gather(ticker(), consumer())
 
 

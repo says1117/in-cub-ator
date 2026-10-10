@@ -26,7 +26,7 @@ SOIL_DRY_READINGS_N = 5
 
 # Timings (seconds)
 BOSS_INTRO_SECONDS = 3.0
-BATTLE_TURN_SECONDS = 1.5
+BATTLE_TURN_SECONDS = 1.2
 REWARD_DISPLAY_SECONDS = 4.0
 COOLDOWN_SECONDS = 60.0
 ESP32_STALE_SECONDS = 30.0
@@ -44,8 +44,8 @@ SOURCE_SOIL = "soil"
 SOURCE_DEMO = "demo"
 
 # Battle (placeholder rules until the original game's numbers are confirmed)
-BOSS_HP = 30
-BOSS_ATK = 5
+BOSS_HP = 24
+BOSS_ATK = 6
 DEFAULT_CREATURE_HP = 30
-DEFAULT_CREATURE_ATK = 5
+DEFAULT_CREATURE_ATK = 8
 CREATURES_FILE = "creatures.json"

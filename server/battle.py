@@ -22,7 +22,12 @@ class Stats:
     atk: int = C.DEFAULT_CREATURE_ATK
 
 
-BOSS_STATS = Stats(name="Drought Boss", hp=C.BOSS_HP, atk=C.BOSS_ATK)
+def boss_for_tier(tier: int) -> Stats:
+    name, hp, atk = C.BOSS_TIERS[min(max(tier, 1), max(C.BOSS_TIERS))]
+    return Stats(name=name, hp=hp, atk=atk)
+
+
+BOSS_STATS = boss_for_tier(1)
 
 
 @dataclass(frozen=True)

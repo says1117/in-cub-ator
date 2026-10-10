@@ -22,6 +22,8 @@ class GameEngine:
         self.last_reward = None
         self.battle: Optional[B.Battle] = None
         self.next_turn_at = 0.0
+        self.health = 100.0          # overall plant health, fades while the soil is dry
+        self._last_tick: Optional[float] = None
 
     def _set(self, new: S.Game):
         if new.mode != self.game.mode:
@@ -53,7 +55,8 @@ class GameEngine:
         """Demo button (WebSocket) or the optional laptop topic."""
         plant = plant or self.pick_demo_plant()
         before = self.game.mode
-        self._set(S.on_demo(self.game, plant, now))
+        tier = max(1, S.tier_for(self.soil_pct[plant]))
+        self._set(S.on_demo(self.game, plant, now, tier))
         if self.game.mode == before:
             log.info("demo boss ignored, mode is %s", before)
         return self.tick(now)
@@ -65,11 +68,13 @@ class GameEngine:
     # time -------------------------------------------------------------
     def tick(self, now: float) -> list:
         commands = []
+        self._update_health(now)
         self._set(S.on_tick(self.game, now))
 
         if self.game.mode == S.BATTLE and self.battle is None:
             uid = self.pads.get(self.game.boss_plant, "")
-            self.battle = B.start(self.creatures.get(uid, B.Stats()))
+            boss = B.boss_for_tier(self.game.tier or 1)
+            self.battle = B.start(self.creatures.get(uid, B.Stats()), boss)
             self.next_turn_at = now + C.BATTLE_TURN_SECONDS
 
         if self.game.mode == S.BATTLE and now >= self.next_turn_at:
@@ -83,8 +88,25 @@ class GameEngine:
             self.battle = None
         return commands
 
+    def moisture_tier(self) -> int:
+        """How dry the driest plant is: 0 chill, 1 dry, 2 very dry, 3 bone dry."""
+        return S.tier_for(min(self.soil_pct.values()))
+
+    def _update_health(self, now: float):
+        """Overall health fades while any plant is dry, faster the drier it is."""
+        if self._last_tick is not None:
+            dt = min(max(now - self._last_tick, 0.0), 1.0)
+            tier = self.moisture_tier()
+            if tier >= 1:
+                self.health -= C.HEALTH_DECAY_PER_SEC[tier] * dt
+            else:
+                self.health += C.HEALTH_RECOVER_PER_SEC * dt
+            self.health = min(100.0, max(0.0, self.health))
+        self._last_tick = now
+
     def _finish_battle(self, won: bool, now: float) -> list:
         demo = self.game.source == C.SOURCE_DEMO
+        tier = self.game.tier or 1
         new, plant = S.on_battle_done(self.game, won, now)
         self._set(new)
         if plant is None:
@@ -93,18 +115,19 @@ class GameEngine:
             log.info("reward for %s blocked, ESP32 offline", plant)
             return []
         pct = self.soil_pct[plant]
-        cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo)
+        cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo, tier=tier)
         if cmd is None:
             log.info("reward for %s blocked (soil %.0f%%, demo=%s)", plant, pct, demo)
             return []
         self.last_reward_at[plant] = now
-        self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload)}
+        self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload), "tier": tier}
         log.info("command %s %s", cmd.topic, cmd.payload)
         return [cmd]
 
     # output -----------------------------------------------------------
     def snapshot(self) -> dict:
         g, b = self.game, self.battle
+        boss_stats = b.boss if b else B.boss_for_tier(g.tier or 1)
         return {
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
             "meters": {
@@ -113,10 +136,14 @@ class GameEngine:
                 "stale": g.stale,
             },
             "mode": g.mode,
+            "health": round(self.health, 1),
+            "tier": self.moisture_tier(),
             "boss": None if g.boss_plant is None else {
                 "plant": g.boss_plant,
-                "hp": b.boss_hp if b else B.BOSS_STATS.hp,
-                "max_hp": B.BOSS_STATS.hp,
+                "name": boss_stats.name,
+                "tier": g.tier,
+                "hp": b.boss_hp if b else boss_stats.hp,
+                "max_hp": boss_stats.hp,
                 "type": "drought",
                 "source": g.source,
             },

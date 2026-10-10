@@ -3,6 +3,7 @@ import random
 import unittest
 
 import battle as B
+import moisture_sim as M
 import config as C
 import rewards as R
 import state_machine as S
@@ -15,6 +16,12 @@ WET_RAW = C.SOIL_RAW_WET
 def feed_dry(g, plant="A", n=C.SOIL_DRY_READINGS_N, now=0.0):
     for _ in range(n):
         g = S.on_soil(g, plant, 5.0, now)
+    return g
+
+
+def feed_dry_pct(g, pct, plant="A", n=C.SOIL_DRY_READINGS_N, now=0.0):
+    for _ in range(n):
+        g = S.on_soil(g, plant, pct, now)
     return g
 
 
@@ -115,13 +122,20 @@ class RewardTests(unittest.TestCase):
         self.assertIsNone(R.water_reward("A", 10.0, 100.0, 100.0 - 1))
 
     def test_cap_holds_even_if_config_is_too_big(self):
-        old = C.PUMP_MS_PER_WIN
-        C.PUMP_MS_PER_WIN = C.PUMP_MAX_MS * 10
+        old = dict(C.PUMP_MS_BY_TIER)
+        C.PUMP_MS_BY_TIER = {t: C.PUMP_MAX_MS * 10 for t in (1, 2, 3)}
         try:
-            cmd = R.water_reward("A", 10.0, 1000.0, float("-inf"))
-            self.assertEqual(int(cmd.payload), C.PUMP_MAX_MS)
+            for tier in (1, 2, 3):
+                cmd = R.water_reward("A", 10.0, 1000.0, float("-inf"), tier=tier)
+                self.assertEqual(int(cmd.payload), C.PUMP_MAX_MS)
         finally:
-            C.PUMP_MS_PER_WIN = old
+            C.PUMP_MS_BY_TIER = old
+
+    def test_harder_boss_gives_more_water_within_the_cap(self):
+        ms = [int(R.water_reward("A", 10.0, 1000.0, float("-inf"), tier=t).payload) for t in (1, 2, 3)]
+        self.assertEqual(ms, sorted(ms))
+        self.assertLess(ms[0], ms[2])
+        self.assertTrue(all(m <= C.PUMP_MAX_MS for m in ms))
 
 
 class BattleTests(unittest.TestCase):
@@ -243,6 +257,128 @@ class EngineFlowTests(unittest.TestCase):
             t += 0.5
             cmds += e.tick(t)
         self.assertEqual((cmds, e.game.mode), ([], S.WALKING))
+
+
+class TierTests(unittest.TestCase):
+    def test_tier_for_moisture(self):
+        self.assertEqual(S.tier_for(80), 0)
+        self.assertEqual(S.tier_for(50), 0)
+        self.assertEqual(S.tier_for(49), 1)
+        self.assertEqual(S.tier_for(24), 2)
+        self.assertEqual(S.tier_for(0), 3)
+
+    def test_over_50_percent_no_boss(self):
+        g = S.Game()
+        for _ in range(20):
+            g = S.on_soil(g, "A", 60.0, 0)
+        self.assertEqual(g.mode, S.WALKING)
+
+    def test_boss_tier_matches_dryness_at_spawn(self):
+        for pct, tier in [(40.0, 1), (10.0, 2), (0.0, 3)]:
+            g = feed_dry_pct(S.Game(), pct)
+            self.assertEqual((g.mode, g.tier), (S.BOSS, tier), pct)
+
+    def test_harder_tier_skips_the_cooldown(self):
+        g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)
+        g, _ = S.on_battle_done(g, False, 10.0)            # lost, now in cooldown
+        g = feed_dry_pct(g, 40.0, now=11.0)                # same tier: still blocked
+        self.assertEqual(g.mode, S.COOLDOWN)
+        g = feed_dry_pct(g, 10.0, now=12.0)                # drier: a harder boss comes
+        self.assertEqual((g.mode, g.tier), (S.BOSS, 2))
+
+    def test_bosses_get_stronger(self):
+        hp = [B.boss_for_tier(t).hp for t in (1, 2, 3)]
+        atk = [B.boss_for_tier(t).atk for t in (1, 2, 3)]
+        self.assertEqual(hp, sorted(hp))
+        self.assertEqual(atk, sorted(atk))
+        self.assertLess(hp[0], hp[2])
+
+
+class BalanceTests(unittest.TestCase):
+    def test_every_tier_is_winnable_at_least_40_percent(self):
+        for tier in (1, 2, 3):
+            wins = 0
+            games = 3000
+            for seed in range(games):
+                rng = random.Random(seed)
+                fight = B.start(B.Stats(), B.boss_for_tier(tier))
+                while not B.winner(fight):
+                    fight = B.play_turn(fight, rng)
+                wins += B.winner(fight) == "creature"
+            self.assertGreaterEqual(wins / games, 0.40, f"tier {tier}")
+
+
+class HealthTests(unittest.TestCase):
+    def run_for(self, e, seconds, start=0.0):
+        t = start
+        for _ in range(int(seconds * 2)):
+            t += 0.5
+            e.tick(t)
+        return t
+
+    def test_health_fades_when_dry_and_faster_when_drier(self):
+        results = []
+        for raw in (WET_RAW, 2700, DRY_RAW):  # chill, tier 1 (~17%)... then bone dry
+            e = GameEngine()
+            e.tick(0.0)
+            e.on_soil_raw("A", raw, 0.0)
+            e.game = S.Game(mode=S.COOLDOWN, mode_until=1e9, cooldown_until={"A": 1e9, "B": 1e9})
+            self.run_for(e, 10)
+            results.append(e.health)
+        self.assertEqual(results[0], 100.0)
+        self.assertLess(results[1], 100.0)
+        self.assertLess(results[2], results[1])
+
+    def test_health_recovers_when_moisture_returns(self):
+        e = GameEngine()
+        e.health = 40.0
+        e.tick(0.0)
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        self.run_for(e, 10)
+        self.assertGreater(e.health, 40.0)
+
+    def test_health_stays_between_0_and_100(self):
+        e = GameEngine()
+        e.tick(0.0)
+        e.on_soil_raw("A", DRY_RAW, 0.0)
+        self.run_for(e, 200)
+        self.assertGreaterEqual(e.health, 0.0)
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        e.soil_pct["B"] = 100.0
+        self.run_for(e, 100, start=100.0)
+        self.assertLessEqual(e.health, 100.0)
+
+    def test_snapshot_has_health_tier_and_boss_name(self):
+        e = GameEngine()
+        e.on_soil_raw("A", DRY_RAW, 0.0)
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            e.on_soil_raw("A", DRY_RAW, 0.0)
+        snap = e.snapshot()
+        self.assertIn("health", snap)
+        self.assertEqual(snap["tier"], 3)
+        self.assertEqual(snap["boss"]["name"], B.boss_for_tier(3).name)
+
+
+class SimTests(unittest.TestCase):
+    def test_simulated_percentage_stays_in_range_and_moves(self):
+        sim = M.MoistureSim(random.Random(7))
+        seen = set()
+        for _ in range(2000):
+            pct = sim.step(1.0)
+            self.assertTrue(0.0 <= pct <= 100.0)
+            seen.add(S.tier_for(pct))
+        self.assertEqual(seen, {0, 1, 2, 3})
+
+    def test_watering_raises_it(self):
+        sim = M.MoistureSim(random.Random(1), start=10.0)
+        sim.watered(3000)
+        self.assertGreater(sim.pct, 40.0)
+
+    def test_raw_matches_the_percentage(self):
+        sim = M.MoistureSim(random.Random(1), start=0.0)
+        self.assertEqual(S.soil_pct(sim.raw()), 0.0)
+        sim.pct = 100.0
+        self.assertEqual(S.soil_pct(sim.raw()), 100.0)
 
 
 if __name__ == "__main__":

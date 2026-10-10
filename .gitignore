@@ -7,9 +7,10 @@
 *.pem
 *.key
 *.crt
-firmware/incube_firmware/secrets.h
-server/deploy/passwd
-server/deploy/*.passwd
+secrets.h
+arduino_secrets.h
+server/deploy/passwd*
+server/deploy/*.passwd*
 
 # Personal Claude / Codex settings (shared CLAUDE.md and AGENTS.md files ARE tracked)
 .claude/settings.local.json
@@ -43,6 +44,16 @@ build/
 *.elf
 *.bin
 *.hex
+*.o
+*.a
+*.map
+
+# Editor backups and extra tool caches
+*~
+.coverage*
+coverage/
+.mypy_cache/
+.ruff_cache/
 
 # Logs and temp files
 *.log

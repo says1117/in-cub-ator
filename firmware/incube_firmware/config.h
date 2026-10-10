@@ -71,6 +71,7 @@ const unsigned long WIFI_RETRY_MS = 5000;
 const unsigned long MQTT_RETRY_MS = 5000;
 const int MQTT_PORT = 1883;
 const int MQTT_KEEPALIVE_S = 15;
+const int MQTT_SOCKET_TIMEOUT_S = 2;  // per-step network timeout; one connect attempt can take a few of these
 const char MQTT_CLIENT_ID[] = "incube-esp32";
 
 // Topics. Must match CONTRACT.md.

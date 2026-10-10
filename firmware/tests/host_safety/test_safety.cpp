@@ -4,6 +4,7 @@
 // The ESP32 hard cutoff timer is not built here (it needs the real chip). Everything else is.
 
 #include <cstdio>
+#include <climits>
 #include <cstring>
 #include "Arduino.h"
 #include "config.h"
@@ -68,9 +69,9 @@ int main() {
   CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_TOO_SOON, "gap counted after emergency stop");
 
   relaysAllOff();  // external off while nothing runs: no crash
-  fakeNow = 0xFFFFFFFFUL - 1000;  // near millis() wraparound
+  // Near clock wraparound. unsigned long is 64-bit on the Mac, so wrap at its real limit.
+  fakeNow = ULONG_MAX - 1000 - PUMP_MIN_GAP_MS;
   advance(PUMP_MIN_GAP_MS);
-  fakeNow = 0xFFFFFFFFUL - 1000;
   CHECK(pump(RELAY_PUMP_B, "2000") == SAFETY_STARTED, "start near wrap");
   advance(1999); CHECK(pinOn(RELAY_PUMP_B_PIN), "on across wrap");
   advance(1); CHECK(!pinOn(RELAY_PUMP_B_PIN), "off on time across wrap");

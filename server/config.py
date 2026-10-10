@@ -27,6 +27,7 @@ SOIL_DRY_READINGS_N = 5
 # Timings (seconds)
 BOSS_INTRO_SECONDS = 5.2  # long enough for the boss arrival animation on the client
 BATTLE_TURN_SECONDS = 1.2
+SWAP_EXTRA_SECONDS = 1.6  # extra pause after a plant faints, while the next one comes in on the client
 REWARD_DISPLAY_SECONDS = 4.0
 COOLDOWN_SECONDS = 60.0
 ESP32_STALE_SECONDS = 30.0
@@ -48,12 +49,20 @@ SOURCE_SOIL = "soil"
 SOURCE_DEMO = "demo"
 
 # Battle (placeholder rules until the original game's numbers are confirmed)
-BOSS_HP = 24
-BOSS_ATK = 6
+BOSS_HP = 28
+BOSS_ATK = 7
 DEFAULT_CREATURE_HP = 30
 DEFAULT_CREATURE_ATK = 8
 DEFAULT_CREATURE_SKILL = "thorn_burst"
 CREATURES_FILE = "creatures.json"
+
+# The two plants are the fighters. The plant whose dry soil called the boss goes in first.
+# If it faints, the other plant steps in once, at full strength. The fight is lost when both are down.
+# A known figure on a plant's pad (creatures.json) replaces that plant's numbers.
+PLANT_FIGHTERS = {
+    "A": {"name": "Ember", "hp": 30, "atk": 8, "skill": "thorn_burst"},
+    "B": {"name": "Zest", "hp": 34, "atk": 7, "skill": "photosynthesis"},
+}
 
 # The player picks each move. The client sends {"action": "move", "move": "attack"}.
 WS_ACTION_MOVE = "move"
@@ -73,15 +82,16 @@ SKILLS = {
 }
 
 # Moisture tiers: how dry the plant is decides how strong the boss is.
-# Every tier must stay winnable (the plant wins at least 40% of fights), since a win waters it.
+# Every tier must stay winnable (the two plants together win at least 40% of fights), since a
+# win waters the plant. The numbers are set so a harder boss usually knocks the first plant out.
 #   moisture 50 and above: no boss
 #   under 50: tier 1   under 25: tier 2   0 (at or below 1): tier 3
 TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
 BOSS_TIERS = {            # tier: (name, hp, attack)
-    1: ("Drought Chomper", 24, 6),
-    2: ("Parched Brute", 32, 7),
-    3: ("Desert Dragon", 40, 7),
+    1: ("Drought Chomper", 28, 7),
+    2: ("Parched Brute", 36, 8),
+    3: ("Desert Dragon", 44, 10),
 }
 
 # Overall health fades while the plant is dry and recovers when it is not (percent per second)

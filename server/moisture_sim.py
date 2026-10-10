@@ -1,4 +1,4 @@
-"""TEMPORARY: a made-up moisture percentage for plant A, so the game can be played
+"""TEMPORARY: a made-up moisture percentage for one plant, so the game can be played
 without a sensor. Run the server with `python3 main.py --sim`.
 
 The percentage wanders toward a random target (sometimes 0, sometimes wet) at a steady

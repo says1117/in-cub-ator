@@ -7,6 +7,9 @@ stat, and a tie does nothing.
 Each creature also has one signature skill. A skill always works, then needs a few turns to
 recharge.
 
+The plants fight as a team of two: when the one in the fight faints, the next one on the bench
+steps in at full strength. The fight is lost only when nobody is left.
+
 Placeholder rules until the original game's numbers are confirmed with the team."""
 import json
 import os
@@ -30,6 +33,11 @@ class Stats:
     skill: str = C.DEFAULT_CREATURE_SKILL  # a key of config.SKILLS, or "" for none
 
 
+def plant_fighter(plant: str) -> Stats:
+    """The plant's own fighting numbers, from config.PLANT_FIGHTERS."""
+    return Stats(**C.PLANT_FIGHTERS[plant]) if plant in C.PLANT_FIGHTERS else Stats()
+
+
 def boss_for_tier(tier: int) -> Stats:
     name, hp, atk = C.BOSS_TIERS[min(max(tier, 1), max(C.BOSS_TIERS))]
     return Stats(name=name, hp=hp, atk=atk, skill="")
@@ -47,6 +55,9 @@ class Battle:
     turn: int = 0
     last_move: Optional[dict] = None
     skill_ready_in: int = 0  # turns until the creature's skill can be used again
+    plant: str = ""          # which plant is fighting right now ("" when it is not a plant)
+    bench: tuple = ()        # (plant, Stats) pairs still waiting to step in, in order
+    fallen: tuple = ()       # (plant, Stats) pairs that have fainted in this fight
 
 
 def load_creatures(path: str = C.CREATURES_FILE) -> dict:
@@ -67,8 +78,8 @@ def skill_of(stats: Stats) -> Optional[dict]:
     return C.SKILLS.get(stats.skill)
 
 
-def start(creature: Stats, boss: Stats = BOSS_STATS) -> Battle:
-    return Battle(creature, boss, creature.hp, boss.hp)
+def start(creature: Stats, boss: Stats = BOSS_STATS, plant: str = "", bench: tuple = ()) -> Battle:
+    return Battle(creature, boss, creature.hp, boss.hp, plant=plant, bench=tuple(bench))
 
 
 def winner(b: Battle) -> Optional[str]:
@@ -106,8 +117,19 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
 
     log["hit"] = who
     ready_in = C.SKILL_COOLDOWN_TURNS if use_skill else max(0, b.skill_ready_in - 1)
-    return replace(b, creature_hp=max(0, c_hp), boss_hp=max(0, b_hp),
-                   turn=b.turn + 1, last_move=log, skill_ready_in=ready_in)
+    b = replace(b, creature_hp=max(0, c_hp), boss_hp=max(0, b_hp),
+                turn=b.turn + 1, last_move=log, skill_ready_in=ready_in)
+    return _send_in_next(b)
+
+
+def _send_in_next(b: Battle) -> Battle:
+    """The fighter fainted and the boss still stands: the next plant on the bench steps in."""
+    if b.creature_hp > 0 or b.boss_hp <= 0 or not b.bench:
+        return b
+    (plant, stats), rest = b.bench[0], b.bench[1:]
+    log = dict(b.last_move, swap={"out": b.plant, "in": plant, "name": stats.name})
+    return replace(b, creature=stats, creature_hp=stats.hp, plant=plant, bench=rest,
+                   fallen=b.fallen + ((b.plant, b.creature),), skill_ready_in=0, last_move=log)
 
 
 def auto_move(b: Battle, rng: random.Random) -> str:

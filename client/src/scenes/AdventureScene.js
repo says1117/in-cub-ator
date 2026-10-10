@@ -3,6 +3,8 @@ import { paintEnchantedForest, addForestAmbience } from "../theme/enchantedFores
 import { createBossEntrance } from "../render/bossEntrance.js";
 import { ensureDragonBackTexture } from "../render/dragonBack.js";
 import { preloadBossArt } from "../data/bosses.js";
+import { preloadPlantArt } from "../data/plants.js";
+import { createPetParade } from "../render/petParade.js";
 
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
@@ -15,6 +17,7 @@ export default class AdventureScene extends Phaser.Scene {
       "/assets/characters/IMG_4990.png"
     );
     preloadBossArt(this);
+    preloadPlantArt(this);
   }
 
   create() {
@@ -194,8 +197,15 @@ export default class AdventureScene extends Phaser.Scene {
     // Fireflies, drifting petals and a soft vignette
     addForestAmbience(this);
 
-    // Boss arrival (client/src/render/bossEntrance.js) and the cut to the battle screen
-    this.entrance = createBossEntrance(this);
+    // The two plants hop along behind the dragon (client/src/render/petParade.js)
+    this.pets = createPetParade(this, this.basePlayerY - 2);
+
+    // Boss arrival (client/src/render/bossEntrance.js) and the cut to the battle screen.
+    // The plants react to each step of it.
+    this.entrance = createBossEntrance(this, (step, state) => {
+      if (step === "reset") this.pets.reset(state);
+      else this.pets.onEntrance(step, state);
+    });
     this.lastServerMode = null;
     this.inBattleScene = false;
     this.cutting = false;
@@ -206,6 +216,9 @@ export default class AdventureScene extends Phaser.Scene {
       this.cutting = false;
       this.entrance.cleanup();
       this.cameras.main.fadeIn(450, 7, 5, 26);
+      // back from a won fight: the plants celebrate while the reward is on screen
+      const state = this.registry.get("serverState");
+      if (state && state.mode === "reward") this.pets.celebrate();
     });
   }
 
@@ -1904,6 +1917,7 @@ export default class AdventureScene extends Phaser.Scene {
 
   update(time, delta) {
     this.syncWithServer();
+    this.pets.update(time, delta, this.walking, this.registry.get("serverState"));
 
     if (!this.walking) return;
 

@@ -1,6 +1,7 @@
 """Run: python -m unittest test_server -v  (from the server folder, no hardware needed)"""
 import random
 import unittest
+from dataclasses import replace
 
 import battle as B
 import moisture_sim as M
@@ -294,6 +295,108 @@ class TierTests(unittest.TestCase):
         self.assertLess(hp[0], hp[2])
 
 
+def team_fight(tier, first="A", skills=True):
+    """A fight the way the game starts one: one plant in, the other on the bench."""
+    def stats(plant):
+        s = B.plant_fighter(plant)
+        return s if skills else replace(s, skill="")
+    other = "B" if first == "A" else "A"
+    return B.start(stats(first), B.boss_for_tier(tier), plant=first, bench=[(other, stats(other))])
+
+
+class TeamTests(unittest.TestCase):
+    """The two plants fight as a team: the dry one first, the other steps in if it faints."""
+
+    def into_battle(self, plant="A", seed=1):
+        e = GameEngine(rng=random.Random(seed))
+        e.manual = True
+        e.on_demo_boss(0.0, plant)
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        return e, C.BOSS_INTRO_SECONDS + 1.0
+
+    def test_the_plant_that_called_the_boss_fights_first(self):
+        for first, other in (("A", "B"), ("B", "A")):
+            e, _ = self.into_battle(first)
+            self.assertEqual(e.battle.plant, first)
+            self.assertEqual(e.battle.creature.name, C.PLANT_FIGHTERS[first]["name"])
+            self.assertEqual([p for p, _ in e.battle.bench], [other])
+
+    def test_the_other_plant_steps_in_when_the_first_faints(self):
+        b = replace(team_fight(1, "A"), creature_hp=1, skill_ready_in=3)
+        b = B.resolve_turn(b, "special", "attack")      # attack beats special: the plant is hit
+        self.assertEqual(b.plant, "B")
+        self.assertEqual(b.creature.name, C.PLANT_FIGHTERS["B"]["name"])
+        self.assertEqual(b.creature_hp, C.PLANT_FIGHTERS["B"]["hp"])   # full strength
+        self.assertEqual(b.skill_ready_in, 0)                          # its own skill, ready
+        self.assertEqual(b.last_move["swap"], {"out": "A", "in": "B", "name": C.PLANT_FIGHTERS["B"]["name"]})
+        self.assertEqual(b.bench, ())
+        self.assertEqual([p for p, _ in b.fallen], ["A"])
+        self.assertIsNone(B.winner(b))                                 # the fight goes on
+
+    def test_the_fight_is_lost_only_when_both_plants_are_down(self):
+        b = replace(team_fight(1, "A"), creature_hp=1)
+        b = B.resolve_turn(b, "special", "attack")
+        self.assertIsNone(B.winner(b))
+        b = replace(b, creature_hp=1)
+        b = B.resolve_turn(b, "special", "attack")
+        self.assertEqual(b.creature_hp, 0)
+        self.assertEqual(B.winner(b), "boss")
+        self.assertNotIn("swap", b.last_move)
+
+    def test_nobody_steps_in_once_the_boss_is_beaten(self):
+        b = replace(team_fight(1, "A"), creature_hp=1, boss_hp=1)
+        b = B.resolve_turn(b, B.SKILL, "attack")   # the skill lands, and the boss hits back
+        self.assertEqual(B.winner(b), "creature")
+        self.assertEqual(b.plant, "A")
+        self.assertNotIn("swap", b.last_move)
+
+    def test_a_fight_with_no_bench_works_as_before(self):
+        b = replace(B.start(B.Stats(), B.boss_for_tier(1)), creature_hp=1)
+        b = B.resolve_turn(b, "special", "attack")
+        self.assertEqual(B.winner(b), "boss")
+
+    def test_snapshot_lists_the_team(self):
+        e, t = self.into_battle("A")
+        snap = e.snapshot()
+        self.assertEqual(snap["battle"]["plant"], "A")
+        self.assertEqual(snap["battle"]["team"]["A"]["state"], "fighting")
+        self.assertEqual(snap["battle"]["team"]["B"]["state"], "ready")
+        self.assertEqual(set(snap["fighters"]), set(C.PLANTS))
+        e.battle = replace(e.battle, creature_hp=1)
+        while e.battle.plant == "A":
+            t += C.BATTLE_TURN_SECONDS + 0.1
+            e.battle = replace(e.battle, creature_hp=1, boss_hp=e.battle.boss.hp)
+            e.on_player_move("special", t)
+        team = e.snapshot()["battle"]["team"]
+        self.assertEqual(team["A"], {"name": C.PLANT_FIGHTERS["A"]["name"], "hp": 0,
+                                     "max_hp": C.PLANT_FIGHTERS["A"]["hp"], "state": "down"})
+        self.assertEqual(team["B"]["state"], "fighting")
+        self.assertEqual(e.snapshot()["battle"]["creature"], C.PLANT_FIGHTERS["B"]["name"])
+
+    def test_the_dry_plant_is_watered_even_when_the_other_one_wins_the_fight(self):
+        e, t = self.into_battle("A")
+        e.battle = replace(e.battle, creature_hp=1)
+        while e.battle.plant == "A":
+            t += C.BATTLE_TURN_SECONDS + 0.1
+            e.battle = replace(e.battle, creature_hp=1, boss_hp=e.battle.boss.hp)
+            e.on_player_move("special", t)
+        cmds = []
+        while e.game.mode == S.BATTLE:
+            t += C.BATTLE_TURN_SECONDS + 0.1
+            e.battle = replace(e.battle, boss_hp=1, creature_hp=e.battle.creature.hp)
+            cmds = e.on_player_move("skill", t) or cmds
+        self.assertEqual(e.game.mode, S.REWARD)
+        self.assertEqual([c.topic for c in cmds], [C.TOPIC_CMD_PUMP.format(plant="A")])
+
+    def test_a_known_figure_on_a_pad_replaces_that_plant(self):
+        e = GameEngine(creatures=B.load_creatures("creatures.json"), rng=random.Random(1))
+        e.on_pad("B", "04:D4:E5:F6")
+        e.on_demo_boss(0.0, "A")
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        self.assertEqual(e.battle.creature.name, C.PLANT_FIGHTERS["A"]["name"])
+        self.assertEqual(e.battle.bench[0][1].name, "Mossling")
+
+
 class BalanceTests(unittest.TestCase):
     def test_every_tier_is_winnable_at_least_40_percent(self):
         for tier in (1, 2, 3):
@@ -301,7 +404,7 @@ class BalanceTests(unittest.TestCase):
             games = 3000
             for seed in range(games):
                 rng = random.Random(seed)
-                fight = B.start(B.Stats(), B.boss_for_tier(tier))
+                fight = team_fight(tier, "AB"[seed % 2])
                 while not B.winner(fight):
                     fight = B.play_turn(fight, rng)
                 wins += B.winner(fight) == "creature"
@@ -437,7 +540,7 @@ class SkillTests(unittest.TestCase):
             wins = 0
             for seed in range(3000):
                 rng = random.Random(seed)
-                fight = B.start(B.Stats(skill=""), B.boss_for_tier(tier))
+                fight = team_fight(tier, "AB"[seed % 2], skills=False)
                 while not B.winner(fight):
                     fight = B.play_turn(fight, rng)
                 wins += B.winner(fight) == "creature"
@@ -508,7 +611,7 @@ class ManualBattleTests(unittest.TestCase):
 
     def test_unknown_tag_uses_the_defaults(self):
         e, _ = self.into_battle(uid="not-a-known-tag")
-        self.assertEqual(e.battle.creature.name, "Sprout")
+        self.assertEqual(e.battle.creature.name, C.PLANT_FIGHTERS["A"]["name"])
 
     def test_skill_shows_its_recharge_in_the_snapshot(self):
         e, t = self.into_battle()

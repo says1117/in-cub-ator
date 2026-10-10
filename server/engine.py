@@ -124,12 +124,19 @@ class GameEngine:
             self.battle = None
         return commands
 
-    def _start_battle(self, now: float):
-        uid = self.pads.get(self.game.boss_plant, "")
-        creature = self.creatures.get(uid, B.Stats())
+    def fighter(self, plant: str) -> B.Stats:
+        """A plant's fighting numbers: the known figure on its pad, else the plant's own."""
+        stats = self.creatures.get(self.pads.get(plant, ""), B.plant_fighter(plant))
         if self.health <= 0:  # a wilted plant hits weaker
-            creature = B.weakened(creature, C.WILTED_ATK_FACTOR)
-        self.battle = B.start(creature, B.boss_for_tier(self.game.tier or 1))
+            stats = B.weakened(stats, C.WILTED_ATK_FACTOR)
+        return stats
+
+    def _start_battle(self, now: float):
+        # The plant that called the boss fights first. The others wait on the bench, driest first.
+        first = self.game.boss_plant
+        bench = sorted((p for p in C.PLANTS if p != first), key=lambda p: self.soil_pct[p])
+        self.battle = B.start(self.fighter(first), B.boss_for_tier(self.game.tier or 1),
+                              plant=first, bench=[(p, self.fighter(p)) for p in bench])
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
         self.move_ready_at = now + 0.5
         self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
@@ -138,6 +145,10 @@ class GameEngine:
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
         self.move_ready_at = now + C.BATTLE_TURN_SECONDS  # time for the client to show the turn
         self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
+        if (self.battle.last_move or {}).get("swap"):   # a plant fainted: time for the next one to come in
+            self.next_turn_at += C.SWAP_EXTRA_SECONDS
+            self.move_ready_at += C.SWAP_EXTRA_SECONDS
+            self.move_deadline += C.SWAP_EXTRA_SECONDS
         result = B.winner(self.battle)
         return self._finish_battle(result == "creature", now) if result else []
 
@@ -192,8 +203,14 @@ class GameEngine:
     def _battle_snapshot(self, b) -> dict:
         skill = B.skill_of(b.creature)
         left = max(0.0, self.move_deadline - (self._last_tick or 0.0))
+        team = {b.plant: {"name": b.creature.name, "hp": b.creature_hp, "max_hp": b.creature.hp,
+                          "state": "fighting"}}
+        team.update({p: {"name": s.name, "hp": s.hp, "max_hp": s.hp, "state": "ready"} for p, s in b.bench})
+        team.update({p: {"name": s.name, "hp": 0, "max_hp": s.hp, "state": "down"} for p, s in b.fallen})
         return {
             "turn": b.turn,
+            "plant": b.plant,      # which plant is fighting right now
+            "team": team,          # every plant in this fight: fighting, ready (on the bench) or down
             "creature": b.creature.name,
             "creature_hp": b.creature_hp,
             "creature_max_hp": b.creature.hp,
@@ -220,6 +237,8 @@ class GameEngine:
                 "stale": g.stale,
             },
             "mode": g.mode,
+            "fighters": {p: {"name": self.fighter(p).name,
+                             "skill": (B.skill_of(self.fighter(p)) or {}).get("name")} for p in C.PLANTS},
             "health": round(self.health, 1),
             "condition": self.condition(),
             "tier": self.moisture_tier(),

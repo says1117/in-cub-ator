@@ -45,16 +45,17 @@ async def main():
 
     sim = None
     if "--sim" in sys.argv:
-        # TEMPORARY: made-up moisture for plant A instead of a real sensor
-        sim = MoistureSim()
+        # TEMPORARY: made-up moisture for both plants instead of real sensors
+        sim = {p: MoistureSim() for p in C.PLANTS}
         C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS
         C.REWARD_MIN_GAP_SECONDS = C.SIM_COOLDOWN_SECONDS
         log.info("SIMULATED moisture is on, cooldown %.0fs", C.COOLDOWN_SECONDS)
 
     def send(cmd):
         client.publish(cmd.topic, cmd.payload)
-        if sim and cmd.topic == C.TOPIC_CMD_PUMP.format(plant="A"):
-            sim.watered(int(cmd.payload))
+        for p in (sim or {}):
+            if cmd.topic == C.TOPIC_CMD_PUMP.format(plant=p):
+                sim[p].watered(int(cmd.payload))
 
     async def ticker():
         while True:
@@ -74,11 +75,12 @@ async def main():
 
     async def moisture_simulator():
         client.publish(C.TOPIC_STATUS_ESP32, "online")
-        client.publish(C.TOPIC_SOIL.format(plant="B"), str(C.SOIL_RAW_WET))
         while True:
-            client.publish(C.TOPIC_SOIL.format(plant="A"), str(sim.raw()))
+            for p in C.PLANTS:
+                client.publish(C.TOPIC_SOIL.format(plant=p), str(sim[p].raw()))
             await asyncio.sleep(1.0)
-            sim.step(1.0)
+            for p in C.PLANTS:
+                sim[p].step(1.0)
 
     async with feed.serve():
         log.info("ws on %s:%s, mqtt %s:%s", C.WS_HOST, C.WS_PORT, C.MQTT_HOST, C.MQTT_PORT)

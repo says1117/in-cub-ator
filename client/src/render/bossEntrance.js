@@ -14,6 +14,9 @@
 // earth flying past the camera, the trees shuddering and dropping their petals.
 //
 // Everything this file creates or moves is undone by cleanup(), so the walk can carry on after.
+//
+// onStep(step, state) is called as it goes, so others can react (the plants in render/petParade.js do):
+// "spotted", "impact", "faceoff", "roar", and "reset" when everything has been put back.
 import Phaser from "phaser";
 import { bossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "./bossRig.js";
@@ -28,7 +31,7 @@ const SKID = 9;                   // how far the landing shoves the dragon
 const BOSS_DEPTH = 7;             // in front of the bushes (6), behind the dragon (9, 10)
 const OVERLAY_DEPTH = 40;         // above the vignette (19) and the scene's own text (21)
 
-export function createBossEntrance(scene) {
+export function createBossEntrance(scene, onStep = () => {}) {
   const made = [];     // display objects to destroy
   const tweens = [];
   const timers = [];
@@ -102,6 +105,7 @@ export function createBossEntrance(scene) {
     debris = [];
     mendTree();
     resetDragon();
+    onStep("reset", scene.registry.get("serverState"));
   }
 
   // ---- the steps, in order ----
@@ -472,6 +476,7 @@ export function createBossEntrance(scene) {
     after(320, () => {
       tween({ targets: screen, alpha: 0, duration: 180 });
       cam.shake(520, 0.02);
+      onStep("impact");
       wreckTerrain();
       // a quick push-in, as if the landing rocked the camera
       tween({ targets: cam, zoom: 1.07, duration: 90, yoyo: true, ease: "Quad.easeOut" });
@@ -549,6 +554,7 @@ export function createBossEntrance(scene) {
   }
 
   function faceOff(state, fullScale) {
+    onStep("faceoff", state);
     // cinema bars
     const top = keep(scene.add.rectangle(400, -23, 800, 46, 0x07051a).setDepth(30));
     const bottom = keep(scene.add.rectangle(400, 473, 800, 46, 0x07051a).setDepth(30));
@@ -572,6 +578,7 @@ export function createBossEntrance(scene) {
       tween({ targets: boss, x: LAND_X - 3, duration: 45, yoyo: true, repeat: 9 });
     }
     after(roarDelay, () => {
+      onStep("roar", state);
       const from = mouth();
       for (let i = 0; i < 5; i++) {
         // the roar rolls out of its mouth toward the dragon and the camera
@@ -648,6 +655,7 @@ export function createBossEntrance(scene) {
     const fullScale = art.height / boss.height;
 
     spotted(fullScale);
+    onStep("spotted", state);
     after(560, () => leap(fullScale, () => {
       impact(fullScale);
       after(950, () => faceOff(state, fullScale));

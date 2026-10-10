@@ -1,8 +1,17 @@
 import Phaser from "phaser";
 import { bossArt, preloadBossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "../render/bossRig.js";
+import { PLANTS, PLANT_IDS, plantMove, preloadPlantArt } from "../data/plants.js";
+import { createPlantRig } from "../render/plantRig.js";
+import { playBattleFx } from "../render/battleFx.js";
+import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
 
 const ENEMY_HEIGHT = 330;   // how tall the tier 1 boss is drawn here, roots included
+
+// Where everyone stands on the 1280 x 720 stage. size is a share of the plant picture's own size.
+const FIGHTER = { x: 405, y: 550, size: 1.5 };     // the plant that is fighting
+const BENCH = { x: 228, y: 562, size: 0.62 };      // the plant waiting its turn, or resting after it fainted
+const TRAINER = { x: 98, y: 568, height: 196 };    // the dragon, who sends the plants in
 
 export default class BossScene extends Phaser.Scene {
   constructor() {
@@ -11,6 +20,7 @@ export default class BossScene extends Phaser.Scene {
 
   preload() {
     preloadBossArt(this);
+    preloadPlantArt(this);
   }
 
   create() {
@@ -25,6 +35,8 @@ export default class BossScene extends Phaser.Scene {
     this.result = null;
     this.leaving = false;
     this.rewardTimer = null;
+    this.activeId = null;     // which plant is up front
+    this.busyUntil = 0;       // no new move is sent while a turn is still playing out
 
     // One root container controls scaling.
     this.root = this.add.container(0, 0);
@@ -1622,6 +1634,18 @@ drawAncientArch(x, y, scale = 1) {
     this.titleText = this.text(42, 31, "DROUGHT BOSS", 27);
     this.subtitleText = this.text(42, 65, "WAITING FOR A BOSS...", 15, "#c8d7ef");
 
+    // the team: both plants at a glance
+    this.panel(23, 104, 420, 42, 0x77b8b0);
+    this.teamUI = {};
+    PLANT_IDS.forEach((id, i) => {
+      const x = 38 + i * 207;
+      this.teamUI[id] = {
+        name: this.text(x, 115, PLANTS[id].name.toUpperCase(), 15),
+        hp: this.bar(x + 76, 116, 72, 17, 0x6bea86),
+        tag: this.text(x + 153, 118, "", 11, "#cbd4ff"),
+      };
+    });
+
     this.panel(400, 584, 290, 112, 0x5d739e);
 
     this.logText = this.text(
@@ -1683,41 +1707,29 @@ drawAncientArch(x, y, scale = 1) {
 
 
   buildActors() {
-
-
-    this.drawBattleAura(
-    320, 385,
-    0x9df6ba,
-    1.0
-  );
-
-  // Orange background behind Caterpillar
-  this.drawBattleAura(
-    915, 355,
-    0xff9868,
-    1.15
-  );
-
-    this.ellipse(
-      320, 550, 245, 40,
-      0x172b25, 0.38, this.actorLayer
-    );
+    this.drawBattleAura(FIGHTER.x, 395, 0x9df6ba, 1.0);
+    this.drawBattleAura(915, 355, 0xff9868, 1.15);
 
     this.ellipse(
       907, 457, 295, 37,
       0x172b25, 0.36, this.actorLayer
     );
 
-    if (this.textures.exists("dragonBack")) {
-      this.playerSprite = this.add.image(
-        320, 385, "dragonBack"
-      );
-      const ratio = this.playerSprite.width / this.playerSprite.height;
-      this.textures.get("dragonBack").setFilter(Phaser.Textures.FilterMode.NEAREST);
-      this.playerSprite.setDisplaySize(320 * ratio, 320).setTexture("dragonBack");
-    } else {
-      this.playerSprite = this.makeMinty(320, 385);
-    }
+    // The dragon no longer fights. It stands at the back and sends the plants in.
+    ensureDragonBackTexture(this);
+    this.textures.get(DRAGON_BACK_KEY).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.trainer = this.add.image(TRAINER.x, TRAINER.y, DRAGON_BACK_KEY).setOrigin(0.5, 1);
+    this.trainer.setScale(TRAINER.height / this.trainer.height);
+    this.ellipse(TRAINER.x, TRAINER.y - 3, 150, 22, 0x172b25, 0.34, this.actorLayer);
+    this.actorLayer.add(this.trainer);
+    this.tweens.add({
+      targets: this.trainer,
+      y: TRAINER.y - 5,
+      duration: 1200,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut"
+    });
 
     if (hasBossRig(this, bossArt(1))) {
       // made of moving pieces: it sways on its own
@@ -1729,20 +1741,7 @@ drawAncientArch(x, y, scale = 1) {
       this.enemySprite = this.makeCaterpillar(915, 355);
       this.enemySprite.setScale(0.85);
     }
-
-    this.actorLayer.add([
-      this.playerSprite,
-      this.enemySprite
-    ]);
-
-    this.tweens.add({
-      targets: this.playerSprite,
-      y: this.playerSprite.y - 7,
-      duration: 1200,
-      yoyo: true,
-      repeat: -1,
-      ease: "Sine.easeInOut"
-    });
+    this.actorLayer.add(this.enemySprite);
 
     // a boss made of moving pieces sways by itself; a flat picture gets a small bob instead
     if (!this.enemySprite.isBossRig) {
@@ -1754,6 +1753,139 @@ drawAncientArch(x, y, scale = 1) {
         repeat: -1,
         ease: "Sine.easeInOut"
       });
+    }
+
+    // Both plants (render/plantRig.js). They stay hidden until the server says who is fighting.
+    this.fighters = {};
+    for (const id of PLANT_IDS) {
+      const rig = createPlantRig(this, PLANTS[id], BENCH.x, BENCH.y, PLANTS[id].rig.height * BENCH.size);
+      rig.setVisible(false);
+      this.actorLayer.add(rig);
+      this.fighters[id] = rig;
+    }
+  }
+
+  // --------------------------------------------------
+  // THE PLANT TEAM
+  // --------------------------------------------------
+
+  // A spot on the screen (what a plant's point() gives) as a spot on the 1280 x 720 stage.
+  stagePoint(point) {
+    return { x: (point.x - this.root.x) / this.root.scaleX, y: (point.y - this.root.y) / this.root.scaleY };
+  }
+
+  // What an effect in render/battleFx.js is given.
+  fxContext(rig, at, lands) {
+    return {
+      scene: this,
+      layer: this.effectLayer,
+      plant: rig.plant,
+      at,
+      lands,
+      from: (name) => this.stagePoint(rig.point(name)),
+      to: { x: this.enemySprite.x - 20, y: this.enemySprite.y - 150 },
+    };
+  }
+
+  // The dragon throws an arm forward: "go!"
+  trainerCall() {
+    this.tweens.add({ targets: this.trainer, angle: 9, x: TRAINER.x + 12, duration: 120, yoyo: true, ease: "Quad.easeOut" });
+  }
+
+  // Which plant the server says is fighting.
+  fightingPlant(state) {
+    const battle = state.battle || {};
+    if (this.fighters[battle.plant]) return battle.plant;
+    if (state.boss && this.fighters[state.boss.plant]) return state.boss.plant;
+    return PLANT_IDS[0];
+  }
+
+  // Stands every plant where the server says it is, with no animation: up front, on the bench,
+  // or fainted on the bench. arrive: the fighter pops in as if the dragon just called it.
+  placeTeam(state, arrive = false) {
+    const team = (state.battle && state.battle.team) || {};
+    this.activeId = this.fightingPlant(state);
+    for (const id of PLANT_IDS) {
+      const rig = this.fighters[id];
+      const info = team[id];
+      this.tweens.killTweensOf(rig);
+      rig.stopActions();
+      if (id === this.activeId) {
+        rig.setPosition(FIGHTER.x, FIGHTER.y).setHeight(rig.plant.rig.height * FIGHTER.size).setAlpha(1).setVisible(true);
+        rig.setMood("fierce", true);
+        this.actorLayer.bringToTop(rig);
+      } else if (info) {
+        const down = info.state === "down";
+        rig.setPosition(BENCH.x, BENCH.y).setHeight(rig.plant.rig.height * BENCH.size).setAlpha(down ? 0.65 : 1).setVisible(true);
+        rig.setMood(down ? "fainted" : "happy", true);
+      } else {
+        rig.setVisible(false);
+      }
+    }
+    if (arrive) {
+      const rig = this.fighters[this.activeId];
+      this.trainerCall();
+      rig.play("enter");
+      rig.emote("anger", 1100);
+      playBattleFx("arrive", this.fxContext(rig, 60, true));
+    }
+  }
+
+  // The plant up front has fainted: it tips over and is carried to the bench, and the dragon
+  // sends the other one bounding in from the bench.
+  swapFighter(outId, inId, delay) {
+    const out = this.fighters[outId];
+    const next = this.fighters[inId];
+    this.activeId = inId;
+    if (!out || !next) return;
+
+    this.time.delayedCall(delay, () => {
+      out.setMood("fainted");
+      out.emote("sweat", 900);
+      this.message(`${this.plantName(outId)} fainted!`);
+    });
+    this.time.delayedCall(delay + 760, () => {
+      this.tweens.add({
+        targets: out, alpha: 0, duration: 200,
+        onComplete: () => {
+          out.setPosition(BENCH.x - 34, BENCH.y + 2).setHeight(out.plant.rig.height * BENCH.size * 0.9);
+          this.tweens.add({ targets: out, alpha: 0.65, duration: 220 });
+        },
+      });
+      this.trainerCall();
+      this.message(`Go, ${this.plantName(inId)}!`);
+      next.setVisible(true).setAlpha(1).setMood("fierce");
+      next.emote("anger", 1000);
+      this.actorLayer.bringToTop(next);
+      // two bounds from the bench to the front, growing as it comes closer
+      next.play("hop", { ms: 320, height: 0.34 });
+      next.play("hop", { ms: 320, height: 0.24, delay: 320 });
+      this.tweens.add({
+        targets: next, x: FIGHTER.x, y: FIGHTER.y, scaleX: FIGHTER.size, scaleY: FIGHTER.size,
+        duration: 640, ease: "Sine.easeInOut",
+        onComplete: () => playBattleFx("arrive", this.fxContext(next, 0, true)),
+      });
+    });
+  }
+
+  plantName(id) {
+    const team = (this.serverState && this.serverState.battle && this.serverState.battle.team) || {};
+    return (team[id] && team[id].name) || PLANTS[id].name;
+  }
+
+  // The little team strip: each plant's name, health and whether it is fighting, ready or down.
+  updateTeamUI(battle) {
+    const team = battle.team || {};
+    const tags = { fighting: "FIGHT", ready: "READY", down: "DOWN" };
+    const colors = { fighting: "#ffe680", ready: "#9dffb0", down: "#ff8f90" };
+    for (const id of PLANT_IDS) {
+      const ui = this.teamUI[id];
+      const info = team[id];
+      const alpha = !info ? 0.3 : info.state === "down" ? 0.5 : 1;
+      ui.name.setText((info ? info.name : PLANTS[id].name).toUpperCase()).setAlpha(alpha);
+      ui.tag.setText(info ? tags[info.state] || "" : "").setColor(info ? colors[info.state] || "#cbd4ff" : "#cbd4ff");
+      ui.hp.fill.setAlpha(alpha);
+      this.tweenBar(ui.hp, info ? info.hp / info.max_hp : 0);
     }
   }
 
@@ -1795,6 +1927,7 @@ drawAncientArch(x, y, scale = 1) {
   pickMove(move) {
     const battle = this.serverState?.battle;
     if (!battle?.awaiting_move || (move === "skill" && !battle.skill?.ready)) return;
+    if (this.time.now < this.busyUntil) return;   // the last turn is still playing out
     this.registry.get("sendMove")?.(move);
     this.message("Move sent. Waiting for the server...");
   }
@@ -1805,8 +1938,11 @@ drawAncientArch(x, y, scale = 1) {
     this.serverState = state;
     const battle = state.battle;
     if (state.boss && battle) {
+      if (this.activeId === null) this.placeTeam(state, true);   // the dragon sends the first plant in
       this.updateBattleHUD(state, previous);
       if (previous && battle.turn > previous.turn) this.animateTurn(previous, battle, state);
+      // a plant change with no turn to show it (the page was opened late): just put them in place
+      if (this.fightingPlant(state) !== this.activeId) this.placeTeam(state);
       this.lastBattle = { ...battle };
     }
     if (state.mode === "reward") this.showResult(true, state);
@@ -1840,16 +1976,17 @@ drawAncientArch(x, y, scale = 1) {
     const soil = meters?.water?.[boss.plant];
     this.lightText.setText(soil == null ? "-" : `${soil}%`);
     this.tweenBar(this.playerHP, battle.creature_hp / battle.creature_max_hp);
+    this.updateTeamUI(battle);
     this.tweenBar(this.enemyHP, battle.boss_hp / boss.max_hp);
     this.tweenBar(this.playerWater, (state.health ?? 0) / 100);
     this.tweenBar(this.playerLight, (soil ?? 0) / 100);
     this.enemyHP.fill.fillColor = battle.boss_hp / boss.max_hp < 0.25 ? 0xf46b65 : 0x63e67c;
     this.moveButtons.forEach(({ hit, bg, label, sub, move }) => {
       const skill = battle.skill;
-      const enabled = battle.awaiting_move && (move !== "skill" || skill?.ready);
-      if (move === "skill") {
-        label.setText(skill?.name || "SKILL");
-        sub.setText(skill ? (skill.ready ? "ready" : `in ${skill.ready_in} turns`) : "no skill");
+      const enabled = battle.awaiting_move && (move.key !== "skill" || skill?.ready);
+      if (move.key === "skill") {
+        label.setText(skill ? skill.name.toUpperCase() : "SKILL");
+        sub.setText(skill ? (skill.ready ? "Always works. Ready!" : `Recharging: ${skill.ready_in} turn${skill.ready_in === 1 ? "" : "s"}`) : "No skill");
       }
       hit.disableInteractive();
       if (enabled) hit.setInteractive({ useHandCursor: true });
@@ -1859,20 +1996,76 @@ drawAncientArch(x, y, scale = 1) {
     if (!previous || previous.turn === battle.turn) this.message(battle.awaiting_move ? `Choose a move.${countdown}` : "Waiting for the server...");
   }
 
+  // Plays one turn: the plant's move, then the boss's answer, then a change of plant if one fainted.
+  // What each plant does for a move, and the effect that goes with it, is in data/plants.js.
   animateTurn(previous, battle, state) {
     const move = battle.last_move;
     if (!move) return;
-    this.message(`${previous.creature || battle.creature} used ${this.moveName(move.creature)}! ${state.boss.name} used ${this.moveName(move.boss)}!`);
-    const playerLoss = previous.creature_hp - battle.creature_hp;
+    const swap = move.swap || null;
+    const actorId = swap && this.fighters[swap.out] ? swap.out : this.activeId;
+    const actor = this.fighters[actorId];
+    const enemy = this.enemySprite;
+    const name = previous.creature || battle.creature;
+    const moveName = move.skill || this.moveName(move.creature);
+    this.message(`${name} used ${moveName}! ${state.boss.name} used ${this.moveName(move.boss)}!`);
+
+    const healed = move.healed || 0;
     const bossLoss = previous.boss_hp - battle.boss_hp;
-    if (bossLoss > 0) { this.lunge(this.playerSprite, 45); this.flash(this.enemySprite); this.floating(875, 240, `-${bossLoss}`, "#fff48e"); }
-    if (playerLoss > 0) { if (this.enemySprite.roar) this.enemySprite.roar(); this.lunge(this.enemySprite, -45); this.flash(this.playerSprite); this.floating(310, 388, `-${playerLoss}`, "#ff8f90"); }
-    if (battle.creature_hp > previous.creature_hp) this.floating(310, 388, `+${battle.creature_hp - previous.creature_hp}`, "#8dff9b");
-    if (move.hit === "tie") this.floating(615, 560, "TIE", "#d7e3ff");
-    if (move.hit === "none") this.floating(605, 560, "BLOCKED", "#d7e3ff");
+    const before = previous.plant === undefined || previous.plant === actorId ? previous.creature_hp : 0;
+    const playerLoss = Math.max(0, (swap ? before : before - battle.creature_hp) + healed);
+    const above = () => ({ x: actor.x - 60, y: actor.y - actor.getHeight() * 0.72 });
+
+    // the plant's move
+    const what = plantMove(actor.plant, move.creature, move.skill);
+    const lands = bossLoss > 0;
+    actor.play(what.body, { reach: lands ? 0.85 : 0.4 });
+    const hitAt = actor.hitTime(what.body);
+    playBattleFx(what.fx, this.fxContext(actor, hitAt, lands));
+    if (lands) {
+      this.time.delayedCall(hitAt, () => {
+        this.flash(enemy);
+        this.lunge(enemy, 24);
+        this.floating(875, 240, `-${bossLoss}`, "#fff48e");
+        this.cameras.main.shake(130, 0.005);
+        this.benchCheers();
+      });
+    }
+    if (healed > 0) this.time.delayedCall(hitAt, () => this.floating(above().x, above().y, `+${healed}`, "#8dff9b"));
+
+    // the boss's answer
+    const bossAt = Math.max(hitAt + 300, 640);
+    if (playerLoss > 0) {
+      this.time.delayedCall(bossAt, () => {
+        if (enemy.roar) enemy.roar();
+        this.lunge(enemy, -60);
+        this.time.delayedCall(140, () => {
+          actor.play("hurt");
+          this.flash(actor);
+          this.floating(above().x, above().y, `-${playerLoss}`, "#ff8f90");
+          this.cameras.main.shake(160, 0.007);
+        });
+      });
+    }
+    if (move.hit === "tie") this.time.delayedCall(hitAt, () => this.floating(615, 400, "TIE", "#d7e3ff"));
+    if (move.hit === "none") this.time.delayedCall(hitAt, () => this.floating(590, 400, "BLOCKED", "#d7e3ff"));
+
+    // a plant that runs out of health tips over; if the other one is ready, the dragon sends it in
+    if (swap) this.swapFighter(swap.out, swap.in, bossAt + 460);
+    else if (battle.creature_hp <= 0) this.time.delayedCall(bossAt + 460, () => actor.setMood("fainted"));
+
+    const length = swap ? bossAt + 460 + 1500 : playerLoss > 0 ? bossAt + 560 : hitAt + 420;
+    this.busyUntil = this.time.now + length;
   }
 
   moveName(move) { return move ? move.charAt(0).toUpperCase() + move.slice(1) : ""; }
+
+  // The plant on the bench is glad when its friend lands a hit.
+  benchCheers() {
+    for (const id of PLANT_IDS) {
+      const rig = this.fighters[id];
+      if (id !== this.activeId && rig.visible && rig.getMood() !== "fainted") rig.play("hop", { height: 0.16 });
+    }
+  }
 
   lunge(sprite, dx) {
     this.tweens.add({ targets: sprite, x: sprite.x + dx, duration: 130, yoyo: true, ease: "Quad.easeOut" });
@@ -1883,6 +2076,16 @@ drawAncientArch(x, y, scale = 1) {
     this.result = won ? "win" : "loss";
     this.resultShownAt = this.time.now;
     if (won) this.dissolveBoss();
+    // the plants: a win has them bouncing, a loss leaves them flat out
+    PLANT_IDS.forEach((id, i) => {
+      const rig = this.fighters[id];
+      if (!rig.visible) return;
+      if (!won) { rig.setMood("fainted"); return; }
+      if (rig.getMood() === "fainted") return;
+      rig.setMood("proud");
+      rig.emote(i % 2 ? "heart" : "sparkle", 1800);
+      for (let n = 0; n < 3; n++) rig.play("cheer", { delay: 200 + i * 220 + n * 950 });
+    });
     this.time.delayedCall(won ? 500 : 0, () => {
       this.rect(0, 0, 1280, 720, 0x050b1c, 0.72, 0, this.effectLayer);
       const banner = this.text(430, 170, won ? "VICTORY!" : "DEFEAT", 56, won ? "#ffd867" : "#ff9caa", {}, this.effectLayer).setAngle(-8);

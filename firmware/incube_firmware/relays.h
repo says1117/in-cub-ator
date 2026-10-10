@@ -26,6 +26,10 @@ bool relayIsOn(RelayChannel channel);
 // Compare with (millis() - relayOnSinceMs(ch)), which stays correct when millis() wraps.
 unsigned long relayOnSinceMs(RelayChannel channel);
 
+// Drive one channel's pin OFF without touching the stored state. Used only by the safety
+// cutoff timer, which runs outside loop(). safetyLoop() then records the run as finished.
+void relayHardOff(RelayChannel channel);
+
 // Switch every channel off. Does nothing before relaysBegin().
 void relaysAllOff();
 

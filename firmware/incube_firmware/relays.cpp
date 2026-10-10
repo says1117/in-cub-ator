@@ -60,6 +60,11 @@ unsigned long relayOnSinceMs(RelayChannel channel) {
   return onSinceMs[channel];
 }
 
+void relayHardOff(RelayChannel channel) {
+  if (!started || !validChannel(channel)) return;
+  digitalWrite(CHANNEL_PINS[channel], RELAY_OFF);
+}
+
 void relaysAllOff() {
   if (!started) return;
   for (int i = 0; i < RELAY_CHANNEL_COUNT; i++) driveOff(i);

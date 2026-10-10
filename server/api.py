@@ -7,8 +7,9 @@ import config as C
 
 
 class Feed:
-    def __init__(self, engine):
+    def __init__(self, engine, queue):
         self.engine = engine
+        self.queue = queue  # client actions are passed on to main as ("ws/<action>", "")
         self.clients = set()
         self._last = None
 
@@ -16,10 +17,18 @@ class Feed:
         self.clients.add(ws)
         try:
             await ws.send(json.dumps(self.engine.snapshot()))
-            async for _ in ws:  # client sends nothing we need
-                pass
+            async for message in ws:
+                self._on_client_message(message)
         finally:
             self.clients.discard(ws)
+
+    def _on_client_message(self, message):
+        try:
+            action = json.loads(message).get("action")
+        except (ValueError, AttributeError):
+            return
+        if action == C.WS_ACTION_DEMO_BOSS:
+            self.queue.put_nowait(("ws/" + action, ""))
 
     async def publish_if_changed(self):
         msg = json.dumps(self.engine.snapshot(), sort_keys=True)

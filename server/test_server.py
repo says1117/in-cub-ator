@@ -62,12 +62,35 @@ class StateMachineTests(unittest.TestCase):
         g, plant = S.on_battle_done(g, True, 10.0)
         self.assertEqual((g.mode, plant), (S.REWARD, "B"))
 
-    def test_force_and_clear(self):
-        g = S.on_force(S.Game(), "B", 0)
-        self.assertEqual((g.mode, g.forced), (S.BOSS, True))
-        g = S.on_soil(g, "B", 99.0, 1)  # wet soil does not dismiss a forced boss
+    def test_demo_boss_ignores_soil_and_is_marked_demo(self):
+        g = S.on_demo(S.Game(), "B", 0)
+        self.assertEqual((g.mode, g.boss_plant, g.source), (S.BOSS, "B", C.SOURCE_DEMO))
+        g = S.on_soil(g, "B", 99.0, 1)  # wet soil does not dismiss a demo boss
         self.assertEqual(g.mode, S.BOSS)
-        self.assertEqual(S.on_force(g, None, 2).mode, S.WALKING)
+
+    def test_demo_ignored_while_boss_or_battle_active(self):
+        g = S.on_demo(S.Game(), "A", 0)
+        self.assertEqual(S.on_demo(g, "B", 1).boss_plant, "A")
+        g = S.on_tick(g, C.BOSS_INTRO_SECONDS)
+        self.assertEqual(S.on_demo(g, "B", 5).mode, S.BATTLE)
+
+    def test_demo_loss_retreats_like_a_real_boss(self):
+        g = S.on_tick(S.on_demo(S.Game(), "A", 0), C.BOSS_INTRO_SECONDS)
+        g, plant = S.on_battle_done(g, False, 10.0)
+        self.assertEqual((g.mode, plant, g.source), (S.COOLDOWN, None, None))
+
+    def test_wet_soil_dismisses_real_boss_during_battle(self):
+        g = S.on_tick(feed_dry(S.Game()), C.BOSS_INTRO_SECONDS)
+        self.assertEqual(g.mode, S.BATTLE)
+        g = S.on_soil(g, "A", C.SOIL_WET_THRESHOLD_PCT + 1, 5)
+        self.assertEqual((g.mode, g.boss_plant), (S.WALKING, None))
+
+    def test_offline_drops_boss_and_battle(self):
+        g = S.on_tick(feed_dry(S.Game()), C.BOSS_INTRO_SECONDS)
+        g = S.on_status(g, False)
+        self.assertEqual((g.mode, g.stale), (S.WALKING, True))
+        g = S.on_status(S.on_demo(S.Game(), "A", 0), False)
+        self.assertEqual(g.mode, S.WALKING)
 
     def test_offline_marks_stale(self):
         self.assertTrue(S.on_status(S.Game(), False).stale)
@@ -82,6 +105,11 @@ class RewardTests(unittest.TestCase):
 
     def test_wet_soil_gets_nothing(self):
         self.assertIsNone(R.water_reward("A", C.SOIL_WET_THRESHOLD_PCT, 1000.0, float("-inf")))
+
+    def test_demo_may_water_wet_soil_but_gap_and_cap_still_apply(self):
+        cmd = R.water_reward("A", 99.0, 1000.0, float("-inf"), demo=True)
+        self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
+        self.assertIsNone(R.water_reward("A", 99.0, 100.0, 100.0 - 1, demo=True))
 
     def test_one_reward_per_cooldown(self):
         self.assertIsNone(R.water_reward("A", 10.0, 100.0, 100.0 - 1))
@@ -157,18 +185,64 @@ class EngineFlowTests(unittest.TestCase):
             cmds += e.tick(t)
         self.assertEqual(cmds, [])
 
-    def test_forced_boss_win_runs_pump_once(self):
-        total = 0
-        for seed in range(20):
-            e = GameEngine(rng=random.Random(seed))
-            cmds = e.on_debug_boss("A", 0.0)
-            t = 0.0
-            for _ in range(200):
-                t += 0.5
-                cmds += e.tick(t)
-            total += len(cmds)
-            self.assertLessEqual(len(cmds), 1)
-        self.assertGreater(total, 0)
+    def play_demo(self, e, t):
+        cmds = e.on_demo_boss(t)
+        for _ in range(400):
+            t += 0.5
+            cmds += e.tick(t)
+        return cmds, t
+
+    def test_demo_win_waters_wet_pot_once_and_repeat_is_blocked(self):
+        old_gap = C.REWARD_MIN_GAP_SECONDS
+        C.REWARD_MIN_GAP_SECONDS = 10 ** 6
+        try:
+            for seed in range(50):
+                e = GameEngine(rng=random.Random(seed))
+                cmds, t = self.play_demo(e, 0.0)  # soil is 100% wet by default
+                if cmds:
+                    break
+            self.assertEqual(len(cmds), 1)
+            self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
+            for _ in range(5):  # repeated presses cannot flood the pot
+                again, t = self.play_demo(e, t)
+                self.assertEqual(again, [])
+        finally:
+            C.REWARD_MIN_GAP_SECONDS = old_gap
+
+    def test_demo_boss_source_in_snapshot(self):
+        e = GameEngine()
+        e.on_demo_boss(0.0)
+        self.assertEqual(e.snapshot()["boss"]["source"], C.SOURCE_DEMO)
+
+    def test_demo_ignored_while_active(self):
+        e = GameEngine()
+        e.on_demo_boss(0.0)
+        e.on_pad("B", "uid")
+        e.on_demo_boss(0.1)
+        self.assertEqual(e.game.boss_plant, "A")
+
+    def test_demo_targets_active_plant(self):
+        e = GameEngine()
+        e.on_pad("B", "uid")
+        self.assertEqual(e.pick_demo_plant(), "B")
+        e.on_pad("A", "uid2")
+        e.soil_pct = {"A": 50.0, "B": 20.0}
+        self.assertEqual(e.pick_demo_plant(), "B")
+        e.on_pad("B", "")
+        self.assertEqual(e.pick_demo_plant(), "A")
+
+    def test_offline_mid_battle_sends_no_pump(self):
+        e = GameEngine(rng=random.Random(1))
+        cmds = e.on_demo_boss(0.0)
+        t = 0.0
+        for _ in range(8):
+            t += 0.5
+            cmds += e.tick(t)
+        e.on_esp_status("offline")
+        for _ in range(400):
+            t += 0.5
+            cmds += e.tick(t)
+        self.assertEqual((cmds, e.game.mode), ([], S.WALKING))
 
 
 if __name__ == "__main__":

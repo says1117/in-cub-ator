@@ -15,7 +15,7 @@ COOLDOWN = "cooldown"
 class Game:
     mode: str = WALKING
     boss_plant: Optional[str] = None
-    forced: bool = False
+    source: Optional[str] = None   # C.SOURCE_SOIL or C.SOURCE_DEMO while a boss is active
     mode_until: float = 0.0
     dry_streak: dict = None
     cooldown_until: dict = None
@@ -34,13 +34,17 @@ def soil_pct(raw: int) -> float:
     return max(0.0, min(100.0, (raw - C.SOIL_RAW_DRY) / span * 100.0))
 
 
-def _summon(g: Game, plant: str, now: float, forced: bool) -> Game:
+def _summon(g: Game, plant: str, now: float, source: str) -> Game:
     streaks = dict(g.dry_streak)
     streaks[plant] = 0
     return replace(
-        g, mode=BOSS, boss_plant=plant, forced=forced,
+        g, mode=BOSS, boss_plant=plant, source=source,
         mode_until=now + C.BOSS_INTRO_SECONDS, dry_streak=streaks,
     )
+
+
+def _to_walking(g: Game) -> Game:
+    return replace(g, mode=WALKING, boss_plant=None, source=None)
 
 
 def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
@@ -50,10 +54,10 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
 
     if g.mode in (WALKING, COOLDOWN):
         if streaks[plant] >= C.SOIL_DRY_READINGS_N and now >= g.cooldown_until[plant]:
-            return _summon(g, plant, now, forced=False)
-    elif g.mode == BOSS and plant == g.boss_plant and not g.forced:
+            return _summon(g, plant, now, C.SOURCE_SOIL)
+    elif g.mode in (BOSS, BATTLE) and plant == g.boss_plant and g.source == C.SOURCE_SOIL:
         if pct > C.SOIL_WET_THRESHOLD_PCT:
-            return replace(g, mode=WALKING, boss_plant=None)
+            return _to_walking(g)
     return g
 
 
@@ -61,7 +65,7 @@ def on_tick(g: Game, now: float) -> Game:
     if g.mode == BOSS and now >= g.mode_until:
         return replace(g, mode=BATTLE)
     if g.mode == REWARD and now >= g.mode_until:
-        return replace(g, mode=COOLDOWN, boss_plant=None, forced=False,
+        return replace(g, mode=COOLDOWN, boss_plant=None, source=None,
                        mode_until=max(g.cooldown_until.values()))
     if g.mode == COOLDOWN and now >= g.mode_until:
         return replace(g, mode=WALKING)
@@ -79,23 +83,22 @@ def on_battle_done(g: Game, won: bool, now: float) -> Tuple[Game, Optional[str]]
         g = replace(g, mode=REWARD, cooldown_until=cool,
                     mode_until=now + C.REWARD_DISPLAY_SECONDS)
         return g, plant
-    g = replace(g, mode=COOLDOWN, boss_plant=None, forced=False,
+    g = replace(g, mode=COOLDOWN, boss_plant=None, source=None,
                 cooldown_until=cool, mode_until=cool[plant])
     return g, None
 
 
-def on_force(g: Game, plant: Optional[str], now: float) -> Game:
-    """Demo override. plant=None clears the boss."""
-    if plant is None:
-        if g.mode in (BOSS, BATTLE):
-            return replace(g, mode=WALKING, boss_plant=None, forced=False)
-        return g
-    if g.mode in (WALKING, COOLDOWN, BOSS):
-        cool = dict(g.cooldown_until)
-        cool[plant] = 0.0
-        return _summon(replace(g, cooldown_until=cool), plant, now, forced=True)
+def on_demo(g: Game, plant: str, now: float) -> Game:
+    """Demo button. Spawns a boss whatever the soil says. Ignored if a boss, battle or
+    reward is already active. Everything after the spawn is the normal flow."""
+    if g.mode in (WALKING, COOLDOWN):
+        return _summon(g, plant, now, C.SOURCE_DEMO)
     return g
 
 
 def on_status(g: Game, online: bool) -> Game:
-    return replace(g, stale=not online)
+    """Offline: mark readings stale and drop any active boss or battle, back to the walk."""
+    g = replace(g, stale=not online)
+    if not online and g.mode in (BOSS, BATTLE):
+        g = _to_walking(g)
+    return g

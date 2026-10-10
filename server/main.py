@@ -16,6 +16,8 @@ log = logging.getLogger("main")
 def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
     if topic == C.TOPIC_STATUS_ESP32:
         engine.on_esp_status(payload)
+    elif topic == "ws/" + C.WS_ACTION_DEMO_BOSS:
+        return engine.on_demo_boss(now)
     elif topic == C.TOPIC_DEBUG_BOSS:
         return engine.on_debug_boss(payload, now)
     else:
@@ -34,7 +36,7 @@ async def main():
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     engine = GameEngine(creatures=battle.load_creatures())
-    feed = api.Feed(engine)
+    feed = api.Feed(engine, queue)
     client = mqtt_io.connect(loop, queue)
 
     async def ticker():

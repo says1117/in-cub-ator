@@ -25,8 +25,8 @@ class GameEngine:
 
     def _set(self, new: S.Game):
         if new.mode != self.game.mode:
-            log.info("mode %s -> %s (boss=%s forced=%s)", self.game.mode, new.mode,
-                     new.boss_plant, new.forced)
+            log.info("mode %s -> %s (boss=%s source=%s)", self.game.mode, new.mode,
+                     new.boss_plant, new.source)
         self.game = new
 
     # inputs -----------------------------------------------------------
@@ -40,15 +40,27 @@ class GameEngine:
 
     def on_esp_status(self, text: str):
         self._set(S.on_status(self.game, text.strip() == "online"))
+        if self.game.mode not in (S.BATTLE, S.REWARD):
+            self.battle = None
+
+    def pick_demo_plant(self) -> str:
+        """The pad with a creature, or the lower water meter if both or neither has one."""
+        with_creature = [p for p in C.PLANTS if self.pads[p]]
+        pool = with_creature if len(with_creature) == 1 else list(C.PLANTS)
+        return min(pool, key=lambda p: self.soil_pct[p])
+
+    def on_demo_boss(self, now: float, plant: Optional[str] = None) -> list:
+        """Demo button (WebSocket) or the optional laptop topic."""
+        plant = plant or self.pick_demo_plant()
+        before = self.game.mode
+        self._set(S.on_demo(self.game, plant, now))
+        if self.game.mode == before:
+            log.info("demo boss ignored, mode is %s", before)
+        return self.tick(now)
 
     def on_debug_boss(self, payload: str, now: float) -> list:
         p = payload.strip().upper()
-        if p in C.PLANTS:
-            self._set(S.on_force(self.game, p, now))
-        elif p == "OFF":
-            self._set(S.on_force(self.game, None, now))
-            self.battle = None
-        return self.tick(now)
+        return self.on_demo_boss(now, p) if p in C.PLANTS else []
 
     # time -------------------------------------------------------------
     def tick(self, now: float) -> list:
@@ -72,17 +84,18 @@ class GameEngine:
         return commands
 
     def _finish_battle(self, won: bool, now: float) -> list:
-        plant = self.game.boss_plant
-        forced = self.game.forced
-        new, reward_plant = S.on_battle_done(self.game, won, now)
+        demo = self.game.source == C.SOURCE_DEMO
+        new, plant = S.on_battle_done(self.game, won, now)
         self._set(new)
-        if reward_plant is None:
+        if plant is None:
             return []
-        pct = C.DEMO_FAKE_DRY_PCT if forced else self.soil_pct[plant]
-        last = float("-inf") if forced else self.last_reward_at[plant]
-        cmd = R.water_reward(plant, pct, now, last)
+        if self.game.stale:
+            log.info("reward for %s blocked, ESP32 offline", plant)
+            return []
+        pct = self.soil_pct[plant]
+        cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo)
         if cmd is None:
-            log.info("reward for %s blocked (soil %.0f%%)", plant, pct)
+            log.info("reward for %s blocked (soil %.0f%%, demo=%s)", plant, pct, demo)
             return []
         self.last_reward_at[plant] = now
         self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload)}
@@ -105,6 +118,7 @@ class GameEngine:
                 "hp": b.boss_hp if b else B.BOSS_STATS.hp,
                 "max_hp": B.BOSS_STATS.hp,
                 "type": "drought",
+                "source": g.source,
             },
             "battle": None if b is None else {
                 "turn": b.turn,

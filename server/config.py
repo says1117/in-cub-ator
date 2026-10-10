@@ -38,8 +38,10 @@ LIGHT_MINUTES_PER_WIN = 30
 LIGHT_MAX_MINUTES = 60
 REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
 
-# Demo override: fake dry soil percent used while a boss is forced
-DEMO_FAKE_DRY_PCT = 5
+# Demo button: the client sends {"action": "demo_boss"} over the WebSocket
+WS_ACTION_DEMO_BOSS = "demo_boss"
+SOURCE_SOIL = "soil"
+SOURCE_DEMO = "demo"
 
 # Battle (placeholder rules until the original game's numbers are confirmed)
 BOSS_HP = 30

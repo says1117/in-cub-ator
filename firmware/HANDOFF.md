@@ -1,5 +1,22 @@
 <!-- firmware/HANDOFF.md: Firmware status and handoff notes for the other roles. Owner: Role 1 (firmware). -->
 
-# HANDOFF.md
+# Firmware handoff
 
-TODO
+## Verified on the bench (test sketches in firmware/tests)
+
+- I2C scan: both PN532 readers answer at 0x24 (A on Wire, B on Wire1).
+- Tag read: both readers read their own tag and detect removal. Keep tags 10 cm or more from the wrong reader.
+- Soil: both sensors read independently. Dry about 3430, wet about 1450 (see calibration.md).
+- Relay: the three channels click in order and the channel LEDs light one at a time.
+
+## Open issues
+
+- Pumps: they run only faintly when they should be off. The pump wiring may still bypass the relay (red wire not on the relay NO terminal). Not resolved. Do not run a pump unless it is under water, and do not leave pumps powered unattended until this is fixed.
+- Grow light: not present. Channel 3 (IN3, GPIO 27) is untested with a load.
+- PN532 readers have no reset wire. After uploading code, unplug the USB for 5 seconds so the readers restart cleanly.
+- Soil calibration is from water, not soil. Redo it with the real pots.
+
+## Not started
+
+- Real firmware in incube_firmware (config, relays, safety, soil, pads, network, main loop).
+- Wi-Fi and MQTT against the Jetson (address not in NOTES.md yet).

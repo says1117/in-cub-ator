@@ -1,0 +1,6 @@
+{
+  "_comment": "One entry per NFC tag UID. skill is one of: thorn_burst, photosynthesis, bark_shield. A tag that is not listed uses the defaults in config.py.",
+  "04:A1:B2:C3": { "name": "Thornback", "hp": 30, "atk": 8, "skill": "thorn_burst" },
+  "04:D4:E5:F6": { "name": "Mossling", "hp": 36, "atk": 6, "skill": "photosynthesis" },
+  "04:77:88:99": { "name": "Barkhorn", "hp": 32, "atk": 7, "skill": "bark_shield" }
+}

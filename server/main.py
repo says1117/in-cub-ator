@@ -17,7 +17,9 @@ log = logging.getLogger("main")
 
 def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
     if topic == C.TOPIC_STATUS_ESP32:
-        engine.on_esp_status(payload)
+        engine.on_esp_status(payload, now)
+    elif topic == "ws/" + C.WS_ACTION_MOVE:
+        return engine.on_player_move(payload, now)
     elif topic == "ws/" + C.WS_ACTION_DEMO_BOSS:
         return engine.on_demo_boss(now)
     elif topic == C.TOPIC_DEBUG_BOSS:
@@ -57,6 +59,8 @@ async def main():
     async def ticker():
         while True:
             await asyncio.sleep(0.2)
+            # With a game screen connected the player picks the moves. With none, the game plays itself.
+            engine.manual = bool(feed.clients)
             for cmd in engine.tick(time.monotonic()):
                 send(cmd)
             await feed.publish_if_changed()

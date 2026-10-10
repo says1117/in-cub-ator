@@ -4,6 +4,8 @@ import StorageScene from "./scenes/StorageScene.js";
 import CastIronScene from "./scenes/CastIronScene.js";
 import MonsteraScene from "./scenes/MonsteraScene.js";
 import BossScene from "./scenes/BossScene.js";
+import { loadPlants } from "./state/plantStore.js";
+import { connectPlantSocket } from "./services/socket.js";
 import "./style.css";
 
 const routes = {
@@ -37,6 +39,12 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
+connectPlantSocket();
+
+
+loadPlants().catch(error => {
+  console.error("Backend connection failed:", error);
+});
 
 // Navigate between URLs and scenes
 function navigate(path) {

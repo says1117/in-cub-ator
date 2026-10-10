@@ -1,8 +1,50 @@
 import Phaser from "phaser";
+import { getAllPlants, getPlantById, subscribe } from "../state/plantStore.js";
 
 export default class BossScene extends Phaser.Scene {
   constructor() {
     super({ key: "BossScene" });
+  }
+
+  init(data = {}) {
+    this.selectedPlantId = data.plantId ?? null;
+  }
+
+  // Map backend plant fields into the existing battle HUD.
+  makePlayer(plant) {
+    const number = (value, fallback) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const hp = Math.max(0, number(plant.hp ?? plant.health, 100));
+    const water = Phaser.Math.Clamp(number(plant.soilMoisture ?? plant.soil_moisture ?? plant.water, 0), 0, 100);
+    const light = Phaser.Math.Clamp(number(plant.lightIntensity ?? plant.light_intensity ?? plant.light, 0), 0, 100);
+    return {
+      plantId: plant.plantId ?? plant.id,
+      name: plant.name ?? plant.species ?? "Plant",
+      species: plant.species ?? "",
+      level: number(plant.level, 1),
+      hp, maxHp: Math.max(100, number(plant.maxHp ?? plant.max_hp, 100), hp),
+      water, maxWater: 100,
+      light, maxLight: 100,
+      co2: 20, maxCo2: 20
+    };
+  }
+
+  // Preserve combat-only changes when fresh sensor data arrives.
+  applyServerPlant(plant) {
+    if (!plant || this.finished) return;
+    const next = this.makePlayer(plant);
+    if (this.player) {
+      next.hp = Phaser.Math.Clamp(next.hp + this.combatHpDelta, 0, next.maxHp);
+      next.water = Phaser.Math.Clamp(next.water + this.combatWaterDelta, 0, 100);
+      next.light = Phaser.Math.Clamp(next.light + this.combatLightDelta, 0, 100);
+      next.co2 = this.player.co2;
+    }
+    this.player = next;
+    if (this.playerNameText) this.playerNameText.setText(next.name);
+    if (this.playerLevelText) this.playerLevelText.setText(`Lv. ${next.level}`);
+    if (this.playerHP) this.updateHUD();
   }
 
   preload() {
@@ -18,18 +60,13 @@ export default class BossScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor("#477da9");
 
-    this.player = {
-      name: "Minty",
-      level: 10,
-      hp: 29,
-      maxHp: 29,
-      water: 25,
-      maxWater: 25,
-      light: 24,
-      maxLight: 24,
-      co2: 20,
-      maxCo2: 20
-    };
+    const available = getAllPlants();
+    const selected = (this.selectedPlantId && getPlantById(this.selectedPlantId)) || available[0];
+    this.combatHpDelta = 0;
+    this.combatWaterDelta = 0;
+    this.combatLightDelta = 0;
+    this.player = selected ? this.makePlayer(selected) : null;
+    this.activePlantId = selected?.plantId ?? selected?.id ?? this.selectedPlantId;
 
     this.enemy = {
       name: "Caterpillar",
@@ -66,24 +103,32 @@ this.root.add([
   this.effectLayer
 ]);
 
-    this.root.add([
-      this.skyLayer,
-      this.forestLayer,
-      this.actorLayer,
-      this.uiLayer,
-      this.effectLayer
-    ]);
 
     this.buildWorld();
     this.buildActors();
     this.buildHUD();
     this.buildMoves();
 
-    this.message("A wild Caterpillar appeared! Choose a move.");
+    this.message(this.player
+      ? `A wild Caterpillar appeared! ${this.player.name}, choose a move.`
+      : "Waiting for plant data from server...");
+
+    this.unsubscribePlants = subscribe((plants) => {
+      const plant = plants.find(p => (p.plantId ?? p.id) === this.activePlantId)
+        ?? (!this.activePlantId ? plants[0] : null);
+      if (!plant) return;
+      this.activePlantId = plant.plantId ?? plant.id;
+      this.applyServerPlant(plant);
+      if (this.logText && !this.busy && !this.finished) {
+        this.message(`Ready: ${this.player.name}. Choose a move.`);
+      }
+    });
 
     this.scale.on("resize", this.onResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off("resize", this.onResize, this);
+      this.unsubscribePlants?.();
+      this.unsubscribePlants = null;
     });
 
     this.onResize();
@@ -663,6 +708,9 @@ drawBattleAura(x, y, color = 0x8ef5a5, scale = 1) {
   // --------------------------------------------------
   // PIXELATED RADIAL RAYS
   // --------------------------------------------------
+
+
+
 
   for (let i = 0; i < 16; i++) {
     const angle = (i / 16) * Math.PI * 2;
@@ -1374,6 +1422,7 @@ drawForestRuins(rng) {
       }
     }
 
+
     // --------------------------------------------------
     // SMALL PLANTS AT THE BASE
     // --------------------------------------------------
@@ -1387,37 +1436,26 @@ drawForestRuins(rng) {
       px(pxX + 3, pxY - 11, 9, 5, C.vineLight);
     }
 
-    // --------------------------------------------------
     // RUBBLE AROUND THE WALL
-    // --------------------------------------------------
-
     for (let i = 0; i < 12; i++) {
       const rx = x + rng.between(-25, Math.floor(w + 25));
       const ry = y + h + rng.between(0, 24);
       const size = rng.between(5, 14);
 
-      // Rubble shadow
       px(rx - 2, ry + 3, size + 5, 5, C.outline, 0.55);
-
-      // Stone fragment
       px(rx, ry - size / 2, size, size / 2 + 4,
         rng.pick([C.stone, C.light, C.shadow]));
-
-      // Highlight
       px(rx + 2, ry - size / 2, Math.max(4, size - 5),
         3, C.highlight, 0.65);
     }
   });
 }
 
-
-
 drawAncientArch(x, y, scale = 1) {
   const g = this.add.graphics();
   this.forestLayer.add(g);
 
   const P = 4;
-
   const px = (xx, yy, w, h, color) => {
     g.fillStyle(color);
     g.fillRect(
@@ -1437,42 +1475,32 @@ drawAncientArch(x, y, scale = 1) {
   const h = 175 * scale;
   const pillarW = 32 * scale;
 
-  // Left pillar
   px(x, y, pillarW, h, dark);
   px(x + 5 * scale, y + 5 * scale,
     pillarW - 10 * scale, h - 10 * scale, stone);
 
-  // Right pillar
   px(x + w - pillarW, y, pillarW, h, dark);
   px(x + w - pillarW + 5 * scale, y + 5 * scale,
     pillarW - 10 * scale, h - 10 * scale, stone);
 
-  // Upper stone beam
   px(x - 8 * scale, y - 20 * scale,
     w + 16 * scale, 40 * scale, dark);
-
   px(x - 3 * scale, y - 16 * scale,
     w + 6 * scale, 28 * scale, stone);
 
-  // Top highlights
-  px(x, y - 16 * scale,
-    w, 5 * scale, light);
+  px(x, y - 16 * scale, w, 5 * scale, light);
 
-  // Stone seams
   for (let i = 1; i < 5; i++) {
     px(x + i * w / 5, y - 15 * scale,
       4 * scale, 25 * scale, dark);
   }
 
-  // Moss growing across the arch
   for (let i = 0; i < 20; i++) {
     const mx = x + (i * 37 % Math.floor(w));
     const my = y - 20 * scale + (i % 3) * 5 * scale;
-
     px(mx, my, 12 * scale, 6 * scale, moss);
   }
 
-  // Cracks on pillars
   px(x + 12 * scale, y + 45 * scale,
     4 * scale, 25 * scale, dark);
   px(x + 16 * scale, y + 65 * scale,
@@ -1484,320 +1512,308 @@ drawAncientArch(x, y, scale = 1) {
     14 * scale, 4 * scale, dark);
 }
 
+drawForestRock(x, y, scale = 1) {
+  this.ellipse(x, y + 5 * scale,
+    38 * scale, 12 * scale, 0x283a2c, 0.3);
+  this.ellipse(x, y,
+    35 * scale, 22 * scale, 0x5b6155);
+  this.ellipse(x - 4 * scale, y - 5 * scale,
+    23 * scale, 11 * scale, 0x9a9984);
+  this.rect(x + 5 * scale, y,
+    9 * scale, 4 * scale, 0x414b43);
+}
 
+drawGrassTuft(x, y, rng) {
+  const color = rng.pick([
+    0x385e36, 0x527d3c, 0x7da34b, 0x9aab52
+  ]);
 
+  this.rect(x, y - 8, 3, 10, color);
+  this.rect(x - 6, y - 5, 3, 7, color);
+  this.rect(x + 6, y - 6, 3, 8, color);
 
-
-  drawForestRock(x, y, scale = 1) {
-    this.ellipse(x, y + 5 * scale,
-      38 * scale, 12 * scale, 0x283a2c, 0.3);
-
-    this.ellipse(x, y,
-      35 * scale, 22 * scale, 0x5b6155);
-
-    this.ellipse(x - 4 * scale, y - 5 * scale,
-      23 * scale, 11 * scale, 0x9a9984);
-
-    this.rect(x + 5 * scale, y,
-      9 * scale, 4 * scale, 0x414b43);
-  }
-
-  drawGrassTuft(x, y, rng) {
-    const color = rng.pick([
-      0x385e36, 0x527d3c, 0x7da34b, 0x9aab52
+  if (rng.frac() < 0.12) {
+    const flowerColor = rng.pick([
+      0xffd76b, 0xf4a6a5, 0xf9e5ba
     ]);
 
-    this.rect(x, y - 8, 3, 10, color);
-    this.rect(x - 6, y - 5, 3, 7, color);
-    this.rect(x + 6, y - 6, 3, 8, color);
+    this.rect(x, y - 14, 2, 10, 0x42713d);
+    this.ellipse(x, y - 15, 8, 8, flowerColor);
+    this.ellipse(x, y - 15, 3, 3, 0xe8a24b);
+  }
+}
 
-    if (rng.frac() < 0.12) {
-      const flowerColor = rng.pick([
-        0xffd76b, 0xf4a6a5, 0xf9e5ba
-      ]);
+drawFallenLeaf(x, y, rng) {
+  const color = rng.pick([
+    0xd46b37, 0xef9d40, 0xf0c15f,
+    0x9f4932, 0xc57b3c
+  ]);
 
-      this.rect(x, y - 14, 2, 10, 0x42713d);
-      this.ellipse(x, y - 15, 8, 8, flowerColor);
-      this.ellipse(x, y - 15, 3, 3, 0xe8a24b);
+  const leaf = this.add.ellipse(
+    x, y,
+    rng.between(5, 11),
+    rng.between(3, 6),
+    color
+  );
+
+  leaf.rotation = rng.realInRange(-Math.PI, Math.PI);
+  this.forestLayer.add(leaf);
+}
+
+// --------------------------------------------------
+// CHARACTERS
+// --------------------------------------------------
+
+makeMinty(x, y) {
+  const c = this.add.container(x, y);
+
+  const e = (dx, dy, w, h, color, rot = 0) => {
+    const s = this.add.ellipse(dx, dy, w, h, color);
+    s.rotation = rot;
+    c.add(s);
+  };
+
+  e(0, 74, 65, 175, 0x6bdc8b);
+  e(-60, 45, 92, 42, 0x3abf88, -0.5);
+  e(60, 45, 92, 42, 0x3abf88, 0.5);
+
+  for (let i = 0; i < 9; i++) {
+    const a = i * Math.PI * 2 / 9;
+
+    e(
+      Math.cos(a) * 73,
+      Math.sin(a) * 62 - 40,
+      85, 38,
+      i % 2 ? 0x36b98a : 0x65e5a4,
+      a
+    );
+  }
+
+  e(0, -35, 155, 143, 0x8af3b0);
+  e(-30, -44, 14, 20, 0x173e36);
+  e(30, -44, 14, 20, 0x173e36);
+  e(0, -6, 18, 8, 0xd96c91);
+
+  return c;
+}
+
+// --------------------------------------------------
+// BATTLE UI
+// --------------------------------------------------
+
+panel(x, y, w, h, edge = 0x50618d) {
+  this.rect(
+    x + 5, y + 6, w, h,
+    0x111322, 0.5, 0, this.uiLayer
+  );
+
+  this.rect(
+    x, y, w, h,
+    0x151d37, 1, edge, this.uiLayer
+  );
+}
+
+bar(x, y, w, h, color) {
+  this.rect(
+    x, y, w, h,
+    0x080f23, 1, 0x67718c, this.uiLayer
+  );
+
+  const fill = this.rect(
+    x + 4, y + 4, w - 8, h - 8,
+    color, 1, 0, this.uiLayer
+  );
+
+  return { fill, maxWidth: w - 8 };
+}
+
+setBar(bar, ratio) {
+  bar.fill.width = Math.max(
+    0,
+    bar.maxWidth * Phaser.Math.Clamp(ratio, 0, 1)
+  );
+}
+
+buildHUD() {
+  // Enemy HUD.
+  this.panel(760, 28, 492, 158, 0xf17b80);
+
+  this.text(787, 46, "Caterpillar", 32);
+  this.text(1125, 51, "Lv. 8", 23, "#cbd4ff");
+
+  this.text(784, 100, "HP", 23, "#ff7777");
+  this.enemyHP = this.bar(865, 104, 260, 24, 0x63e67c);
+  this.enemyHPText = this.text(1140, 101, "100/100", 18);
+
+  this.text(784, 139, "STA", 21, "#6fd5ff");
+  this.enemySTA = this.bar(865, 143, 260, 20, 0x51c8fa);
+  this.enemySTAText = this.text(1140, 140, "70/70", 18);
+
+  // Player HUD.
+  this.panel(24, 551, 556, 153, 0x79dcb0);
+
+  this.playerNameText = this.text(
+    48, 568, this.player?.name ?? "Loading...", 32
+  );
+  this.playerLevelText = this.text(
+    445, 574, `Lv. ${this.player?.level ?? "--"}`,
+    21, "#cbd4ff"
+  );
+
+  this.text(49, 614, "HP", 19, "#ff7878");
+  this.playerHP = this.bar(151, 614, 285, 18, 0x6bea86);
+  this.playerHPText = this.text(449, 608, "29/29", 19);
+
+  this.text(49, 642, "WATER", 18, "#68cfff");
+  this.playerWater = this.bar(151, 642, 285, 17, 0x51c7ff);
+  this.waterText = this.text(449, 638, "25/25", 18);
+
+  this.text(49, 670, "SUN", 18, "#ffe077");
+  this.playerLight = this.bar(151, 670, 285, 17, 0xffd85e);
+  this.lightText = this.text(449, 666, "24/24", 18);
+
+  this.panel(23, 20, 420, 74, 0x77b8b0);
+  this.text(42, 31, "ROOT CELLAR", 27);
+  this.text(
+    42, 65,
+    "BOSS BATTLE  •  ROOM 2/5",
+    15, "#c8d7ef"
+  );
+
+  // Battle log.
+  this.panel(585, 626, 270, 78, 0x5d739e);
+
+  this.logText = this.text(
+    602, 642, "", 16, "#e6f0ff",
+    { wordWrap: { width: 239 } }
+  );
+
+  this.updateHUD();
+
+  if (!this.player) {
+    this.playerHPText.setText("--");
+    this.waterText.setText("--");
+    this.lightText.setText("--");
+  }
+}
+
+buildMoves() {
+  const moves = [
+    {
+      name: "WATER",
+      sub: "Restore water • +HP",
+      color: 0x236aab,
+      key: "water"
+    },
+    {
+      name: "SUNLIGHT",
+      sub: "Restore sunlight • +HP",
+      color: 0xa87327,
+      key: "sun"
+    },
+    {
+      name: "CO₂",
+      sub: "Boost next leaf attack",
+      color: 0x357e4b,
+      key: "co2"
+    },
+    {
+      name: "LEAF FLURRY",
+      sub: "Damage enemy • costs resources",
+      color: 0x3a9254,
+      key: "leaf"
     }
-  }
+  ];
 
-  drawFallenLeaf(x, y, rng) {
-    const color = rng.pick([
-      0xd46b37, 0xef9d40, 0xf0c15f,
-      0x9f4932, 0xc57b3c
-    ]);
+  this.moveButtons = [];
 
-    const leaf = this.add.ellipse(
-      x, y,
-      rng.between(5, 11),
-      rng.between(3, 6),
-      color
-    );
+  moves.forEach((move, i) => {
+    const x = 710 + (i % 2) * 281;
+    const y = 477 + Math.floor(i / 2) * 111;
+    const w = 272;
+    const h = 99;
 
-    leaf.rotation = rng.realInRange(-Math.PI, Math.PI);
-    this.forestLayer.add(leaf);
-  }
-
-  // --------------------------------------------------
-  // CHARACTERS
-  // --------------------------------------------------
-
- 
-
-  makeMinty(x, y) {
-    const c = this.add.container(x, y);
-
-    const e = (dx, dy, w, h, color, rot = 0) => {
-      const s = this.add.ellipse(dx, dy, w, h, color);
-      s.rotation = rot;
-      c.add(s);
-    };
-
-    e(0, 74, 65, 175, 0x6bdc8b);
-    e(-60, 45, 92, 42, 0x3abf88, -0.5);
-    e(60, 45, 92, 42, 0x3abf88, 0.5);
-
-    for (let i = 0; i < 9; i++) {
-      const a = i * Math.PI * 2 / 9;
-
-      e(
-        Math.cos(a) * 73,
-        Math.sin(a) * 62 - 40,
-        85, 38,
-        i % 2 ? 0x36b98a : 0x65e5a4,
-        a
-      );
-    }
-
-    e(0, -35, 155, 143, 0x8af3b0);
-    e(-30, -44, 14, 20, 0x173e36);
-    e(30, -44, 14, 20, 0x173e36);
-    e(0, -6, 18, 8, 0xd96c91);
-
-    return c;
-  }
-
-  // --------------------------------------------------
-  // BATTLE UI
-  // --------------------------------------------------
-
-  panel(x, y, w, h, edge = 0x50618d) {
-    this.rect(
-      x + 5, y + 6, w, h,
-      0x111322, 0.5, 0, this.uiLayer
-    );
-
-    this.rect(
+    const bg = this.rect(
       x, y, w, h,
-      0x151d37, 1, edge, this.uiLayer
-    );
-  }
-
-  bar(x, y, w, h, color) {
-    this.rect(
-      x, y, w, h,
-      0x080f23, 1, 0x67718c, this.uiLayer
+      move.color, 1, 0x172441, this.uiLayer
     );
 
-    const fill = this.rect(
-      x + 4, y + 4, w - 8, h - 8,
-      color, 1, 0, this.uiLayer
-    );
+    this.text(x + 19, y + 14, move.name, 22);
 
-    return { fill, maxWidth: w - 8 };
-  }
-
-  setBar(bar, ratio) {
-    bar.fill.width = Math.max(
-      0,
-      bar.maxWidth * Phaser.Math.Clamp(ratio, 0, 1)
-    );
-  }
-
-  buildHUD() {
-    // Enemy HUD.
-    this.panel(760, 28, 492, 158, 0xf17b80);
-
-    this.text(787, 46, "Caterpillar", 32);
-    this.text(1125, 51, "Lv. 8", 23, "#cbd4ff");
-
-    this.text(784, 100, "HP", 23, "#ff7777");
-    this.enemyHP = this.bar(865, 104, 260, 24, 0x63e67c);
-    this.enemyHPText = this.text(1140, 101, "100/100", 18);
-
-    this.text(784, 139, "STA", 21, "#6fd5ff");
-    this.enemySTA = this.bar(865, 143, 260, 20, 0x51c8fa);
-    this.enemySTAText = this.text(1140, 140, "70/70", 18);
-
-    // Player HUD.
-    this.panel(24, 551, 556, 153, 0x79dcb0);
-
-    this.text(48, 568, "Minty", 32);
-    this.text(445, 574, "Lv. 10", 21, "#cbd4ff");
-
-    this.text(49, 614, "HP", 19, "#ff7878");
-    this.playerHP = this.bar(151, 614, 285, 18, 0x6bea86);
-    this.playerHPText = this.text(449, 608, "29/29", 19);
-
-    this.text(49, 642, "WATER", 18, "#68cfff");
-    this.playerWater = this.bar(151, 642, 285, 17, 0x51c7ff);
-    this.waterText = this.text(449, 638, "25/25", 18);
-
-    this.text(49, 670, "SUN", 18, "#ffe077");
-    this.playerLight = this.bar(151, 670, 285, 17, 0xffd85e);
-    this.lightText = this.text(449, 666, "24/24", 18);
-
-    // Level title.
-    this.panel(23, 20, 420, 74, 0x77b8b0);
-    this.text(42, 31, "ROOT CELLAR", 27);
     this.text(
-      42, 65,
-      "BOSS BATTLE  •  ROOM 2/5",
-      15, "#c8d7ef"
+      x + 19, y + 56,
+      move.sub, 12, "#f3f2dd",
+      { wordWrap: { width: 235 } }
     );
 
-    // Battle log.
-    this.panel(585, 626, 270, 78, 0x5d739e);
+    const hit = this.add.zone(x, y, w, h)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
 
-    this.logText = this.text(
-      602, 642, "", 16, "#e6f0ff",
-      { wordWrap: { width: 239 } }
-    );
+    this.uiLayer.add(hit);
 
-    this.updateHUD();
-  }
-
-  buildMoves() {
-    const moves = [
-      {
-        name: "WATER",
-        sub: "Restore water • +HP",
-        color: 0x236aab,
-        key: "water"
-      },
-      {
-        name: "SUNLIGHT",
-        sub: "Restore sunlight • +HP",
-        color: 0xa87327,
-        key: "sun"
-      },
-      {
-        name: "CO₂",
-        sub: "Boost next leaf attack",
-        color: 0x357e4b,
-        key: "co2"
-      },
-      {
-        name: "LEAF FLURRY",
-        sub: "Damage enemy • costs resources",
-        color: 0x3a9254,
-        key: "leaf"
-      }
-    ];
-
-    this.moveButtons = [];
-
-    moves.forEach((move, i) => {
-      const x = 710 + (i % 2) * 281;
-      const y = 477 + Math.floor(i / 2) * 111;
-      const w = 272;
-      const h = 99;
-
-      const bg = this.rect(
-        x, y, w, h,
-        move.color, 1, 0x172441, this.uiLayer
-      );
-
-      this.text(x + 19, y + 14, move.name, 22);
-
-      this.text(
-        x + 19, y + 56,
-        move.sub, 12, "#f3f2dd",
-        { wordWrap: { width: 235 } }
-      );
-
-      const hit = this.add.zone(x, y, w, h)
-        .setOrigin(0)
-        .setInteractive({ useHandCursor: true });
-
-      this.uiLayer.add(hit);
-
-      hit.on("pointerover", () => {
-        bg.setStrokeStyle(4, 0xffe680);
-      });
-
-      hit.on("pointerout", () => {
-        bg.setStrokeStyle(3, 0x172441);
-      });
-
-      hit.on("pointerdown", () => {
-        this.useMove(move.key);
-      });
-
-      this.moveButtons.push({ hit, bg });
-    });
-  }
-
-
-  buildActors() {
-
-
-    this.drawBattleAura(
-    350, 493,
-    0x9df6ba,
-    1.0
-  );
-
-  // Orange background behind Caterpillar
-  this.drawBattleAura(
-    915, 355,
-    0xff9868,
-    1.15
-  );
-
-    this.ellipse(
-      340, 596, 245, 40,
-      0x172b25, 0.38, this.actorLayer
-    );
-
-    this.ellipse(
-      907, 457, 295, 37,
-      0x172b25, 0.36, this.actorLayer
-    );
-
-    if (this.textures.exists("boss-minty")) {
-      this.playerSprite = this.add.image(
-        350, 493, "boss-minty"
-      ).setDisplaySize(265, 285);
-    } else {
-      this.playerSprite = this.makeMinty(350, 490);
-    }
-
-    if (this.textures.exists("boss-caterpillar")) {
-      this.enemySprite = this.add.image(
-        905, 352, "boss-caterpillar"
-      ).setDisplaySize(335, 235);
-    } else {
-        this.enemySprite = this.makeCaterpillar(915, 355);
-        this.enemySprite.setScale(0.85);
-    }
-
-    this.actorLayer.add([
-      this.playerSprite,
-      this.enemySprite
-    ]);
-
-    this.tweens.add({
-      targets: this.playerSprite,
-      y: this.playerSprite.y - 7,
-      duration: 1200,
-      yoyo: true,
-      repeat: -1,
-      ease: "Sine.easeInOut"
+    hit.on("pointerover", () => {
+      bg.setStrokeStyle(4, 0xffe680);
     });
 
-    this.tweens.add({
+    hit.on("pointerout", () => {
+      bg.setStrokeStyle(3, 0x172441);
+    });
+
+    hit.on("pointerdown", () => {
+      this.useMove(move.key);
+    });
+
+    this.moveButtons.push({ hit, bg });
+  });
+}
+
+buildActors() {
+  this.drawBattleAura(350, 493, 0x9df6ba, 1.0);
+  this.drawBattleAura(915, 355, 0xff9868, 1.15);
+
+  this.ellipse(
+    340, 596, 245, 40,
+    0x172b25, 0.38, this.actorLayer
+  );
+
+  this.ellipse(
+    907, 457, 295, 37,
+    0x172b25, 0.36, this.actorLayer
+  );
+
+  if (this.textures.exists("boss-minty")) {
+    this.playerSprite = this.add.image(
+      350, 493, "boss-minty"
+    ).setDisplaySize(265, 285);
+  } else {
+    this.playerSprite = this.makeMinty(350, 490);
+  }
+
+  if (this.textures.exists("boss-caterpillar")) {
+    this.enemySprite = this.add.image(
+      905, 352, "boss-caterpillar"
+    ).setDisplaySize(335, 235);
+  } else {
+    this.enemySprite = this.makeCaterpillar(915, 355);
+    this.enemySprite.setScale(0.85);
+  }
+
+  this.actorLayer.add([
+    this.playerSprite,
+    this.enemySprite
+  ]);
+
+  this.tweens.add({
+    targets: this.playerSprite,
+    y: this.playerSprite.y - 7,
+    duration: 1200,
+    yoyo: true,
+    repeat: -1,
+    ease: "Sine.easeInOut"
+  });
+
+  this.tweens.add({
     targets: this.enemySprite,
     y: this.enemySprite.y - 5,
     scaleY: this.enemySprite.scaleY * 1.025,
@@ -1805,258 +1821,271 @@ drawAncientArch(x, y, scale = 1) {
     yoyo: true,
     repeat: -1,
     ease: "Sine.easeInOut"
-    });
-  }
-
-
-
-  // --------------------------------------------------
-  // BATTLE MECHANICS
-  // --------------------------------------------------
-
-  message(str) {
-    this.logText.setText(str);
-  }
-
-  updateHUD() {
-    const p = this.player;
-    const e = this.enemy;
-
-    this.setBar(this.playerHP, p.hp / p.maxHp);
-    this.setBar(this.playerWater, p.water / p.maxWater);
-    this.setBar(this.playerLight, p.light / p.maxLight);
-
-    this.setBar(this.enemyHP, e.hp / e.maxHp);
-    this.setBar(this.enemySTA, e.stamina / e.maxStamina);
-
-    this.playerHPText.setText(`${p.hp}/${p.maxHp}`);
-    this.waterText.setText(`${p.water}/${p.maxWater}`);
-    this.lightText.setText(`${p.light}/${p.maxLight}`);
-
-    this.enemyHPText.setText(`${e.hp}/${e.maxHp}`);
-    this.enemySTAText.setText(`${e.stamina}/${e.maxStamina}`);
-
-    this.enemyHP.fill.fillColor =
-      e.hp / e.maxHp < 0.25 ? 0xf46b65 : 0x63e67c;
-  }
-
-  floating(x, y, label, color = "#ffffff") {
-    const t = this.text(
-      x, y, label, 30, color, {}, this.effectLayer
-    );
-
-    this.tweens.add({
-      targets: t,
-      y: y - 65,
-      alpha: 0,
-      duration: 950,
-      onComplete: () => t.destroy()
-    });
-  }
-
-  flash(sprite) {
-    this.tweens.add({
-      targets: sprite,
-      alpha: 0.25,
-      duration: 100,
-      yoyo: true,
-      repeat: 2
-    });
-  }
-
-  useMove(move) {
-    if (this.busy || this.finished) return;
-
-    const p = this.player;
-    const e = this.enemy;
-
-    if (move === "leaf" && (p.water < 5 || p.light < 4)) {
-      this.message("Need at least 5 water and 4 sunlight!");
-      return;
-    }
-
-    this.busy = true;
-
-    if (move === "water") {
-      p.water = Math.min(p.maxWater, p.water + 9);
-      p.hp = Math.min(p.maxHp, p.hp + 4);
-
-      this.message("Minty drinks fresh water!");
-      this.floating(320, 410, "+ WATER", "#7edcff");
-
-    } else if (move === "sun") {
-      p.light = Math.min(p.maxLight, p.light + 9);
-      p.hp = Math.min(p.maxHp, p.hp + 3);
-
-      this.message("Minty absorbs warm sunlight!");
-      this.floating(320, 410, "+ SUN", "#ffe180");
-
-    } else if (move === "co2") {
-      p.co2 = Math.min(p.maxCo2, p.co2 + 5);
-      this.boost = true;
-
-      this.message("CO₂ boost! Next Leaf Flurry is stronger.");
-      this.floating(320, 410, "POWER UP", "#a2ffab");
-
-    } else if (move === "leaf") {
-      p.water -= 5;
-      p.light -= 4;
-
-      const damage =
-        Phaser.Math.Between(16, 23) +
-        (this.boost ? 12 : 0);
-
-      this.boost = false;
-      e.hp = Math.max(0, e.hp - damage);
-
-      this.message(`Leaf Flurry dealt ${damage} damage!`);
-      this.flash(this.enemySprite);
-      this.floating(875, 240, `-${damage}`, "#fff48e");
-    }
-
-    this.updateHUD();
-
-    if (e.hp <= 0) {
-      this.time.delayedCall(900, () => this.endBattle(true));
-      return;
-    }
-
-    this.time.delayedCall(1150, () => this.enemyTurn());
-  }
-
-  enemyTurn() {
-    if (this.finished) return;
-
-    const e = this.enemy;
-    const p = this.player;
-
-    let damage;
-
-    if (e.stamina >= 12) {
-      damage = Phaser.Math.Between(4, 7);
-      e.stamina -= 12;
-
-      this.message(
-        `Caterpillar used Headbutt! -${damage} HP`
-      );
-    } else {
-      damage = Phaser.Math.Between(2, 4);
-      e.stamina = Math.min(e.maxStamina, e.stamina + 18);
-
-      this.message(
-        `Caterpillar rests and lunges! -${damage} HP`
-      );
-    }
-
-    p.hp = Math.max(0, p.hp - damage);
-
-    this.flash(this.playerSprite);
-    this.floating(310, 388, `-${damage}`, "#ff8f90");
-
-    this.updateHUD();
-
-    if (p.hp <= 0) {
-      this.time.delayedCall(900, () => this.endBattle(false));
-      return;
-    }
-
-    this.turn++;
-
-    this.time.delayedCall(800, () => {
-      this.busy = false;
-      this.message(`Turn ${this.turn}: choose your next move.`);
-    });
-  }
-
-  endBattle(won) {
-    this.finished = true;
-    this.busy = true;
-
-    // Overlay belongs above all other layers.
-    this.rect(
-      0, 0, 1280, 720,
-      0x050b1c, 0.72, 0, this.effectLayer
-    );
-
-    const x = 330;
-    const y = 220;
-
-    this.rect(
-      x + 5, y + 6, 620, 260,
-      0x111322, 0.5, 0, this.effectLayer
-    );
-
-    this.rect(
-      x, y, 620, 260,
-      0x151d37, 1,
-      won ? 0x7de6a5 : 0xee7789,
-      this.effectLayer
-    );
-
-    this.text(
-      420, 259,
-      won ? "VICTORY!" : "DEFEAT",
-      48,
-      won ? "#9dffb2" : "#ff9caa",
-      {},
-      this.effectLayer
-    );
-
-    this.text(
-      395, 334,
-      won
-        ? "Caterpillar defeated! Minty gains XP."
-        : "Minty fainted. Try again!",
-      22,
-      "#ffffff",
-      {},
-      this.effectLayer
-    );
-
-    const button = this.rect(
-      510, 405, 260, 52,
-      0x447b78, 1, 0xc0ffdd, this.effectLayer
-    ).setInteractive({ useHandCursor: true });
-
-    this.text(
-      548, 418,
-      "RETRY BATTLE",
-      22, "#ffffff", {}, this.effectLayer
-    );
-
-    button.on("pointerdown", () => {
-      this.scene.restart();
-    });
-
-    this.events.emit("battleComplete", {
-      won,
-      turns: this.turn,
-      player: this.player,
-      enemy: this.enemy
-    });
-  }
-
-
-
-  // --------------------------------------------------
-  // ANIMATION
-  // --------------------------------------------------
-
-  update(time, delta) {
-    if (!this.skyClouds) return;
-
-    const dt = Math.min(delta, 50) / 16.67;
-
-    this.skyClouds.forEach(({ cloud, speed }) => {
-      cloud.x += speed * dt;
-
-      if (cloud.x > 1450) {
-        cloud.x = -200;
-      }
-    });
-  }
+  });
 }
 
+// --------------------------------------------------
+// BATTLE MECHANICS
+// --------------------------------------------------
+
+message(str) {
+  this.logText.setText(str);
+}
+
+updateHUD() {
+  const p = this.player;
+  const e = this.enemy;
+
+  if (!p) return;
+
+  this.setBar(this.playerHP, p.hp / p.maxHp);
+  this.setBar(this.playerWater, p.water / p.maxWater);
+  this.setBar(this.playerLight, p.light / p.maxLight);
+
+  this.setBar(this.enemyHP, e.hp / e.maxHp);
+  this.setBar(this.enemySTA, e.stamina / e.maxStamina);
+
+  this.playerHPText.setText(
+    `${Math.round(p.hp)}/${Math.round(p.maxHp)}`
+  );
+  this.waterText.setText(
+    `${Math.round(p.water)}/${p.maxWater}`
+  );
+  this.lightText.setText(
+    `${Math.round(p.light)}/${p.maxLight}`
+  );
+
+  this.enemyHPText.setText(`${e.hp}/${e.maxHp}`);
+  this.enemySTAText.setText(`${e.stamina}/${e.maxStamina}`);
+
+  this.enemyHP.fill.fillColor =
+    e.hp / e.maxHp < 0.25 ? 0xf46b65 : 0x63e67c;
+}
+
+floating(x, y, label, color = "#ffffff") {
+  const t = this.text(
+    x, y, label, 30, color, {}, this.effectLayer
+  );
+
+  this.tweens.add({
+    targets: t,
+    y: y - 65,
+    alpha: 0,
+    duration: 950,
+    onComplete: () => t.destroy()
+  });
+}
+
+flash(sprite) {
+  this.tweens.add({
+    targets: sprite,
+    alpha: 0.25,
+    duration: 100,
+    yoyo: true,
+    repeat: 2
+  });
+}
+
+useMove(move) {
+  if (this.busy || this.finished || !this.player) return;
+
+  const p = this.player;
+  const e = this.enemy;
+
+  if (move === "leaf" && (p.water < 5 || p.light < 4)) {
+    this.message("Need at least 5 water and 4 sunlight!");
+    return;
+  }
+
+  this.busy = true;
+
+  const oldHp = p.hp;
+  const oldWater = p.water;
+  const oldLight = p.light;
+
+  if (move === "water") {
+    p.water = Math.min(p.maxWater, p.water + 9);
+    p.hp = Math.min(p.maxHp, p.hp + 4);
+
+    this.message(`${p.name} drinks fresh water!`);
+    this.floating(320, 410, "+ WATER", "#7edcff");
+
+  } else if (move === "sun") {
+    p.light = Math.min(p.maxLight, p.light + 9);
+    p.hp = Math.min(p.maxHp, p.hp + 3);
+
+    this.message(`${p.name} absorbs warm sunlight!`);
+    this.floating(320, 410, "+ SUN", "#ffe180");
+
+  } else if (move === "co2") {
+    p.co2 = Math.min(p.maxCo2, p.co2 + 5);
+    this.boost = true;
+
+    this.message("CO₂ boost! Next Leaf Flurry is stronger.");
+    this.floating(320, 410, "POWER UP", "#a2ffab");
+
+  } else if (move === "leaf") {
+    p.water -= 5;
+    p.light -= 4;
+
+    const damage =
+      Phaser.Math.Between(16, 23) +
+      (this.boost ? 12 : 0);
+
+    this.boost = false;
+    e.hp = Math.max(0, e.hp - damage);
+
+    this.message(`Leaf Flurry dealt ${damage} damage!`);
+    this.flash(this.enemySprite);
+    this.floating(875, 240, `-${damage}`, "#fff48e");
+  }
+
+  // Combat changes stay local to this battle.
+  this.combatHpDelta += p.hp - oldHp;
+  this.combatWaterDelta += p.water - oldWater;
+  this.combatLightDelta += p.light - oldLight;
+
+  this.updateHUD();
+
+  if (e.hp <= 0) {
+    this.time.delayedCall(900, () => this.endBattle(true));
+    return;
+  }
+
+  this.time.delayedCall(1150, () => this.enemyTurn());
+}
+
+enemyTurn() {
+  if (this.finished || !this.player) return;
+
+  const e = this.enemy;
+  const p = this.player;
+
+  let damage;
+
+  if (e.stamina >= 12) {
+    damage = Phaser.Math.Between(4, 7);
+    e.stamina -= 12;
+
+    this.message(
+      `Caterpillar used Headbutt! -${damage} HP`
+    );
+  } else {
+    damage = Phaser.Math.Between(2, 4);
+    e.stamina = Math.min(e.maxStamina, e.stamina + 18);
+
+    this.message(
+      `Caterpillar rests and lunges! -${damage} HP`
+    );
+  }
+
+  const oldHp = p.hp;
+  p.hp = Math.max(0, p.hp - damage);
+  this.combatHpDelta += p.hp - oldHp;
+
+  this.flash(this.playerSprite);
+  this.floating(310, 388, `-${damage}`, "#ff8f90");
+
+  this.updateHUD();
+
+  if (p.hp <= 0) {
+    this.time.delayedCall(900, () => this.endBattle(false));
+    return;
+  }
+
+  this.turn++;
+
+  this.time.delayedCall(800, () => {
+    this.busy = false;
+    this.message(`Turn ${this.turn}: choose your next move.`);
+  });
+}
+
+endBattle(won) {
+  this.finished = true;
+  this.busy = true;
+
+  this.rect(
+    0, 0, 1280, 720,
+    0x050b1c, 0.72, 0, this.effectLayer
+  );
+
+  const x = 330;
+  const y = 220;
+
+  this.rect(
+    x + 5, y + 6, 620, 260,
+    0x111322, 0.5, 0, this.effectLayer
+  );
+
+  this.rect(
+    x, y, 620, 260,
+    0x151d37, 1,
+    won ? 0x7de6a5 : 0xee7789,
+    this.effectLayer
+  );
+
+  this.text(
+    420, 259,
+    won ? "VICTORY!" : "DEFEAT",
+    48,
+    won ? "#9dffb2" : "#ff9caa",
+    {},
+    this.effectLayer
+  );
+
+  this.text(
+    395, 334,
+    won
+      ? `Caterpillar defeated! ${this.player.name} wins!`
+      : `${this.player.name} fainted. Try again!`,
+    22,
+    "#ffffff",
+    {},
+    this.effectLayer
+  );
+
+  const button = this.rect(
+    510, 405, 260, 52,
+    0x447b78, 1, 0xc0ffdd, this.effectLayer
+  ).setInteractive({ useHandCursor: true });
+
+  this.text(
+    548, 418,
+    "RETRY BATTLE",
+    22, "#ffffff", {}, this.effectLayer
+  );
+
+  button.on("pointerdown", () => {
+    this.scene.restart({ plantId: this.activePlantId });
+  });
+
+  this.events.emit("battleComplete", {
+    won,
+    turns: this.turn,
+    player: this.player,
+    enemy: this.enemy
+  });
+}
+
+// --------------------------------------------------
+// ANIMATION
+// --------------------------------------------------
+
+update(time, delta) {
+  if (!this.skyClouds) return;
+
+  const dt = Math.min(delta, 50) / 16.67;
+
+  this.skyClouds.forEach(({ cloud, speed }) => {
+    cloud.x += speed * dt;
+
+    if (cloud.x > 1450) {
+      cloud.x = -200;
+    }
+  });
+}
+}
 
 
 

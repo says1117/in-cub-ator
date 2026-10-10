@@ -1760,7 +1760,32 @@ export default class AdventureScene extends Phaser.Scene {
   // GAME LOOP
   // ==========================================
 
+  // Server modes where the dragon stands still: boss appears, fights, and the reward moment.
+  syncWithServer() {
+    const state = this.registry.get("serverState");
+    const stand = state && ["boss", "battle", "reward"].includes(state.mode);
+    const shouldWalk = !stand;
+
+    if (shouldWalk === this.walking) return;
+    this.walking = shouldWalk;
+
+    if (!this.walking) this.standStill();
+  }
+
+  // Reset the step bounce so the dragon stops in a neutral pose.
+  standStill() {
+    this.player.y = this.basePlayerY;
+    this.player.setDisplaySize(this.baseWidth, this.baseHeight);
+    this.player.rotation = 0;
+
+    this.shadow.setPosition(this.player.x, this.basePlayerY - 2);
+    this.shadow.setDisplaySize(this.shadowBaseWidth, this.shadowBaseHeight);
+    this.shadow.setAlpha(0.28);
+  }
+
   update(time, delta) {
+    this.syncWithServer();
+
     if (!this.walking) return;
 
     const dt = Math.min(delta / 1000, 0.05);

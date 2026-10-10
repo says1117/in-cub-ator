@@ -16,9 +16,15 @@ Adafruit_PN532 readerB(255, 255, &Wire1);
 bool readerAReady = false;
 bool readerBReady = false;
 
+const int START_ATTEMPTS = 5;  // reset pin is not wired, so the chip may be busy from a previous run
+
 bool startReader(Adafruit_PN532 &reader, const char *name) {
-  reader.begin();
-  uint32_t version = reader.getFirmwareVersion();
+  uint32_t version = 0;
+  for (int attempt = 1; attempt <= START_ATTEMPTS && !version; attempt++) {
+    reader.begin();
+    version = reader.getFirmwareVersion();
+    if (!version) delay(200);
+  }
   if (!version) {
     Serial.print(name);
     Serial.println(": PN532 not responding, will not be polled");

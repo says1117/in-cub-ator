@@ -9,3 +9,5 @@
 void pinMode(uint8_t pin, uint8_t mode);
 void digitalWrite(uint8_t pin, uint8_t val);
 unsigned long millis();
+int analogRead(uint8_t pin);
+void analogReadResolution(int bits);

@@ -1,0 +1,53 @@
+# .gitignore: Files git must not track. Owner: shared by all roles.
+
+# Secrets and local config (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+firmware/incube_firmware/secrets.h
+server/deploy/passwd
+server/deploy/*.passwd
+
+# Personal Claude / Codex settings (shared CLAUDE.md and AGENTS.md files ARE tracked)
+.claude/settings.local.json
+.claude/projects/
+CLAUDE.local.md
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Python (server, art tools)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Node (client)
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# Arduino / PlatformIO build output (firmware)
+build/
+.pio/
+*.elf
+*.bin
+*.hex
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Large demo media (share through a drive instead)
+demo/backup-video/*
+!demo/backup-video/.gitkeep

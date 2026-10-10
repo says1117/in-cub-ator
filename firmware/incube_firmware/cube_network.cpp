@@ -13,6 +13,8 @@ WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 CommandHandler commandHandler = nullptr;
 unsigned long lastWifiAttemptMs = 0;
+unsigned long lastWifiLogMs = 0;
+bool scanDone = false;
 unsigned long lastMqttAttemptMs = 0;
 bool wasConnected = false;
 bool justConnected = false;
@@ -30,6 +32,48 @@ bool abandon(const char *step) {
   Serial.println(step);
   mqtt.disconnect();
   return false;
+}
+
+// One-time check, if Wi-Fi has not joined after a while: can the ESP32 see the configured
+// network at all? Prints only about that network, never other names or the password.
+// Blocks for a few seconds, once, and only while not connected.
+void diagnoseWifi() {
+  scanDone = true;
+  WiFi.disconnect();  // a scan fails while a join is in progress; pause it, scan, then rejoin
+  delay(100);
+  // Limit each channel to 120 ms, so the whole scan blocks for about 2 s at most.
+  int count = WiFi.scanNetworks(false, false, false, 120);
+  if (count < 0) {
+    Serial.print("network: Wi-Fi scan failed (code ");
+    Serial.print(count);
+    Serial.println(")");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    lastWifiAttemptMs = millis();
+    return;
+  }
+  for (int i = 0; i < count; i++) {
+    if (WiFi.SSID(i) != String(WIFI_SSID)) continue;
+    wifi_auth_mode_t auth = WiFi.encryptionType(i);
+    Serial.print("network: configured Wi-Fi is visible, channel ");
+    Serial.print(WiFi.channel(i));
+    Serial.print(", signal ");
+    Serial.print(WiFi.RSSI(i));
+    Serial.print(" dBm, security ");
+    Serial.println(auth == WIFI_AUTH_WPA2_ENTERPRISE ? "enterprise (needs a username, not supported)"
+                   : auth == WIFI_AUTH_OPEN          ? "open"
+                   : auth == WIFI_AUTH_WPA3_PSK      ? "WPA3 only (try WPA2/WPA3 compatibility on the hotspot)"
+                                                     : "password (supported)");
+    WiFi.scanDelete();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    lastWifiAttemptMs = millis();
+    return;
+  }
+  Serial.print("network: configured Wi-Fi NOT visible on 2.4 GHz (");
+  Serial.print(count);
+  Serial.println(" other networks seen). Check the exact name, including apostrophes, and turn on Maximize Compatibility.");
+  WiFi.scanDelete();
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  lastWifiAttemptMs = millis();  // the scan restarted the join, so time the next retry from now
 }
 
 bool connectBroker() {
@@ -80,7 +124,21 @@ void networkLoop() {
       Serial.println("network: Wi-Fi lost");
       wasConnected = false;
     }
-    if ((now - lastWifiAttemptMs) >= WIFI_RETRY_MS) {
+    if ((now - lastWifiLogMs) >= WIFI_RETRY_MS) {
+      lastWifiLogMs = now;
+      wl_status_t status = WiFi.status();
+      Serial.print("network: Wi-Fi not connected: ");
+      Serial.println(status == WL_NO_SSID_AVAIL   ? "network name not found (check the name, and 2.4 GHz)"
+                     : status == WL_CONNECT_FAILED ? "connect failed (check the password)"
+                     : status == WL_CONNECTION_LOST ? "connection lost"
+                     : status == WL_DISCONNECTED   ? "disconnected, auto-reconnect is trying"
+                     : status == WL_IDLE_STATUS    ? "idle"
+                                                    : "other");
+    }
+    if (!scanDone && (now - lastWifiAttemptMs) >= 15000) diagnoseWifi();
+    // Auto-reconnect is on, so only force a fresh attempt now and then. Forcing it too often
+    // restarts a join that is still in progress.
+    if ((now - lastWifiAttemptMs) >= WIFI_RECONNECT_MS) {
       lastWifiAttemptMs = now;
       WiFi.reconnect();
     }

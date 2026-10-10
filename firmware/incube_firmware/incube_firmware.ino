@@ -32,6 +32,12 @@ void onCommand(const char *topic, const uint8_t *payload, unsigned int length) {
 void publishSoil() {
   int a = 0, b = 0;
   if (!soilTakeReading(a, b)) return;
+  // Also print over USB in the format server/serial_bridge.py reads ("soil A: 3430  soil B: 1450"),
+  // so the soil readings still reach the game over a USB cable if Wi-Fi does not work.
+  Serial.print("soil A: ");
+  Serial.print(a);
+  Serial.print("  soil B: ");
+  Serial.println(b);
   char text[8];
   snprintf(text, sizeof(text), "%d", a);
   networkPublish(TOPIC_SOIL_A, text, false);

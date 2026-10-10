@@ -56,16 +56,12 @@ export function createBossRig(scene, art, x, y, height) {
     return rig.split.map(([px, py]) => ({ x: px * cos - py * sin, y: px * sin + py * cos }));
   };
 
-  // The inside of the mouth, between the two jaws: a light shadow, a glowing red orb and teeth.
+  // The inside of the mouth, between the two jaws: a glowing red orb with a dark halo that fades out, and teeth.
   function drawMaw(a, b) {
     maw.clear();
     if (a + b < 0.03) return;
     const edgeA = turned(a);
     const edgeB = turned(-b);
-    // a light shadow inside the mouth, so the scene behind is dimmed but not blacked out
-    maw.fillStyle(0x1c040d, 0.62);
-    maw.fillPoints([...edgeA, ...edgeB.slice().reverse()], true);
-
     const wide = clamp01((a + b) / (GAPE_A + GAPE_B));
     if (wide < 0.25) return;
     // throat: lighter rings toward the middle of the opening
@@ -73,6 +69,12 @@ export function createBossRig(scene, art, x, y, height) {
     const gap = (index) => Math.hypot(edgeA[index].x - edgeB[index].x, edgeA[index].y - edgeB[index].y);
     const throat = mid(5);
     const size = gap(5) * 0.58;
+    // a dark halo round the orb: about 60% black next to it, fading to nothing further out
+    for (let i = 0; i < 6; i++) {
+      const share = 2.1 - i * 0.2;
+      maw.fillStyle(0x1c040d, 0.142);
+      maw.fillEllipse(throat.x, throat.y, size * share * 1.1, size * share * 1.9);
+    }
     for (const [color, share, alpha] of [[0xc21d36, 1, 0.3], [0xd8263a, 0.72, 0.6], [0xf0502f, 0.44, 1], [0xffb04a, 0.2, 1]]) {
       maw.fillStyle(color, alpha);
       maw.fillEllipse(throat.x, throat.y, size * share * 1.1, size * share * 1.9);

@@ -15,6 +15,7 @@ CommandHandler commandHandler = nullptr;
 unsigned long lastWifiAttemptMs = 0;
 unsigned long lastMqttAttemptMs = 0;
 bool wasConnected = false;
+bool justConnected = false;
 
 const char *const COMMAND_TOPICS[] = {TOPIC_CMD_PUMP_A, TOPIC_CMD_PUMP_B, TOPIC_CMD_LIGHT};
 const int COMMAND_TOPIC_COUNT = 3;
@@ -102,12 +103,19 @@ void networkLoop() {
     Serial.print("network: online, IP ");
     Serial.println(WiFi.localIP());
     wasConnected = true;
+    justConnected = true;
   }
   mqtt.loop();
 }
 
 bool networkConnected() {
   return mqtt.connected();
+}
+
+bool networkTakeJustConnected() {
+  if (!justConnected) return false;
+  justConnected = false;
+  return true;
 }
 
 bool networkPublish(const char *topic, const char *payload, bool retained) {

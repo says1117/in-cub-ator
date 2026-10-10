@@ -156,8 +156,8 @@ The sensor gives a raw number. The server turns it into a percentage: 0% is bone
 | --- | --- | --- | --- | --- | --- |
 | 50% and above | 0 | none | | | |
 | under 50% | 1 | Drought Chomper | 28 | 7 | 2.0 s |
-| under 25% | 2 | Parched Brute | 36 | 8 | 2.5 s |
-| 1% or lower | 3 | Desert Dragon | 44 | 10 | 3.0 s |
+| under 25% | 2 | Parched Brute | 31 | 7 | 2.5 s |
+| 1% or lower | 3 | Desert Dragon | 34 | 8 | 3.0 s |
 
 A drier plant gets a harder boss and a bigger drink. Every tier is meant to stay winnable,
 because winning is the only way the plant gets watered. With both plants on the team and

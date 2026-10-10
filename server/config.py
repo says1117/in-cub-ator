@@ -88,8 +88,8 @@ TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
 BOSS_TIERS = {            # tier: (name, hp, attack)
     1: ("Drought Chomper", 28, 7),
-    2: ("Parched Brute", 36, 8),
-    3: ("Desert Dragon", 44, 10),
+    2: ("Parched Brute", 31, 7),
+    3: ("Desert Dragon", 34, 8),
 }
 
 # Overall health fades while the plant is dry and recovers when it is not (percent per second)

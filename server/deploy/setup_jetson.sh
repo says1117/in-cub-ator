@@ -18,12 +18,14 @@ sudo systemctl restart mosquitto
 
 (cd "$ROOT/client" && npm install && npm run build)
 
-for unit in incube-server incube-client; do
+sudo usermod -aG dialout "$RUN_USER"   # lets the soil bridge open the ESP32 USB port (log out and in once)
+
+for unit in incube-server incube-client incube-bridge; do
   sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$ROOT|g" "$ROOT/server/deploy/$unit.service" \
     | sudo tee "/etc/systemd/system/$unit.service" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now incube-server incube-client
+sudo systemctl enable --now incube-server incube-client incube-bridge
 
 echo
 echo "Done. Game screen: http://$(hostname).local:8080/   (or http://$(hostname -I | awk '{print $1}'):8080/)"

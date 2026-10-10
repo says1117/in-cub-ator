@@ -1,12 +1,18 @@
 import Phaser from "phaser";
 import AdventureScene from "./scenes/AdventureScene.js";
 import StorageScene from "./scenes/StorageScene.js";
+import CastIronScene from "./scenes/CastIronScene.js";
+import MonsteraScene from "./scenes/MonsteraScene.js";
+import BossScene from "./scenes/BossScene.js";
 import "./style.css";
 
 const routes = {
   "/": "AdventureScene",
   "/adventure": "AdventureScene",
-  "/storage": "StorageScene"
+  "/storage": "StorageScene",
+  "/cast_iron": "CastIronScene",
+  "/monstera": "MonsteraScene",
+  "/boss": "BossScene"
 };
 
 function getSceneFromURL() {
@@ -27,7 +33,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [AdventureScene, StorageScene]
+  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, BossScene]
 };
 
 const game = new Phaser.Game(config);

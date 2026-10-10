@@ -30,6 +30,8 @@ def start_mqtt(loop, broadcast_callback):
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2
     )
 
+
+
     def on_connect(client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             print("MQTT connected")
@@ -65,6 +67,8 @@ def start_mqtt(loop, broadcast_callback):
 
     client.on_connect = on_connect
     client.on_message = on_message
+
+    
 
     client.connect_async(MQTT_HOST, MQTT_PORT, 60)
     client.loop_start()

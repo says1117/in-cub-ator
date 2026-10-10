@@ -45,8 +45,8 @@ const unsigned long PAD_POLL_INTERVAL_MS = 300;   // time between tag searches o
 const unsigned long PAD_READY_CHECK_MS = 5;       // how often to ask a busy reader "are you done?"
 const unsigned long PAD_ACK_TIMEOUT_MS = 30;      // a command must be acknowledged within this
 const unsigned long PAD_COMMAND_TIMEOUT_MS = 200; // set-up commands must answer within this
-const unsigned long PAD_SEARCH_TIMEOUT_MS = 500;  // a tag search must answer within this
-const int PAD_ACTIVATION_RETRIES = 10;            // how hard a search looks before answering "no tag" (tune on the bench)
+const unsigned long PAD_SEARCH_TIMEOUT_MS = 1500; // a tag search must answer within this (5 attempts took longer than 500 ms)
+const int PAD_ACTIVATION_RETRIES = 5;             // how hard a search looks before answering "no tag" (tune on the bench)
 const int PAD_CONFIRM_READS = 2;                  // same UID this many times in a row before reporting it
 const int PAD_REMOVAL_MISSES = 3;                 // empty reads in a row before reporting removal
 const int PAD_FAILS_BEFORE_DOWN = 3;              // failed commands in a row before a reader is restarted
@@ -70,7 +70,8 @@ static_assert(LIGHT_MIN_GAP_MS > 0 && LIGHT_MIN_GAP_MS < 0x7FFFFFFFUL, "LIGHT_MI
 
 // ---------- Wi-Fi and MQTT ----------
 
-const unsigned long WIFI_RETRY_MS = 5000;
+const unsigned long WIFI_RETRY_MS = 5000;       // how often to print the Wi-Fi status while not connected
+const unsigned long WIFI_RECONNECT_MS = 30000;  // force a reconnect only this often; joining can take over 5 s
 const unsigned long MQTT_RETRY_MS = 5000;
 const int MQTT_PORT = 1883;
 const int MQTT_KEEPALIVE_S = 15;

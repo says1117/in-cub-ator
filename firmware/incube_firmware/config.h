@@ -4,6 +4,8 @@
 #ifndef INCUBE_CONFIG_H
 #define INCUBE_CONFIG_H
 
+#include <Arduino.h>  // for LOW and HIGH, so .cpp files can include this header on its own
+
 // ---------- Pins (confirmed on the bench, see NOTES.md) ----------
 
 // NFC readers (PN532 over I2C). Both boards use address 0x24, so each gets its own bus.
@@ -41,6 +43,8 @@ const int SOIL_WET_THRESHOLD = 2000;  // below this: watered, dismiss the boss
 
 const unsigned long PAD_POLL_INTERVAL_MS = 300;  // time between checks of one reader
 const unsigned long PAD_READ_TIMEOUT_MS = 1000;  // how long one read may wait for a tag
+// Note: a blocking read delays everything else in loop(), including the pump shut-off check.
+// pads.cpp must keep this from overrunning pump deadlines (see the safety module).
 const int PAD_CONFIRM_READS = 2;                 // same UID this many times in a row before reporting it
 const int PAD_REMOVAL_MISSES = 3;                // empty reads in a row before reporting removal
 const int PAD_START_ATTEMPTS = 5;                // reader start-up retries (no reset wire on the readers)

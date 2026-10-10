@@ -45,7 +45,6 @@ export function mountStatusBar(parent, { onDemoBoss }) {
   hud.innerHTML = `
     <div class="bar">
       ${meterRow("WATER A", "wA")}${meterRow("WATER B", "wB")}
-      ${meterRow("SUNLIGHT", "sun")}
       <div class="health">${meterRow("HEALTH", "health")}</div>
       <div class="cond" id="cond"></div>
       <div class="stale" id="stale"></div>
@@ -66,8 +65,6 @@ export function mountStatusBar(parent, { onDemoBoss }) {
     render(s) {
       $("wA").style.width = `${s.meters.water.A}%`;
       $("wB").style.width = `${s.meters.water.B}%`;
-      const sun = s.meters.sunlight.A ?? s.meters.sunlight.B;
-      $("sun").style.width = sun == null ? "0%" : `${sun}%`;
       $("stale").textContent = s.meters.stale ? "STALE: ESP32 offline" : "";
 
       const h = s.health ?? 100;

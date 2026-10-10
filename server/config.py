@@ -12,7 +12,6 @@ PLANTS = ("A", "B")
 TOPIC_PAD = "incube/pad/{plant}"
 TOPIC_SOIL = "incube/soil/{plant}"
 TOPIC_CMD_PUMP = "incube/cmd/pump/{plant}"
-TOPIC_CMD_LIGHT = "incube/cmd/light"
 TOPIC_STATUS_ESP32 = "incube/status/esp32"
 TOPIC_DEBUG_BOSS = "incube/debug/boss"
 
@@ -30,6 +29,7 @@ BATTLE_TURN_SECONDS = 1.2
 SWAP_EXTRA_SECONDS = 1.6  # extra pause after a plant faints, while the next one comes in on the client
 REWARD_DISPLAY_SECONDS = 4.0
 COOLDOWN_SECONDS = 60.0
+BOSS_BREATHER_SECONDS = 20.0  # after any fight ends, no plant can call a boss for this long
 ESP32_STALE_SECONDS = 30.0
 
 # Reward safety.
@@ -39,8 +39,6 @@ ESP32_STALE_SECONDS = 30.0
 PUMP_MAX_MS = 3000
 PUMP_MS_PER_WIN = 2000
 PUMP_MS_BY_TIER = {1: 2000, 2: 2500, 3: 3000}
-LIGHT_MINUTES_PER_WIN = 30
-LIGHT_MAX_MINUTES = 60
 REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket
@@ -106,6 +104,9 @@ HEALTH_WILTING_BELOW = 30.0
 WILTED_ATK_FACTOR = 0.8
 
 # Temporary random moisture simulator (python3 main.py --sim)
-SIM_COOLDOWN_SECONDS = 15.0
-SIM_SPEED_PCT_PER_SEC = 3.0
+SIM_COOLDOWN_SECONDS = 30.0
+SIM_START_PCT = {"A": (60.0, 68.0), "B": (86.0, 96.0)}  # A starts drier, so they do not dry together
+SIM_DRY_PCT_PER_SEC = (0.25, 0.45)      # how fast the soil dries: 50 points takes about 2 to 3 minutes
 SIM_WATER_PCT_PER_SECOND_OF_PUMP = 30.0
+SIM_WATERED_AT_LEAST_PCT = 80.0         # a watering always leaves the soil at least this wet
+SIM_SOAK_SECONDS = 20.0                 # freshly watered soil holds its moisture this long

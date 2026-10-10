@@ -5,6 +5,7 @@ import { PLANTS, PLANT_IDS, plantMove, preloadPlantArt } from "../data/plants.js
 import { createPlantRig } from "../render/plantRig.js";
 import { playBattleFx } from "../render/battleFx.js";
 import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
+import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 
 const ENEMY_HEIGHT = 330;   // how tall the tier 1 boss is drawn here, roots included
 
@@ -35,6 +36,9 @@ export default class BossScene extends Phaser.Scene {
     this.result = null;
     this.leaving = false;
     this.rewardTimer = null;
+    this.resultText = null;   // left over from the last fight otherwise: this scene object is reused
+    this.rewardBar = null;
+    this.rewardLabel = null;
     this.activeId = null;     // which plant is up front
     this.busyUntil = 0;       // no new move is sent while a turn is still playing out
 
@@ -1627,8 +1631,8 @@ drawAncientArch(x, y, scale = 1) {
     this.playerWater = this.bar(125, 650, 190, 17, 0x51c7ff);
     this.waterText = this.text(321, 646, "-", 17);
     this.text(49, 678, "SOIL", 16, "#ffe077");
-    this.playerLight = this.bar(125, 678, 190, 17, 0xffd85e);
-    this.lightText = this.text(321, 674, "-", 17);
+    this.playerSoil = this.bar(125, 678, 190, 17, 0xffd85e);
+    this.soilText = this.text(321, 674, "-", 17);
 
     this.panel(23, 20, 420, 74, 0x77b8b0);
     this.titleText = this.text(42, 31, "DROUGHT BOSS", 27);
@@ -1712,7 +1716,7 @@ drawAncientArch(x, y, scale = 1) {
 
     this.ellipse(
       907, 457, 295, 37,
-      0x172b25, 0.36, this.actorLayer
+      0x10201b, 0.5, this.actorLayer
     );
 
     // The dragon no longer fights. It stands at the back, facing us, and sends the plants in.
@@ -1723,7 +1727,11 @@ drawAncientArch(x, y, scale = 1) {
     this.textures.get(trainerKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
     this.trainer = this.add.image(TRAINER.x, TRAINER.y, trainerKey).setOrigin(0.5, 1);
     this.trainer.setScale(TRAINER.height / this.trainer.height);
-    this.ellipse(TRAINER.x, TRAINER.y - 3, 150, 22, 0x172b25, 0.34, this.actorLayer);
+    this.ellipse(TRAINER.x, TRAINER.y - 3, 150, 22, 0x10201b, 0.48, this.actorLayer);
+    this.actorLayer.add(
+      createCastShadow(this, outlineOfPicture(this, trainerKey), { light: BATTLE_LIGHT, size: this.trainer.scaleX })
+        .setPosition(TRAINER.x, TRAINER.y - 3)
+    );
     this.actorLayer.add(this.trainer);
     this.tweens.add({
       targets: this.trainer,
@@ -1736,7 +1744,7 @@ drawAncientArch(x, y, scale = 1) {
 
     if (hasBossRig(this, bossArt(1))) {
       // made of moving pieces: it sways on its own
-      this.enemySprite = createBossRig(this, bossArt(1), 905, 458, ENEMY_HEIGHT);
+      this.enemySprite = createBossRig(this, bossArt(1), 905, 458, ENEMY_HEIGHT, { light: BATTLE_LIGHT });
     } else if (this.textures.exists(bossArt(1).key)) {
       this.enemySprite = this.add.image(905, 458, bossArt(1).key).setOrigin(0.5, 0.93);
       this.fitEnemy(1);
@@ -1761,7 +1769,7 @@ drawAncientArch(x, y, scale = 1) {
     // Both plants (render/plantRig.js). They stay hidden until the server says who is fighting.
     this.fighters = {};
     for (const id of PLANT_IDS) {
-      const rig = createPlantRig(this, PLANTS[id], BENCH.x, BENCH.y, PLANTS[id].rig.height * BENCH.size);
+      const rig = createPlantRig(this, PLANTS[id], BENCH.x, BENCH.y, PLANTS[id].rig.height * BENCH.size, { light: BATTLE_LIGHT });
       rig.setVisible(false);
       this.actorLayer.add(rig);
       this.fighters[id] = rig;
@@ -1977,12 +1985,12 @@ drawAncientArch(x, y, scale = 1) {
     this.enemyHPText.setText(`${battle.boss_hp}/${boss.max_hp}`);
     this.waterText.setText(`${state.health}%`);
     const soil = meters?.water?.[boss.plant];
-    this.lightText.setText(soil == null ? "-" : `${soil}%`);
+    this.soilText.setText(soil == null ? "-" : `${soil}%`);
     this.tweenBar(this.playerHP, battle.creature_hp / battle.creature_max_hp);
     this.updateTeamUI(battle);
     this.tweenBar(this.enemyHP, battle.boss_hp / boss.max_hp);
     this.tweenBar(this.playerWater, (state.health ?? 0) / 100);
-    this.tweenBar(this.playerLight, (soil ?? 0) / 100);
+    this.tweenBar(this.playerSoil, (soil ?? 0) / 100);
     this.enemyHP.fill.fillColor = battle.boss_hp / boss.max_hp < 0.25 ? 0xf46b65 : 0x63e67c;
     this.moveButtons.forEach(({ hit, bg, label, sub, move }) => {
       const skill = battle.skill;

@@ -5,6 +5,7 @@ import { ensureDragonBackTexture } from "../render/dragonBack.js";
 import { preloadBossArt } from "../data/bosses.js";
 import { preloadPlantArt } from "../data/plants.js";
 import { createPetParade } from "../render/petParade.js";
+import { createCastShadow, outlineOfPicture } from "../render/castShadow.js";
 
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
@@ -118,13 +119,18 @@ export default class AdventureScene extends Phaser.Scene {
     // CHARACTER SHADOW
     this.shadow = this.add.ellipse(
       190, 358,
-      52, 9,
-      0x49352b,
-      0.28
+      60, 11,
+      0x1a1022,
+      0.45
     ).setDepth(8);
 
-    this.shadowBaseWidth = 52;
-    this.shadowBaseHeight = 9;
+    this.shadowBaseWidth = 60;
+    this.shadowBaseHeight = 11;
+
+    // The shadow the dragon throws: its own outline laid on the ground (render/castShadow.js)
+    const dragonPicture = this.textures.get("plantHero").getSourceImage();
+    this.castShadow = createCastShadow(this, outlineOfPicture(this, "plantHero"), { size: 115 / dragonPicture.height });
+    this.castShadow.setPosition(190, 358).setDepth(8.1);
 
     // CHARACTER
     this.player = this.add.image(
@@ -1863,7 +1869,7 @@ export default class AdventureScene extends Phaser.Scene {
 
     // Shadow becomes lighter when character rises
     this.shadow.setAlpha(
-      0.28 - bounce * 0.10
+      0.45 - bounce * 0.14
     );
   }
 
@@ -1912,12 +1918,14 @@ export default class AdventureScene extends Phaser.Scene {
 
     this.shadow.setPosition(this.player.x, this.basePlayerY - 2);
     this.shadow.setDisplaySize(this.shadowBaseWidth, this.shadowBaseHeight);
-    this.shadow.setAlpha(0.28);
+    this.shadow.setAlpha(0.45);
   }
 
   update(time, delta) {
     this.syncWithServer();
     this.pets.update(time, delta, this.walking, this.registry.get("serverState"));
+    // the dragon's shadow goes where it goes, and hides when the boss arrival hides the dragon
+    this.castShadow.setPosition(this.player.x, this.basePlayerY - 2).setVisible(this.shadow.visible);
 
     if (!this.walking) return;
 

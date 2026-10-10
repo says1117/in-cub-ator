@@ -21,6 +21,7 @@
 // 3. Name the action in data/plants.js under `moves` or `skills`, next to the effect it goes with.
 import Phaser from "phaser";
 import { plantPartKey } from "../data/plants.js";
+import { createCastShadow, outlineOfParts } from "./castShadow.js";
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const clamp01 = (v) => clamp(v, 0, 1);
@@ -211,6 +212,7 @@ export function hasPlantRig(scene, plant, size = "m") {
 // height: how tall the whole plant is drawn, pot to highest fingertip.
 // options.size: which picture set, "s" for small on screen (the forest) or "m" (the battle screen).
 // options.shadow: draw its own shadow on the ground (default true).
+// options.light: where the light is, for the shadow it throws (see render/castShadow.js).
 export function createPlantRig(scene, plant, x, y, height, options = {}) {
   const rig = plant.rig;
   const size = options.size || "m";
@@ -218,12 +220,22 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   const H = rig.height;
 
   const root = scene.add.container(x, y);
-  const shadow = scene.add.ellipse(0, 0, H * 0.5, H * 0.07, 0x1b1420, 0.3).setVisible(options.shadow !== false);
+  const shadow = scene.add.ellipse(0, 0, H * 0.56, H * 0.085, 0x120a1c, 0.45).setVisible(options.shadow !== false);
   const body = scene.add.container(0, 0);
   const emoteLayer = scene.add.container(0, -H * 1.04).setVisible(false);
   const emoteArt = scene.add.graphics();
   emoteLayer.add(emoteArt);
-  root.add([shadow, body, emoteLayer]);
+  // the shadow it throws: its own outline (every piece, at rest), laid on the ground
+  const outline = outlineOfParts(scene, `${plant.key}-outline-${size}`, ["base", ...rig.order].map((name) => {
+    const art = rig.parts[name][size];
+    return {
+      textureKey: plantPartKey(plant, name, size),
+      x: rig.parts[name].x / rig.sizes[size] - art.ox * art.w,
+      y: rig.parts[name].y / rig.sizes[size] - art.oy * art.h,
+    };
+  }));
+  const cast = createCastShadow(scene, outline, { light: options.light, size: enlarge }).setVisible(options.shadow !== false);
+  root.add([shadow, cast, body, emoteLayer]);
 
   // ---- the body: the pot stays put, everything above its rim is cut into thin strips that slide sideways ----
   const baseKey = plantPartKey(plant, "base", size);
@@ -455,7 +467,9 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     const air = clamp01(pose.lift * 3);
     shadow.x = body.x;
     shadow.setScale((1 - air * 0.35) * grow, (1 - air * 0.3) * grow);
-    shadow.setAlpha(0.3 - air * 0.14);
+    shadow.setAlpha(0.45 - air * 0.2);
+    cast.x = body.x;
+    cast.setScale(grow).setLift(pose.lift, mood.tip);      // a plant lying on its side throws none
 
     // the mark above its head pops in, bobs and fades
     if (emote) {

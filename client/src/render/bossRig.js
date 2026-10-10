@@ -7,6 +7,7 @@
 // it stands on. It animates itself and stops when it is destroyed.
 import Phaser from "phaser";
 import { rigPartKey } from "../data/bosses.js";
+import { createCastShadow, outlineOfPicture } from "./castShadow.js";
 
 const ROAR_MS = 1500;
 const RAISE = 0.92;       // how far the middle head swings up, in radians
@@ -22,10 +23,17 @@ export function hasBossRig(scene, art) {
 }
 
 // height: how tall the whole picture is drawn, the same meaning as `height` in data/bosses.js.
-export function createBossRig(scene, art, x, y, height) {
+// options.light: where the light is, for the shadow it throws (see render/castShadow.js).
+export function createBossRig(scene, art, x, y, height, options = {}) {
   const rig = art.rig;
   const root = scene.add.container(x, y);
   const body = scene.add.container(0, 0);
+  // the shadow it throws: the outline of its whole picture, laid on the ground
+  if (scene.textures.exists(art.key)) {
+    const picture = scene.textures.get(art.key).getSourceImage();
+    const outline = outlineOfPicture(scene, art.key, 0.5, 0.93);
+    root.add(createCastShadow(scene, outline, { light: options.light, size: rig.height / picture.height }));
+  }
   root.add(body);
 
   const piece = (name) => {

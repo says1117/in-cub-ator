@@ -23,6 +23,7 @@ class Game:
     tier: int = 0        # strength of the active boss, set when it spawns
     last_tier: int = 0   # strength of the last boss, a harder one may skip the cooldown
     last_pct: dict = None  # latest moisture of each plant, so the drier plant can be picked
+    quiet_until: float = 0.0  # after a fight, no soil boss for any plant before this time
 
     def __post_init__(self):
         if self.dry_streak is None:
@@ -73,6 +74,8 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     if g.mode in (WALKING, COOLDOWN):
         if all(tier_for(v) == 0 for v in seen.values()):
             g = replace(g, last_tier=0)  # every plant is fine, the next dip starts fresh
+        if now < g.quiet_until:
+            return g  # a fight has only just ended: a breather before anyone calls a boss
         # Any dry plant may call a boss. A harder tier than the last boss may skip the cooldown.
         ready = [
             p for p in C.PLANTS
@@ -107,6 +110,7 @@ def on_battle_done(g: Game, won: bool, now: float) -> Tuple[Game, Optional[str]]
     plant = g.boss_plant
     cool = dict(g.cooldown_until)
     cool[plant] = now + C.COOLDOWN_SECONDS
+    g = replace(g, quiet_until=now + C.BOSS_BREATHER_SECONDS)
     if won:
         g = replace(g, mode=REWARD, cooldown_until=cool,
                     mode_until=now + C.REWARD_DISPLAY_SECONDS)

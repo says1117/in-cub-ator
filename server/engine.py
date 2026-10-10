@@ -233,7 +233,6 @@ class GameEngine:
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
             "meters": {
                 "water": {p: round(self.soil_pct[p], 1) for p in C.PLANTS},
-                "sunlight": {p: None for p in C.PLANTS},
                 "stale": g.stale,
             },
             "mode": g.mode,

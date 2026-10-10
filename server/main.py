@@ -1,6 +1,7 @@
 """Run the game server: python main.py"""
 import asyncio
 import logging
+import random
 import sys
 import time
 
@@ -46,7 +47,7 @@ async def main():
     sim = None
     if "--sim" in sys.argv:
         # TEMPORARY: made-up moisture for both plants instead of real sensors
-        sim = {p: MoistureSim() for p in C.PLANTS}
+        sim = {p: MoistureSim(start=random.uniform(*C.SIM_START_PCT[p])) for p in C.PLANTS}
         C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS
         C.REWARD_MIN_GAP_SECONDS = C.SIM_COOLDOWN_SECONDS
         log.info("SIMULATED moisture is on, cooldown %.0fs", C.COOLDOWN_SECONDS)

@@ -282,10 +282,28 @@ class TierTests(unittest.TestCase):
     def test_harder_tier_skips_the_cooldown(self):
         g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)
         g, _ = S.on_battle_done(g, False, 10.0)            # lost, now in cooldown
-        g = feed_dry_pct(g, 40.0, now=11.0)                # same tier: still blocked
+        later = 10.0 + C.BOSS_BREATHER_SECONDS + 1.0       # past the breather, inside the cooldown
+        g = feed_dry_pct(g, 40.0, now=later)               # same tier: still blocked
         self.assertEqual(g.mode, S.COOLDOWN)
-        g = feed_dry_pct(g, 10.0, now=12.0)                # drier: a harder boss comes
+        g = feed_dry_pct(g, 10.0, now=later + 1.0)         # drier: a harder boss comes
         self.assertEqual((g.mode, g.tier), (S.BOSS, 2))
+
+    def test_no_plant_calls_a_boss_right_after_a_fight(self):
+        g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)   # plant A's boss
+        g, _ = S.on_battle_done(g, True, 10.0)
+        g = S.on_tick(g, 10.0 + C.REWARD_DISPLAY_SECONDS)
+        for i in range(C.SOIL_DRY_READINGS_N + 2):          # plant B is bone dry, but it has to wait
+            g = S.on_soil(g, "B", 0.0, 11.0 + i * 0.1)
+        self.assertNotEqual(g.mode, S.BOSS)
+        after = 10.0 + C.BOSS_BREATHER_SECONDS + 0.1
+        g = S.on_soil(S.on_tick(g, after), "B", 0.0, after)
+        self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "B"))
+
+    def test_the_demo_button_ignores_the_breather(self):
+        g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)
+        g, _ = S.on_battle_done(g, False, 10.0)
+        g = S.on_demo(g, "B", 11.0)
+        self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "B"))
 
     def test_bosses_get_stronger(self):
         hp = [B.boss_for_tier(t).hp for t in (1, 2, 3)]
@@ -463,19 +481,40 @@ class HealthTests(unittest.TestCase):
 
 
 class SimTests(unittest.TestCase):
-    def test_simulated_percentage_stays_in_range_and_moves(self):
-        sim = M.MoistureSim(random.Random(7))
-        seen = set()
+    def test_soil_only_dries_and_passes_through_every_tier(self):
+        sim = M.MoistureSim(random.Random(7), start=90.0)
+        seen, last = set(), 90.0
         for _ in range(2000):
             pct = sim.step(1.0)
-            self.assertTrue(0.0 <= pct <= 100.0)
+            self.assertTrue(0.0 <= pct <= last)      # never gets wetter by itself
+            last = pct
             seen.add(S.tier_for(pct))
         self.assertEqual(seen, {0, 1, 2, 3})
+
+    def test_drying_is_slow(self):
+        sim = M.MoistureSim(random.Random(3), start=100.0)
+        for _ in range(60):
+            sim.step(1.0)
+        self.assertGreater(sim.pct, C.SOIL_WET_THRESHOLD_PCT)   # a minute is not enough to call a boss
 
     def test_watering_raises_it(self):
         sim = M.MoistureSim(random.Random(1), start=10.0)
         sim.watered(3000)
-        self.assertGreater(sim.pct, 40.0)
+        self.assertGreaterEqual(sim.pct, C.SIM_WATERED_AT_LEAST_PCT)
+
+    def test_a_watered_plant_stays_wet_for_a_good_while(self):
+        for seed in range(20):
+            sim = M.MoistureSim(random.Random(seed), start=0.0)
+            sim.watered(min(C.PUMP_MS_BY_TIER.values()))
+            wet = sim.pct
+            for _ in range(int(C.SIM_SOAK_SECONDS)):
+                sim.step(1.0)
+            self.assertEqual(sim.pct, wet)                       # soaked: holds its moisture
+            seconds = 0
+            while sim.pct >= C.SOIL_DRY_THRESHOLD_PCT:
+                sim.step(1.0)
+                seconds += 1
+            self.assertGreater(seconds, 60)                      # then at least a minute before it is dry
 
     def test_raw_matches_the_percentage(self):
         sim = M.MoistureSim(random.Random(1), start=0.0)

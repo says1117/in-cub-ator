@@ -60,7 +60,6 @@ ESP32  <--MQTT--  broker  <--MQTT--  game server  <--WebSocket--  game screen
 | `incube/pad/A`, `incube/pad/B` | ESP32 to server | an NFC tag ID, or empty | which creature is on the pad |
 | `incube/status/esp32` | ESP32 to server | `online` or anything else | is the ESP32 alive |
 | `incube/cmd/pump/A`, `incube/cmd/pump/B` | server to ESP32 | milliseconds, e.g. `2000` | run this pump for this long |
-| `incube/cmd/light` | server to ESP32 | minutes | grow light (defined, not used yet) |
 | `incube/debug/boss` | laptop to server | `A` or `B` | force a boss for that plant |
 
 ### WebSocket (server and game screen), port 8765
@@ -81,7 +80,7 @@ It checks five times a second. The screen sends two kinds of message back:
 {
   "mode": "battle",
   "creatures": {"A": "04:A1:B2:C3", "B": null},
-  "meters": {"water": {"A": 31.5, "B": 100.0}, "sunlight": {"A": null, "B": null}, "stale": false},
+  "meters": {"water": {"A": 31.5, "B": 100.0}, "stale": false},
   "fighters": {"A": {"name": "Ember", "skill": "Thorn Burst"}, "B": {"name": "Zest", "skill": "Photosynthesis"}},
   "health": 72.4,
   "condition": "healthy",
@@ -139,9 +138,12 @@ Rules worth knowing:
 - **A boss leaves on its own if the soil gets wet.** If someone waters the plant by hand
   during the arrival or the fight, and the reading rises above 55%, the boss is dismissed
   and the game goes back to walking. This only applies to real soil bosses, not demo ones.
-- **Cooldown is per plant.** After a fight for plant A, plant B can still call a boss.
+- **Cooldown is per plant**, 60 seconds: the plant that just had a fight cannot call
+  another boss until it is over.
+- **A breather after every fight.** For 20 seconds after any fight ends, no plant can call
+  a boss, not even the other one. The demo button ignores this.
 - **A drier plant can skip the cooldown.** If the soil has dropped into a harder tier than
-  the last boss, a new boss comes straight away.
+  the last boss, a new boss comes once the breather is over.
 - **If both plants are dry, the drier one goes first.**
 
 ## 4. Soil moisture and boss tiers
@@ -314,9 +316,8 @@ The screen is a Phaser 4 game, 800 by 450, drawn in code with a few picture file
 | `BossScene` | `/boss` | The battle screen, in the style of a monster-battle game: the fighting plant at the front left, the boss at the back right, the dragon and the other plant waiting behind. |
 | `StorageScene` | `/storage` | A placeholder plant list. Not wired to anything. |
 
-**On top of the game** sits a small panel (`ui/statusBar.js`): water bars for A and B, a
-sunlight bar (empty for now), the health bar, the condition, a "BOSS ALERT" banner, the
-connection status and the demo button.
+**On top of the game** sits a small panel (`ui/statusBar.js`): water bars for A and B, the
+health bar, the condition, a "BOSS ALERT" banner, the connection status and the demo button.
 
 **The two plants in the forest**
 
@@ -413,7 +414,12 @@ You need Python 3, Node, and Mosquitto.
 brew install mosquitto
 ```
 
-**Without any hardware** (made-up moisture for both plants):
+**Without any hardware** (made-up moisture for both plants). The made-up soil behaves like
+a pot: it only dries, slowly (50 points takes two to three minutes), and only a pump command
+makes it wetter. A watering leaves it at 80% or more and it holds that for 20 seconds before
+drying again, so a plant that has just won a fight stays quiet for a couple of minutes.
+Plant A starts drier than plant B, so the first boss comes after about half a minute and the
+two plants do not dry out together. In this mode the per-plant cooldown is 30 seconds:
 
 ```bash
 mosquitto
@@ -443,7 +449,7 @@ It reads the soil lines the ESP32 prints and passes them to the broker.
 | Command | What it does |
 | --- | --- |
 | `python3 fake_publisher.py` | pretends to be the ESP32: soil A dries until a boss appears. Add `--fast` to hurry it. |
-| `python3 test_server.py` | runs the 82 server tests |
+| `python3 test_server.py` | runs the 86 server tests |
 
 ## 15. File map
 
@@ -492,7 +498,7 @@ are given the time as a number, which is why they can be tested quickly.
 - **Pump cap.** `PUMP_MAX_MS` is a cautious guess. It must be set at or below the
   firmware's real cap.
 - **Battle numbers.** The HP, attack and skill values are placeholders.
-- **Sunlight.** The meter is always empty and the grow-light reward is written but never sent.
+- **Grow light.** The hardware has one, but the game has no sunlight meter and never switches it on.
 - **Firmware over MQTT.** The ESP32 does not publish to MQTT by itself yet;
   `serial_bridge.py` fills the gap for soil only. It does not pass on pad (NFC) readings,
   so through the bridge the plants always fight as themselves unless a pad message is

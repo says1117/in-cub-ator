@@ -137,6 +137,35 @@ export default class AdventureScene extends Phaser.Scene {
     this.baseHeight = this.player.displayHeight;
     this.basePlayerY = 360;
 
+    // LEGS: the picture is cut at legCutY. Everything above it is the body,
+    // everything below it is the left and right foot, which step in turns.
+    // The body no longer includes the flat legs, only the moving feet are drawn there.
+    const legCutY = 0.78;
+    const frameW = this.player.width;
+    const frameH = this.player.height;
+    this.player.setCrop(0, 0, frameW, frameH * legCutY);
+
+    // The two feet overlap a little in the middle so there is never a see-through seam
+    const seamOverlap = frameW * 0.03;
+
+    // Where the feet are cut apart: the middle of the black gap between the legs.
+    // That is a bit right of the picture's centre (column 51 of 88).
+    const splitX = frameW * 0.58;
+
+    const makeFoot = (cropX, cropW) => {
+      const foot = this.add.image(
+        this.player.x, this.basePlayerY, "plantHero"
+      );
+      foot.setOrigin(0.5, 1);
+      foot.setDepth(9);
+      foot.setDisplaySize(this.baseWidth, this.baseHeight);
+      foot.setCrop(cropX, frameH * legCutY, cropW, frameH * (1 - legCutY));
+      return foot;
+    };
+
+    this.footL = makeFoot(0, splitX + seamOverlap);
+    this.footR = makeFoot(splitX - seamOverlap, frameW - (splitX - seamOverlap));
+
     // UI
 
     this.add.text(20, 13, "PLANT CARE RPG", {
@@ -1738,6 +1767,21 @@ export default class AdventureScene extends Phaser.Scene {
 
     this.player.rotation = step * 0.025;
 
+    // Feet follow the body and stay side by side, only a very small up and down step in turns
+    const stepLift = 5;
+
+    for (const foot of [this.footL, this.footR]) {
+      foot.setDisplaySize(
+        this.player.displayWidth,
+        this.player.displayHeight
+      );
+    }
+
+    this.footL.x = this.player.x;
+    this.footL.y = this.player.y - Math.max(0, step) * stepLift;
+    this.footR.x = this.player.x;
+    this.footR.y = this.player.y - Math.max(0, -step) * stepLift;
+
     // Shadow stays on the ground
     this.shadow.setPosition(
       this.player.x,
@@ -1777,6 +1821,9 @@ export default class AdventureScene extends Phaser.Scene {
     this.player.y = this.basePlayerY;
     this.player.setDisplaySize(this.baseWidth, this.baseHeight);
     this.player.rotation = 0;
+
+    this.footL.setPosition(this.player.x, this.basePlayerY);
+    this.footR.setPosition(this.player.x, this.basePlayerY);
 
     this.shadow.setPosition(this.player.x, this.basePlayerY - 2);
     this.shadow.setDisplaySize(this.shadowBaseWidth, this.shadowBaseHeight);

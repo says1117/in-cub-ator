@@ -1715,10 +1715,13 @@ drawAncientArch(x, y, scale = 1) {
       0x172b25, 0.36, this.actorLayer
     );
 
-    // The dragon no longer fights. It stands at the back and sends the plants in.
+    // The dragon no longer fights. It stands at the back, facing us, and sends the plants in.
+    // Its usual picture is made by the forest scene; if the page was opened straight on the
+    // battle, that picture does not exist yet and the view from behind is used.
     ensureDragonBackTexture(this);
-    this.textures.get(DRAGON_BACK_KEY).setFilter(Phaser.Textures.FilterMode.NEAREST);
-    this.trainer = this.add.image(TRAINER.x, TRAINER.y, DRAGON_BACK_KEY).setOrigin(0.5, 1);
+    const trainerKey = this.textures.exists("plantHero") ? "plantHero" : DRAGON_BACK_KEY;
+    this.textures.get(trainerKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.trainer = this.add.image(TRAINER.x, TRAINER.y, trainerKey).setOrigin(0.5, 1);
     this.trainer.setScale(TRAINER.height / this.trainer.height);
     this.ellipse(TRAINER.x, TRAINER.y - 3, 150, 22, 0x172b25, 0.34, this.actorLayer);
     this.actorLayer.add(this.trainer);

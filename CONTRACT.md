@@ -43,7 +43,7 @@ Known tag UIDs for testing: pad A `0450A901055713`, pad B `0450AA01F25713`.
 
 - Pumps and the light are OFF at boot and until a valid command arrives.
 - A payload that is not a positive integer is ignored.
-- Each pump run is capped, and a minimum gap is enforced between runs on the same pump. The light turns itself off after its timer. The cap, the gap and the light limit are TBD, to be decided by Role 1 and Role 2 together, and then written here.
+- Each pump run is capped, and a minimum gap is enforced between runs on the same pump. The light turns itself off after its timer. Starting values, still to be confirmed by Role 2: pump max run 3000 ms, minimum gap between runs of the same pump 30000 ms, light max 30 minutes per run with a 60000 ms minimum gap.
 - A command that arrives while that pump is running is ignored, not queued.
 - The firmware never replays a command after a reconnect.
 
@@ -66,7 +66,7 @@ TODO: Roles 2 and 3 to define the WebSocket game state shape (endpoint, fields, 
 
 ## Open decisions
 
-1. Pump max run time and minimum gap (TBD).
-2. Light maximum minutes (TBD).
-3. How often soil and pad state are published (TBD).
+1. Pump max run time and minimum gap (starting values 3000 ms and 30000 ms, Role 2 to confirm).
+2. Light maximum minutes (starting value 30, Role 2 to confirm).
+3. How often soil is published (starting value every 2000 ms). Pads publish only on change.
 4. Game state message (Roles 2 and 3).

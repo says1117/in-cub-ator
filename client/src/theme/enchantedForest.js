@@ -1773,9 +1773,9 @@ function addFootprints(scene) {
   const stepOn = (landing) => {
     const side = SWAP_FEET ? -landing : landing;
     // the left print sits a little behind, the right print a little in front, so the trail zigzags
-    // the right print sits further forward: it is made a step after the left one, by which time
-    // the path has already slid away, so it needs a head start to line up with the foot
-    const x = hero.x + (side > 0 ? 17 : -7);
+    // the print on the left sits further forward: it is made a step after the other one, by which
+    // time the path has already slid away, so it needs a head start to line up with the foot
+    const x = hero.x + (side > 0 ? 7 : 3);
     const y = scene.basePlayerY - 2 + side * 3.2;
 
     const glowSprite = scene.add.image(x, y, "efGlow").setDepth(5.85).setBlendMode(Phaser.BlendModes.ADD);

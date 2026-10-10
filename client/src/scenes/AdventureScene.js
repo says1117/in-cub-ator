@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { paintEnchantedForest, addForestAmbience } from "../theme/enchantedForest.js";
 
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
@@ -17,6 +18,8 @@ export default class AdventureScene extends Phaser.Scene {
     this.speed = 85;
 
     this.createTextures();
+    // Enchanted forest theme: repaints the map layers (client/src/theme/enchantedForest.js)
+    paintEnchantedForest(this);
     this.createCharacterTexture();
 
     // SKY AND SUN
@@ -183,6 +186,9 @@ export default class AdventureScene extends Phaser.Scene {
         color: "#ffe4a0"
       }
     ).setDepth(21);
+
+    // Fireflies, drifting petals and a soft vignette
+    addForestAmbience(this);
   }
 
   // ==========================================

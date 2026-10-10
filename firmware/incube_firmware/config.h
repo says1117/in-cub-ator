@@ -59,6 +59,12 @@ const unsigned long PUMP_MIN_GAP_MS = 30000;    // minimum time between runs of 
 const unsigned long LIGHT_MAX_MINUTES = 30;     // longest single light run
 const unsigned long LIGHT_MIN_GAP_MS = 60000;   // minimum time between light runs
 
+// Keep every duration positive and far below the 32-bit millis() range, so time math never overflows.
+static_assert(PUMP_MAX_RUN_MS > 0 && PUMP_MAX_RUN_MS < 0x7FFFFFFFUL, "PUMP_MAX_RUN_MS out of range");
+static_assert(PUMP_MIN_GAP_MS > 0 && PUMP_MIN_GAP_MS < 0x7FFFFFFFUL, "PUMP_MIN_GAP_MS out of range");
+static_assert(LIGHT_MAX_MINUTES > 0 && LIGHT_MAX_MINUTES < 0x7FFFFFFFUL / 60000UL, "LIGHT_MAX_MINUTES out of range");
+static_assert(LIGHT_MIN_GAP_MS > 0 && LIGHT_MIN_GAP_MS < 0x7FFFFFFFUL, "LIGHT_MIN_GAP_MS out of range");
+
 // ---------- Wi-Fi and MQTT ----------
 
 const unsigned long WIFI_RETRY_MS = 5000;

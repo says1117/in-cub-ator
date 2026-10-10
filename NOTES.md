@@ -14,4 +14,4 @@
 | Tags | Pad A tag UID | 0450A901055713 |
 | Tags | Pad B tag UID | 0450AA01F25713 |
 | Jetson | Address | |
-| Gate status | | |
+| Gate status | Role 1 bench tests | Readers, soil, relay channels pass. Pump wiring open. See firmware/HANDOFF.md |

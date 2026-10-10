@@ -1,2 +1,20 @@
 server/CLAUDE.md
 server/AGENTS.md
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments / secrets
+.env
+.env.*
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/

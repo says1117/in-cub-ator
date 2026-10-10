@@ -25,6 +25,9 @@ void networkLoop();
 // True when connected to the broker.
 bool networkConnected();
 
+// True once after each successful (re)connect to the broker. Use it to republish current state.
+bool networkTakeJustConnected();
+
 // Publish a text payload. Returns false if not connected or the publish failed.
 bool networkPublish(const char *topic, const char *payload, bool retained);
 

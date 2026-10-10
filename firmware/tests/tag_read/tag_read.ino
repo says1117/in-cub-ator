@@ -35,7 +35,6 @@ bool startReader(Adafruit_PN532 &reader, const char *name) {
     Serial.println(": PN532 setup (SAMConfig) failed, will not be polled");
     return false;
   }
-  reader.setPassiveActivationRetries(5);  // stop searching after 5 tries instead of forever
   Serial.print(name);
   Serial.print(": PN532 ready, firmware ");
   Serial.print((version >> 16) & 0xFF);
@@ -47,7 +46,7 @@ bool startReader(Adafruit_PN532 &reader, const char *name) {
 void checkReader(Adafruit_PN532 &reader, const char *name) {
   uint8_t uid[7];
   uint8_t uidLength = 0;
-  bool found = reader.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 300);
+  bool found = reader.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
   Serial.print(name);
   if (found) {
     Serial.print(": tag UID ");

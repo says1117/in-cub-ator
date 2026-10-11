@@ -8,8 +8,10 @@ little.
 Each creature also has one signature skill. Turns won with a plain move charge it. A charged
 skill lands whatever the boss does, then empties.
 
-The plants fight as a team of two: when the one in the fight faints, the next one on the bench
-steps in at full strength with its skill charged. The fight is lost only when nobody is left."""
+The plants fight as a team of two. On your move you may swap to the other plant instead of
+using a move: that is your whole turn, and the boss's move lands on the plant coming in. Each
+plant keeps its own health and skill charge while it waits. When the one in the fight faints,
+the other steps in by itself. The fight is lost only when nobody is left."""
 import json
 import os
 import random
@@ -20,7 +22,8 @@ import config as C
 
 MOVES = ("attack", "guard", "special")
 SKILL = "skill"
-PLAYER_MOVES = MOVES + (SKILL,)
+SWAP = "swap"   # change to the plant on the bench: it takes the whole turn
+PLAYER_MOVES = MOVES + (SKILL, SWAP)
 BEATS = {"attack": "special", "special": "guard", "guard": "attack"}
 BEATEN_BY = {loser: winner for winner, loser in BEATS.items()}  # the move that beats this one
 
@@ -64,6 +67,8 @@ class Battle:
     intent: Optional[dict] = None  # the tell for the coming turn: what the boss shows
     boss_next: str = ""      # what the boss will really do. Never sent to the screen.
     seen: tuple = ()         # the player's last plain moves, newest last
+    rested: tuple = ()       # (plant, hp, charge) of bench plants that have already been in this fight
+    charge0: int = C.SKILL_CHARGE_START   # the charge a plant has the first time it is swapped in by choice
 
 
 def load_creatures(path: str = C.CREATURES_FILE) -> dict:
@@ -95,7 +100,7 @@ def start(creature: Stats, boss: Optional[Stats] = None, plant: str = "", bench:
     tier = clamp_tier(tier)
     boss = boss or boss_for_tier(tier)
     b = Battle(creature, boss, creature.hp, boss.hp, plant=plant, bench=tuple(bench),
-               tier=tier, charge=charge)
+               tier=tier, charge=charge, charge0=charge)
     return plan(b, rng) if rng is not None else b
 
 
@@ -149,7 +154,45 @@ def clash_hit(b: Battle) -> int:
     return int(plain_hit(b) * C.CLASH_SHARE)
 
 
+def can_swap(b: Battle) -> bool:
+    return bool(b.bench)
+
+
+def bench_hp(b: Battle, plant: str) -> Optional[int]:
+    """The health a waiting plant has kept, or None if it has not been in this fight yet."""
+    return next((hp for p, hp, _ in b.rested if p == plant), None)
+
+
+def _bring_in(b: Battle, fresh_charge: int) -> Battle:
+    """The first plant on the bench takes the field, with the health and charge it left with.
+    The one that was fighting is not placed anywhere: the caller benches it or counts it out."""
+    (plant, stats), rest = b.bench[0], b.bench[1:]
+    kept = next(((hp, charge) for p, hp, charge in b.rested if p == plant), None)
+    hp, charge = kept if kept else (stats.hp, fresh_charge)
+    return replace(b, creature=stats, creature_hp=hp, plant=plant, bench=rest, charge=charge, seen=(),
+                   rested=tuple(r for r in b.rested if r[0] != plant))
+
+
+def _swap_turn(b: Battle, boss_move: str) -> Battle:
+    """The player's turn is spent changing plants. The boss's move lands on the one coming in."""
+    out = (b.plant, b.creature, b.creature_hp, b.charge)
+    took = boss_hit(b, boss_move)   # worked out before the change: the tell belongs to this turn
+    shown = b.intent["move"] if b.intent else boss_move
+    b = _bring_in(b, b.charge0)
+    b = replace(b, bench=b.bench + ((out[0], out[1]),), rested=b.rested + ((out[0], out[2], out[3]),))
+    log = {"creature": SWAP, "boss": boss_move, "shown": shown, "bluffed": boss_move != shown,
+           "heavy": bool(b.intent and b.intent["heavy"]), "hit": "boss", "took": took,
+           "swap": {"out": out[0], "in": b.plant, "name": b.creature.name, "chosen": True}}
+    b = replace(b, creature_hp=max(0, b.creature_hp - took), turn=b.turn + 1, last_move=log,
+                intent=None, boss_next="")
+    return _send_in_next(b)
+
+
 def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
+    if creature_move == SWAP:
+        if can_swap(b):
+            return _swap_turn(b, boss_move)
+        creature_move = "attack"  # nobody to swap to: it becomes a plain attack
     skill = skill_of(b.creature)
     use_skill = creature_move == SKILL and skill_ready(b)
     if creature_move == SKILL and not use_skill:
@@ -197,12 +240,13 @@ def _send_in_next(b: Battle) -> Battle:
     """The fighter fainted and the boss still stands: the next plant on the bench steps in."""
     if b.creature_hp > 0 or b.boss_hp <= 0 or not b.bench:
         return b
-    (plant, stats), rest = b.bench[0], b.bench[1:]
-    log = dict(b.last_move, swap={"out": b.plant, "in": plant, "name": stats.name})
-    # The fresh plant arrives with its skill charged: that is the comeback.
-    return replace(b, creature=stats, creature_hp=stats.hp, plant=plant, bench=rest,
-                   fallen=b.fallen + ((b.plant, b.creature),), charge=C.SKILL_CHARGE_NEED,
-                   seen=(), last_move=log)
+    down = (b.plant, b.creature)
+    # A plant that has not fought yet arrives with its skill charged: that is the comeback.
+    b = _bring_in(b, C.SKILL_CHARGE_NEED)
+    step = {"out": down[0], "in": b.plant, "name": b.creature.name}
+    # "back": the plant that was swapped in this turn went down at once, so the other returns
+    log = dict(b.last_move, **({"back": step} if b.last_move.get("swap") else {"swap": step}))
+    return replace(b, fallen=b.fallen + (down,), last_move=log)
 
 
 def auto_move(b: Battle, rng: random.Random) -> str:

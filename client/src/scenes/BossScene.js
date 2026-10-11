@@ -12,13 +12,13 @@ import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/cast
 import { audio } from "../audio.js";
 import { addBattleForest } from "../theme/enchantedForest.js";
 
-const ENEMY_HEIGHT = 330;   // how tall the tier 1 boss is drawn here, roots included
+const ENEMY_HEIGHT = 250;   // how tall the tier 1 boss is drawn here, roots included: it stands far off, so much smaller than the team
 
 // Where everyone stands on the 1280 x 720 stage. size is a share of the plant picture's own size.
-const FIGHTER = { x: 405, y: 550, size: 1.5 };     // the plant that is fighting
-const BENCH = { x: 228, y: 562, size: 0.62 };      // the plant waiting its turn, or resting after it fainted
-const TRAINER = { x: 98, y: 568, height: 196 };    // the dragon, who sends the plants in
-const BOSS = { x: 905, y: 458 };                   // the spot the boss stands on
+const FIGHTER = { x: 330, y: 664, size: 2.0 };     // the plant that is fighting: right in front of us, the biggest thing on the field
+const BENCH = { x: 150, y: 600, size: 0.62 };      // the plant waiting its turn, or resting after it fainted: behind the fighter
+const TRAINER = { x: 58, y: 596, height: 180 };    // the dragon, who sends the plants in
+const BOSS = { x: 742, y: 534 };                   // the spot the boss stands on. It must be ON THE DARK PATH (stage y 490 to 600), in the gap between our plant and the move cards (stage x 620 to 850): higher is the hazy backdrop, where it looks as if it is flying
 
 const CALL = 800;         // ms a line such as "EMBER used VINE HAYMAKER!" is up before the move starts
 const PAUSE = 650;        // ms of quiet after one side's move before the other is called
@@ -83,6 +83,7 @@ export default class BossScene extends Phaser.Scene {
     this.kit = createFxKit(this, { back: this.auraLayer, front: this.effectLayer });
     this.hud = createBattleHud(this, { ui: this.uiLayer, fx: this.effectLayer, scale: this.W / this.scale.width });
     this.hud.onPick = (move) => this.pickMove(move);
+    this.hud.onPotion = () => this.drinkPotion();
     // a new wind-up: the surer the tell, the steadier its sound; the boss leans in for a heavy one
     this.hud.onTell = (tell) => {
       audio.play(tell.heavy ? "heavy" : { sure: "tellSure", likely: "tellLikely", flip: "tellFlip" }[tell.grade] || "tellSure");
@@ -102,8 +103,9 @@ export default class BossScene extends Phaser.Scene {
     this.registry.events.on("changedata-serverState", this.stateListener);
     this.keys = this.input.keyboard.addKeys("ONE,TWO,THREE,FOUR");
     this.keyListener = (event) => {
-      const moves = { Digit1: "attack", Digit2: "guard", Digit3: "special", Digit4: "skill" };
+      const moves = { Digit1: "attack", Digit2: "guard", Digit3: "special", Digit4: "skill", Digit5: "swap" };
       if (moves[event.code]) this.pickMove(moves[event.code]);
+      if (event.code === "Digit6" || event.code === "KeyP") this.drinkPotion();
     };
     this.input.keyboard.on("keydown", this.keyListener);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -191,10 +193,16 @@ export default class BossScene extends Phaser.Scene {
   }
 
   buildActors() {
-    this.drawBattleAura(FIGHTER.x, FIGHTER.y - 4, 0xa8ffd0, 1.0);
-    this.drawBattleAura(BOSS.x + 8, BOSS.y - 4, 0xff8fd8, 1.15);
+    this.drawBattleAura(FIGHTER.x, FIGHTER.y - 4, 0xa8ffd0, 1.4);
+    
 
-    this.ellipse(BOSS.x + 2, BOSS.y - 1, 295, 37, 0x10201b, 0.5, this.actorLayer);
+    // Our side stands on a mossy mound that runs off the bottom of the screen, as in a
+    // monster-battle game. That, and the boss being small and far off, gives the field its depth.
+    this.drawIsland(FIGHTER.x - 30, FIGHTER.y + 4, 800, 150);
+    // The boss has no oval of its own: one hanging in the air made it look as if it was flying.
+    // It stands on the forest floor, with turned earth and a dark shadow where its roots go in.
+    this.ellipse(BOSS.x, BOSS.y + 3, 300, 40, 0x1b1024, 0.6, this.actorLayer);
+    this.ellipse(BOSS.x, BOSS.y + 1, 220, 24, 0x07040d, 0.65, this.actorLayer);
 
     // The dragon no longer fights. It stands at the back, facing us, and sends the plants in.
     // Its usual picture is made by the forest scene; if the page was opened straight on the
@@ -223,12 +231,14 @@ export default class BossScene extends Phaser.Scene {
       this.enemySprite = this.add.container(BOSS.x, BOSS.y);   // no picture to show
     }
     this.actorLayer.add(this.enemySprite);
+    this.addBossGrass();
 
     // Both plants (render/plantRig.js). They stay hidden until the server says who is fighting.
     this.fighters = {};
     for (const id of PLANT_IDS) {
       const rig = createPlantRig(this, PLANTS[id], BENCH.x, BENCH.y, PLANTS[id].rig.height * BENCH.size, { light: BATTLE_LIGHT });
       rig.setVisible(false);
+      rig.setTurn(0.85);   // they face the boss, turned enough to still show their faces
       this.actorLayer.add(rig);
       this.fighters[id] = rig;
     }
@@ -410,6 +420,8 @@ export default class BossScene extends Phaser.Scene {
       turn: battle.turn,
       moves, skill,
       canPick: Boolean(battle.awaiting_move) && !this.result && this.time.now >= this.busyUntil,
+      potion: battle.potion || null,
+      canSwap: Boolean(battle.awaiting_move && battle.can_swap) && !this.result && !this.chosen && this.time.now >= this.busyUntil,
       chosen: this.chosen,
       seconds: battle.move_seconds_left,
     });
@@ -428,6 +440,7 @@ export default class BossScene extends Phaser.Scene {
     if (!battle?.awaiting_move || this.result || this.time.now < this.busyUntil) return;   // the last turn is still playing out
     if (this.chosen) return;
     if (move === "skill" && !battle.skill?.ready) { audio.play("no"); return; }
+    if (move === "swap" && !battle.can_swap) { audio.play("no"); return; }   // nobody to change to
     audio.play("pick");
     this.registry.get("sendMove")?.(move);
     this.chosen = move;
@@ -438,8 +451,28 @@ export default class BossScene extends Phaser.Scene {
       this.chosen = null;
       this.refreshHud();
     });
-    this.hud.log("Here it comes...");
+    this.hud.log(move === "swap" ? "Changing plants..." : "Here it comes...");
     this.refreshHud();
+  }
+
+  // The health potion: only on your own move, and it does not use the turn. The server decides.
+  drinkPotion() {
+    const battle = this.serverState?.battle;
+    if (!battle?.awaiting_move || this.result || this.chosen || this.time.now < this.busyUntil) return;
+    if (!battle.potion?.ready || battle.creature_hp >= battle.creature_max_hp) { audio.play("no"); return; }
+    this.registry.get("sendPotion")?.();
+  }
+
+  // A potion was drunk: the plant glows, the number floats up, the bar fills.
+  showPotion(healed) {
+    const rig = this.fighters[this.activeId];
+    if (!rig) return;
+    audio.play("heal");
+    rig.emote("sparkle", 1100);
+    rig.play("cheer");
+    this.kit.ring(rig.x, rig.y - rig.getHeight() * 0.45, { from: 30, to: 230, color: 0x8dff9b, thick: 8, ms: 480 });
+    this.hud.number(rig.x - 20, rig.y - rig.getHeight() * 0.8, `+${healed}`, "#8dff9b");
+    this.hud.log(`${this.plantName(this.activeId)} drank a potion: +${healed} HP.`);
   }
 
   applyServerState(state) {
@@ -452,6 +485,9 @@ export default class BossScene extends Phaser.Scene {
       if (!this.enemyBoss || state.boss.tier !== this.enemyBoss.tier || state.boss.kind !== this.enemyBoss.kind) {
         this.enemyBoss = { kind: state.boss.kind, tier: state.boss.tier };
         this.fitEnemy(this.enemyBoss);
+      }
+      if (previous && battle.potion && previous.potion && battle.potion.used > previous.potion.used) {
+        this.showPotion(Math.max(0, battle.creature_hp - previous.creature_hp));
       }
       if (previous && battle.turn > previous.turn) this.animateTurn(previous, battle, state);
       // a plant change with no turn to show it (the page was opened late): just put them in place
@@ -466,6 +502,101 @@ export default class BossScene extends Phaser.Scene {
     else if (state.mode === "cooldown" && previous && !this.result) this.showResult(previous.boss_hp <= 0, state);
     else if (state.mode === "walking" && !battle && !this.result) this.hud.log("Waiting for a boss...");
     if ((state.mode === "walking" || state.mode === "cooldown") && (this.result || !battle)) this.leaveWhenReady();
+  }
+
+  // The mound our plants stand on, in the forest's own colours: dark violet earth with a lit rim,
+  // moss in several greens, dappled light, and round its edge grass, tiny flowers, fallen wisteria
+  // petals and the same glowing blue mushrooms that grow among the trees. x, y is its middle.
+  drawIsland(x, y, w, h) {
+    const rng = new Phaser.Math.RandomDataGenerator(["plant-island"]);
+    const g = this.add.graphics();
+    this.actorLayer.add(g);
+    const oval = (dx, dy, ow, oh, color, alpha = 1) => { g.fillStyle(color, alpha); g.fillEllipse(x + dx, y + dy, ow, oh); };
+    // a spot on the mound's top: angle round it, and how far out from the middle (1 is the rim)
+    const spot = (angle, out) => ({ x: x + Math.cos(angle) * (w * 0.465) * out, y: y + Math.sin(angle) * (h * 0.41) * out });
+
+    // the earth it is made of, and a soft glow where it meets the ground
+    oval(0, h * 0.3, w * 1.1, h * 1.2, 0x7a5cff, 0.1);
+    oval(0, h * 0.24, w * 1.04, h * 1.12, 0x120a1f, 0.85);
+    oval(0, h * 0.13, w * 1.01, h * 1.04, 0x2b1b45, 1);
+    oval(0, h * 0.09, w * 1.0, h * 1.0, 0x4a3470, 1);          // the lit lip of the earth
+    // moss, darker at the edge and brighter where the light falls
+    oval(0, h * 0.03, w * 0.985, h * 0.96, 0x1c4a3c, 1);
+    oval(0, 0, w * 0.95, h * 0.86, 0x276b47, 1);
+    oval(-w * 0.03, -h * 0.03, w * 0.84, h * 0.7, 0x348a52, 1);
+    oval(-w * 0.07, -h * 0.07, w * 0.6, h * 0.46, 0x4aa85e, 0.75);
+    oval(-w * 0.1, -h * 0.1, w * 0.36, h * 0.24, 0x8fe08a, 0.22);
+    oval(w * 0.22, h * 0.06, w * 0.34, h * 0.3, 0x5b3fa0, 0.16);   // the purple of the trees, thrown across it
+
+    // dappled light and moss clumps
+    for (let i = 0; i < 46; i++) {
+      const p = spot(rng.frac() * Math.PI * 2, Math.sqrt(rng.frac()) * 0.9);
+      const light = rng.frac() < 0.55;
+      g.fillStyle(light ? 0x6fc56c : 0x1f5a40, light ? 0.3 : 0.4);
+      g.fillEllipse(p.x, p.y, rng.between(14, 44), rng.between(4, 9));
+    }
+    // a few flat stones sunk in the moss
+    for (let i = 0; i < 6; i++) {
+      const p = spot(Math.PI + rng.frac() * Math.PI, 0.35 + rng.frac() * 0.5);
+      const sw = rng.between(20, 38);
+      g.fillStyle(0x2a2440, 0.9); g.fillEllipse(p.x, p.y + 2, sw, sw * 0.36);
+      g.fillStyle(0x6a6590, 1); g.fillEllipse(p.x, p.y, sw, sw * 0.34);
+      g.fillStyle(0xa9a6cf, 0.8); g.fillEllipse(p.x - sw * 0.12, p.y - 1.5, sw * 0.5, sw * 0.12);
+    }
+    // grass round the back rim, where it shows against the forest
+    for (let i = 0; i < 120; i++) {
+      const p = spot(Math.PI + (i / 119) * Math.PI + rng.realInRange(-0.02, 0.02), rng.realInRange(0.9, 1.0));
+      const bh = rng.between(8, 22), lean = rng.between(-6, 6);
+      g.fillStyle([0x1f5a3c, 0x2f8048, 0x47a65a, 0x79d87c][i % 4], 1);
+      g.fillTriangle(p.x - 3, p.y + 2, p.x + 3, p.y + 2, p.x + lean, p.y - bh);
+    }
+    // fallen wisteria petals and tiny flowers
+    for (let i = 0; i < 34; i++) {
+      const p = spot(rng.frac() * Math.PI * 2, 0.2 + rng.frac() * 0.72);
+      g.fillStyle([0xc9a8ff, 0xe6d4ff, 0x9d7cf0][i % 3], 0.9);
+      g.fillEllipse(p.x, p.y, rng.between(4, 7), 2.5);
+    }
+    for (let i = 0; i < 16; i++) {
+      const p = spot(Math.PI * (0.95 + rng.frac() * 1.1), 0.55 + rng.frac() * 0.4);
+      const color = [0xff9ad0, 0xffffff, 0xffe27a, 0xb8f0ff][i % 4];
+      g.fillStyle(0x2f8048, 1); g.fillRect(p.x - 0.5, p.y - 7, 1.5, 7);
+      g.fillStyle(color, 1);
+      for (const [fx, fy] of [[-2.5, -8], [2.5, -8], [0, -10.5], [0, -5.5]]) g.fillCircle(p.x + fx, p.y + fy, 2);
+      g.fillStyle(0xffd24a, 1); g.fillCircle(p.x, p.y - 8, 1.4);
+    }
+    // glowing mushrooms, like the ones among the trees: they breathe light
+    const glow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    this.actorLayer.add(glow);
+    for (let i = 0; i < 9; i++) {
+      const p = spot(Math.PI * (1.02 + (i / 8) * 0.96) + rng.realInRange(-0.05, 0.05), rng.realInRange(0.7, 0.93));
+      const size = rng.realInRange(0.75, 1.5);
+      const cap = i % 3 === 2 ? 0xff9ad8 : 0x7fe0ff;
+      g.fillStyle(0xe9f6ff, 1); g.fillRect(p.x - 1.5 * size, p.y - 9 * size, 3 * size, 9 * size);
+      g.fillStyle(cap, 1); g.fillEllipse(p.x, p.y - 10 * size, 14 * size, 8 * size);
+      g.fillStyle(0xffffff, 0.75); g.fillEllipse(p.x - 2.5 * size, p.y - 11.5 * size, 4 * size, 2 * size);
+      g.fillStyle(0x10201b, 0.35); g.fillEllipse(p.x, p.y + 1, 12 * size, 3 * size);
+      glow.fillStyle(cap, 0.16); glow.fillCircle(p.x, p.y - 9 * size, 20 * size);
+      glow.fillStyle(cap, 0.1); glow.fillEllipse(p.x, p.y + 2, 46 * size, 12 * size);   // its light on the moss
+    }
+    this.tweens.add({ targets: glow, alpha: { from: 0.55, to: 1 }, duration: 1900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  }
+
+  // Tufts of grass over the edge of the earth the boss stands in, so it looks planted, not hovering.
+  // They are added after the boss, which is swapped in place by fitEnemy, so they stay in front of it.
+  addBossGrass() {
+    const g = this.add.graphics();
+    const rng = new Phaser.Math.RandomDataGenerator(["boss-grass"]);
+    for (let i = 0; i < 46; i++) {
+      const x = BOSS.x + (i / 45 - 0.5) * 316 + rng.between(-5, 5);
+      const edge = Math.abs(i / 45 - 0.5) * 2;                 // 0 in the middle, 1 at the ends
+      const y = BOSS.y + 6 + Math.sqrt(1 - edge * edge) * 22 + rng.between(-2, 2);   // along the front rim of its patch
+      const h = rng.between(7, 15);
+      const lean = rng.between(-5, 5);
+      g.fillStyle([0x2e6b3a, 0x3f8a43, 0x1e4a30][i % 3], 1);
+      g.fillTriangle(x - 3, y, x + 3, y, x + lean, y - h);
+    }
+    this.actorLayer.add(g);
+    this.bossGrass = g;
   }
 
   // Puts the right boss on the field, at battle size, keeping its proportions. Higher tiers stand taller.
@@ -519,6 +650,7 @@ export default class BossScene extends Phaser.Scene {
   animateTurn(previous, battle, state) {
     const move = battle.last_move;
     if (!move) return;
+    if (move.creature === "swap") { this.animateSwapTurn(previous, battle, state); return; }
     const swap = move.swap || null;
     const actorId = swap && this.fighters[swap.out] ? swap.out : this.activeId;
     const actor = this.fighters[actorId];
@@ -695,6 +827,86 @@ export default class BossScene extends Phaser.Scene {
       this.hold = null;
       this.refreshHud();
       if (!this.result && battle.skill?.ready && !previous.skill?.ready && !move.swap) audio.play("charged");
+      if (!this.result && this.serverState?.battle?.awaiting_move) this.hud.log("Read the wind-up. Choose a move.");
+    });
+  }
+
+  // The player spent the turn changing plants: one hops back to the bench, the other bounds in,
+  // and the boss's move lands on the one that came in. If that knocks it out, the first returns.
+  animateSwapTurn(previous, battle, state) {
+    const move = battle.last_move;
+    const { out: outId, in: inId } = move.swap;
+    const out = this.fighters[outId];
+    const actor = this.fighters[inId];
+    const enemy = this.enemySprite;
+    if (!out || !actor) { this.placeTeam(state); return; }
+    const theirs = bossMove(state.boss, move.boss);
+    const palette = bossPalette(state.boss);
+    const back = move.back || null;                        // it went down at once: the other comes back
+    const was = (previous.team && previous.team[inId]) || {};
+    const before = was.hp ?? battle.creature_max_hp;
+    const name = move.swap.name || this.plantName(inId);
+    const loss = move.took || 0;
+
+    this.chosen = null;
+    this.hold = { id: inId, name, max: was.max_hp ?? before, hp: before, bossHp: previous.boss_hp, skill: back ? null : battle.skill, enraged: previous.enraged };
+
+    // the change itself
+    this.activeId = inId;
+    this.tweens.killTweensOf(out);
+    this.tweens.killTweensOf(actor);
+    this.hud.log(`${this.plantName(outId)}, come back! Go, ${name}!`);
+    this.hud.callout("left", "GO!", name, actor.plant.glow);
+    this.trainerCall();
+    audio.play("swap");
+    out.setMood("happy");
+    out.play("hop", { ms: 300, height: 0.24 });
+    this.tweens.add({ targets: out, x: BENCH.x, y: BENCH.y, scaleX: BENCH.size, scaleY: BENCH.size, duration: 420, ease: "Sine.easeInOut" });
+    actor.setVisible(true).setAlpha(1).setMood("fierce");
+    actor.emote("anger", 1000);
+    this.actorLayer.bringToTop(actor);
+    actor.play("hop", { ms: 320, height: 0.34 });
+    actor.play("hop", { ms: 320, height: 0.24, delay: 320 });
+    this.tweens.add({
+      targets: actor, x: FIGHTER.x, y: FIGHTER.y, scaleX: FIGHTER.size, scaleY: FIGHTER.size, duration: 640, ease: "Sine.easeInOut",
+      onComplete: () => playBattleFx("arrive", this.plantCtx(actor, 0, true)),
+    });
+    this.refreshHud();
+
+    // then the boss's move, which nothing answers
+    const bossSays = 900;
+    this.time.delayedCall(bossSays, () => {
+      this.hud.announce(state.boss.name, theirs.name, palette.main, CALL + 500);
+      this.hud.log(move.bluffed ? `A bluff! ${state.boss.name} used ${theirs.name}!` : `${state.boss.name} used ${theirs.name}!`);
+      audio.play(move.bluffed ? "bluff" : "call");
+      if (move.bluffed) this.hud.word("BLUFF!", "#ff8f6b", BOSS.x - 20, BOSS.y - 330, 16);
+    });
+    this.time.delayedCall(bossSays + CALL, () => {
+      audio.play(`boss_${theirs.fx}`);
+      const blow = playBossFx(theirs.fx, this.bossCtx(actor, loss > 0, false, null));
+      this.time.delayedCall(blow, () => {
+        this.hold.hp = Math.max(0, before - loss);
+        this.refreshHud();
+        actor.play("hurt", { force: 1.3 });
+        this.flash(actor);
+        audio.play(move.heavy || loss >= 12 ? "crit" : "hurt");
+        if (enemy.emote) enemy.emote("smug", 1000, 120);
+        this.hud.number(actor.x - 20, actor.y - actor.getHeight() * 0.8, `-${loss}`, "#ff8f90", loss >= 9);
+        this.hud.word(back ? "KNOCKED OUT!" : move.heavy ? "HEAVY HIT!" : loss >= 12 ? "CRUNCH!" : "OUCH!", "#ff8f90", 640, 300, 24);
+        if (move.heavy || loss >= 12) this.kit.shake(260, 0.012);
+      });
+    });
+    let length = bossSays + CALL + BOSS_BLOW + 620;
+    if (back) {
+      this.time.delayedCall(length - 60, () => audio.play("faint"));
+      this.swapFighter(back.out, back.in, length - 60);
+      length += 1500;
+    }
+
+    this.busyUntil = this.time.now + length;
+    this.time.delayedCall(length + 20, () => {
+      this.hold = null;
+      this.refreshHud();
       if (!this.result && this.serverState?.battle?.awaiting_move) this.hud.log("Read the wind-up. Choose a move.");
     });
   }

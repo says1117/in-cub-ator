@@ -41,7 +41,9 @@ ESP32_STALE_SECONDS = 30.0
 PUMP_MAX_MS = 3000
 PUMP_MS_PER_WIN = 2000
 PUMP_MS_BY_TIER = {1: 2000, 2: 2500, 3: 3000}
-REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
+# The wait between two waterings of the same plant. 0: no wait, every win waters (the owner's choice).
+# The cap on one pump run (PUMP_MAX_MS) and the wet-soil rule still hold. Set a number of seconds to bring the wait back.
+REWARD_MIN_GAP_SECONDS = 0.0
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket
 WS_ACTION_DEMO_BOSS = "demo_boss"
@@ -71,6 +73,11 @@ PLANT_FIGHTERS = {
 # The player picks each move. The client sends {"action": "move", "move": "attack"}.
 WS_ACTION_MOVE = "move"
 WS_ACTION_SIM_PAD = "sim_pad"   # only with --sim: lifts or sets down plant A or B, standing in for the NFC pad
+# Health potion: in a fight the player may drink one on their own move. It does not use the turn.
+# The first is ready when the fight starts; after each one there is a wait before the next.
+WS_ACTION_POTION = "potion"            # the client sends {"action": "potion"}
+POTION_HEAL_SHARE = 0.15               # of the fighting plant's full HP
+POTION_COOLDOWN_SECONDS = 25.0
 # If nobody picks a move in this time the game picks one, so a fight can never hang on stage.
 PLAYER_MOVE_TIMEOUT_SECONDS = 10.0
 

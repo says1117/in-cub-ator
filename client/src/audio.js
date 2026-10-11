@@ -30,6 +30,12 @@ const MUSIC = 0.38;
 
 // Some sounds are short and need pushing up to sit next to the long ones. Each effect is scaled
 // by its number here, found by measuring every effect (audio.measure) and listening.
+// Recorded clips, played with audio.clip(name). The files live in client/public/assets/audio.
+const CLIPS = {
+  bossScream: "/assets/audio/boss-scream.mp3",   // the scream after a boss has landed and roared
+};
+const clipCache = {};
+
 const TRIM = {
   tick: 3, call: 2.5, no: 2, pick: 1.4, unmute: 2, move_generic: 6, graze: 2, miss: 2, hit: 1.8, hurt: 1.6,
   bound: 1.8, charged: 1.5, move_haymaker: 1.5, move_bladeRush: 1.5, move_flare: 1.3, bluff: 1.2,
@@ -674,6 +680,50 @@ export const audio = {
     if (!fn) return;
     trim = TRIM[name] ?? 1;
     try { fn(...args); } finally { trim = 1; }
+  },
+
+  // Plays a recorded clip from client/public/assets/audio (see CLIPS). It goes through the same
+  // volume, mute and limiter as everything else. A clip whose file is missing is simply silent.
+  // from: where in the recording to start, in seconds (to skip a lead-in).
+  // seconds: stop after this long (0 plays to the end), fading out over the last `fade` seconds.
+  async clip(name, { vol = 0.9, from = 0, seconds = 0, fade = 0.25 } = {}) {
+    if (muted || !ctx || ctx.state !== "running" || !CLIPS[name]) return;
+    try {
+      if (!clipCache[name]) {
+        clipCache[name] = fetch(CLIPS[name])
+          .then((reply) => { if (!reply.ok) throw new Error(`no clip ${name}`); return reply.arrayBuffer(); })
+          .then((bytes) => ctx.decodeAudioData(bytes));
+      }
+      const buffer = await clipCache[name];
+      if (muted || !ctx) return;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gain = ctx.createGain();
+      const t = ctx.currentTime;
+      const start = Math.min(Math.max(0, from), Math.max(0, buffer.duration - 0.05));
+      const rest = buffer.duration - start;
+      const length = seconds > 0 ? Math.min(seconds, rest) : rest;
+      if (start > 0) {   // starting part way in: a very quick rise, so it does not click
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.linearRampToValueAtTime(vol, t + 0.015);
+      } else gain.gain.setValueAtTime(vol, t);
+      if (length < rest) {   // cut short: fade out so it does not click
+        gain.gain.setValueAtTime(vol, t + Math.max(0, length - fade));
+        gain.gain.linearRampToValueAtTime(0.0001, t + length);
+      }
+      source.connect(gain).connect(sfxBus);
+      source.start(t, start);
+      source.stop(t + length + 0.02);
+      duck(0.35, length);   // the music steps back while it plays
+    } catch { clipCache[name] = null; }   // not there, or not sound: try again next time
+  },
+  // Loads a clip ahead of time so it starts the instant it is asked for.
+  preloadClip(name) {
+    if (!ctx || !CLIPS[name] || clipCache[name]) return;
+    clipCache[name] = fetch(CLIPS[name])
+      .then((reply) => { if (!reply.ok) throw new Error(`no clip ${name}`); return reply.arrayBuffer(); })
+      .then((bytes) => ctx.decodeAudioData(bytes));
+    clipCache[name].catch(() => { clipCache[name] = null; });
   },
 
   // Starts a song, fading the last one out. delay: seconds to wait before it starts.

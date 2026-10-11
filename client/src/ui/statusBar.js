@@ -37,10 +37,8 @@ const css = `
 #hud .lost b{display:block;color:#ff8f6b;font-size:1.5em}
 #hud.in-storage .bar,#hud.in-storage .conn,#hud.in-storage .tip,#hud.in-storage .banner,#hud.in-storage .lost{display:none}
 #hud.in-storage .tools{display:none}
-#hud #simA,#hud #simB{display:none}
-#hud.sim #simA,#hud.sim #simB{display:block}
 #hud.empty .bar{display:none}
-#hud.in-battle #storageBtn,#hud.in-battle #simA,#hud.in-battle #simB{display:none}
+#hud.in-battle #storageBtn{display:none}
 #hud.in-battle .bar,#hud.in-battle .tools #demoBtn,#hud.in-battle .conn,#hud.in-battle .tip,#hud.in-battle .banner{display:none}
 #hud.in-battle .tools{top:9%;bottom:auto;right:auto;left:50%;transform:translateX(-50%)}
 #hud.in-battle .tools button{padding:.35em .6em;opacity:.75}
@@ -51,7 +49,7 @@ const meterRow = (label, id, mark = false) => `
     <div class="track"><div class="fill" id="${id}"></div>${mark ? '<div class="mark"></div>' : ""}</div>
     <span class="num" id="${id}Num"></span></div>`;
 
-export function mountStatusBar(parent, { onDemoBoss, onStorage, onSimPad }) {
+export function mountStatusBar(parent, { onDemoBoss, onStorage }) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
@@ -66,8 +64,6 @@ export function mountStatusBar(parent, { onDemoBoss, onStorage, onSimPad }) {
     </div>
     <div class="banner" id="banner">BOSS ALERT</div>
     <div class="tools">
-      <button id="simA" title="Test only: lift plant A off the cube or set it down"></button>
-      <button id="simB" title="Test only: lift plant B off the cube or set it down"></button>
       <button id="storageBtn" title="See your plants">Storage</button>
       <button id="demoBtn" title="Call a boss now, whatever the soil says">Demo boss</button>
       <button id="muteBtn" title="Sound on or off (M)"></button>
@@ -95,7 +91,6 @@ export function mountStatusBar(parent, { onDemoBoss, onStorage, onSimPad }) {
 
   const $ = (id) => hud.querySelector("#" + id);
   $("demoBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onDemoBoss(); };
-  for (const plant of ["A", "B"]) $("sim" + plant).onclick = (event) => { event.currentTarget.blur(); onSimPad(plant); };
   $("storageBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onStorage(); };
   const showMute = (muted) => { $("muteBtn").textContent = muted ? "Sound off" : "Sound on"; };
   showMute(audio.isMuted());
@@ -126,13 +121,11 @@ export function mountStatusBar(parent, { onDemoBoss, onStorage, onSimPad }) {
       const here = { A: true, B: true, ...(s.present || {}) };
       const anyHere = here.A || here.B;
       hud.classList.toggle("empty", !anyHere);
-      hud.classList.toggle("sim", Boolean(s.sim));
       for (const plant of ["A", "B"]) {
         const name = s.fighters && s.fighters[plant] ? s.fighters[plant].name : `Plant ${plant}`;
         $("w" + plant + "Name").textContent = name;
         $("w" + plant + "Name").parentElement.style.display = here[plant] ? "" : "none";
         if (here[plant]) meter("w" + plant, s.meters.water[plant], dry(s.meters.water[plant]));
-        $("sim" + plant).textContent = `${here[plant] ? "Lift" : "Set down"} ${name}`;
       }
       const h = s.health ?? 100;
       meter("health", h, h > 60 ? "#5fe36c" : h > 30 ? "#f7d04a" : "#f2545b");

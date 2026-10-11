@@ -38,7 +38,8 @@ export function createPetParade(scene, groundY) {
     if (!hasPlantRig(scene, plant, "s")) continue;
     const rig = createPlantRig(scene, plant, dragonX + HOME[id], groundY, plant.rig.height * SIZE, { size: "s" });
     rig.setDepth(DEPTH[id]);
-    pets[id] = { id, rig, home: dragonX + HOME[id], offset: 0, hop: null, from: 0, sweatAt: 0 };
+    // size: the rig's own scale at forest size. A rig is sized by its scale, so 1 would be full battle size.
+    pets[id] = { id, rig, size: rig.scaleX, home: dragonX + HOME[id], offset: 0, hop: null, from: 0, sweatAt: 0 };
   }
   const list = () => Object.values(pets);
   const active = () => list().filter((pet) => pet.here !== false);   // the ones that are on the cube
@@ -179,7 +180,7 @@ export function createPetParade(scene, groundY) {
       pet.offset = 0;
       pet.hop = null;
       pet.rig.stopActions();
-      pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setAlpha(1).setScale(1).setVisible(pet.here !== false);
+      pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setAlpha(1).setScale(pet.size).setVisible(pet.here !== false);
       pet.rig.setMood(isDry(pet.id, state) ? "thirsty" : "happy");
     }
     nextHopAt = scene.time.now + 250;
@@ -224,8 +225,8 @@ export function createPetParade(scene, groundY) {
     audio.play("poofOut");
     puff(pet.rig.x, groundY);
     tween({
-      targets: pet.rig, alpha: 0, scaleX: 0.3, scaleY: 0.3, duration: 170, ease: "Cubic.easeIn",
-      onComplete: () => { if (pet.here === false) pet.rig.setVisible(false).setAlpha(1).setScale(1); },
+      targets: pet.rig, alpha: 0, scaleX: pet.size * 0.3, scaleY: pet.size * 0.3, duration: 170, ease: "Cubic.easeIn",
+      onComplete: () => { if (pet.here === false) pet.rig.setVisible(false).setAlpha(1).setScale(pet.size); },
     });
   }
 
@@ -234,10 +235,10 @@ export function createPetParade(scene, groundY) {
     pet.offset = 0;
     pet.hop = null;
     audio.play("poofIn");
-    pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setVisible(true).setAlpha(0).setScale(0.3);
+    pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setVisible(true).setAlpha(0).setScale(pet.size * 0.3);
     pet.rig.setMood("happy");
     puff(pet.home, groundY);
-    tween({ targets: pet.rig, alpha: 1, scaleX: 1, scaleY: 1, duration: 260, delay: 90, ease: "Back.easeOut" });
+    tween({ targets: pet.rig, alpha: 1, scaleX: pet.size, scaleY: pet.size, duration: 260, delay: 90, ease: "Back.easeOut" });
     nextHopAt = Math.max(nextHopAt, scene.time.now + 400);
   }
 

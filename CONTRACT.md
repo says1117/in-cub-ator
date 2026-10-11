@@ -81,7 +81,7 @@ Types: `str`, `int`, `float`, `bool`; `X | null` means the value may be null. Pa
 | `fighters.A`, `.B` | object \| null | `{name: str, skill: str \| null}`. In schema 2 an empty pad is null |
 | `boss` | object \| null | see below |
 | `battle` | object \| null | see below |
-| `reward` | object \| null | the last watering: `{type: "water", plant: "A"\|"B", size: int (ms), tier: int}` |
+| `reward` | object \| null | the last watering: `{type: "water", plant: "A"\|"B", size: int (ms), tier: int, team: [{plant, size}], cancelled?: true}`. With team watering a win waters every pot on the cube, one pump after the other; `team` lists them and `plant`/`size` are the first. `cancelled: true` (sizes 0) means the cube went offline before the pumps ran |
 
 `boss`: `{plant: "A"|"B" (the pot it is drying), name: str, tier: int (1 to 3), hp: int, max_hp: int, type: "drought", source: "soil"|"demo"}`
 

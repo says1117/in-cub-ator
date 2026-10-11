@@ -34,7 +34,11 @@ class GameEngine:
         self.pads = {p: "" for p in C.PLANTS}
         self.last_reward_at = {p: float("-inf") for p in C.PLANTS}
         self.last_reward = None
-        self.pending_water = None    # a won fight's pump command, sent once the victory screen closes
+        # Won fights' pump commands, sent once the victory screen closes, one pump at a time.
+        # Each entry is (command, demo): a demo win may water wet soil.
+        self.pending_water = []
+        self.pumps_busy_until = float("-inf")  # no pump may start before this (the last one is still running)
+        self.soil_at = {p: None for p in C.PLANTS}  # when each pot's own sensor last reported
         self.battle: Optional[B.Battle] = None
         self.next_turn_at = 0.0
         self.health = 100.0          # overall plant health, fades while the soil is dry
@@ -70,6 +74,7 @@ class GameEngine:
     def on_soil_raw(self, plant: str, raw: int, now: float) -> list:
         self._heard_from_esp32(now)
         self.soil_pct[plant] = S.soil_pct(raw)
+        self.soil_at[plant] = now
         self.soil_heard.add(plant)
         self._set(S.on_soil(self.game, plant, self.soil_pct[plant], now, self.present_plants(),
                             summon=self.auto_play or self.manual))
@@ -174,6 +179,8 @@ class GameEngine:
         if online and now is not None and (self.last_seen is None or self.game.stale):
             self.last_seen = now
         self._set(S.on_status(self.game, online))
+        if not online:
+            self._drop_pending_water("ESP32 offline")
         if self.game.mode not in (S.BATTLE, S.REWARD):
             self.battle = None
 
@@ -184,6 +191,7 @@ class GameEngine:
         if now - self.last_seen > C.ESP32_STALE_SECONDS:
             log.info("no ESP32 reading for %.0fs, treating it as offline", now - self.last_seen)
             self._set(S.on_status(self.game, False))
+            self._drop_pending_water("ESP32 went quiet")
             if self.game.mode not in (S.BATTLE, S.REWARD):
                 self.battle = None
 
@@ -264,10 +272,10 @@ class GameEngine:
             if self.manual:
                 if now >= self.move_deadline:  # nobody picked, the game does
                     self.battle = B.play_turn(self.battle, self.rng)
-                    commands = self._after_turn(now)
+                    commands += self._after_turn(now)
             elif now >= self.next_turn_at:
                 self.battle = B.play_turn(self.battle, self.rng)
-                commands = self._after_turn(now)
+                commands += self._after_turn(now)
         # Without auto_play a turn is only ever played by on_player_move: the player's own move.
 
         if self.lost and (now >= self.lost["until"] or self.game.mode in (S.BOSS, S.BATTLE)):
@@ -418,34 +426,71 @@ class GameEngine:
         if not self.present(plant):
             log.info("reward for %s blocked, the plant is not on the cube", plant)
             return []
-        pct = self.soil_pct[plant]
-        cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo, tier=tier)
-        if cmd is None:
-            log.info("reward for %s blocked (soil %.0f%%, demo=%s)", plant, pct, demo)
+        # Team watering: the boss's pot first, then every other pot with a plant on the cube.
+        pots = [plant]
+        if C.TEAM_WATERING:
+            pots += [p for p in C.PLANTS if p != plant and self.present(p)]
+        cmds = []
+        for pot in pots:
+            pct = self.soil_pct[pot]
+            cmd = R.water_reward(pot, pct, now, self.last_reward_at[pot], demo=demo, tier=tier)
+            if cmd is None:
+                log.info("reward for %s blocked (soil %.0f%%, demo=%s)", pot, pct, demo)
+                continue
+            cmds.append(cmd)
+        if not cmds:
             return []
-        self.last_reward_at[plant] = now
-        self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload), "tier": tier}
-        # The boss dies and the victory screen plays first. The pump runs when the player is back
-        # in the forest (see _send_pending_water).
-        self.pending_water = cmd
-        log.info("won: %s %s waits for the victory screen", cmd.topic, cmd.payload)
+        first = cmds[0]
+        # plant and size are the first pot to be watered (the boss's pot unless its reward was blocked).
+        self.last_reward = {"type": "water", "plant": first.topic.rsplit("/", 1)[-1], "size": int(first.payload),
+                            "tier": tier,
+                            "team": [{"plant": c.topic.rsplit("/", 1)[-1], "size": int(c.payload)} for c in cmds]}
+        # The boss dies and the victory screen plays first. The pumps run when the player is back
+        # in the forest, one after the other (see _send_pending_water). A batch from an earlier win
+        # that is still waiting is kept, not replaced.
+        self.pending_water.extend((c, demo) for c in cmds)
+        log.info("won: %s wait for the victory screen", ", ".join(f"{c.topic} {c.payload}" for c in cmds))
         return []
 
+    def _drop_pending_water(self, why: str):
+        if self.pending_water:
+            log.info("water for %s dropped, %s",
+                     ", ".join(c.topic.rsplit("/", 1)[-1] for c, _ in self.pending_water), why)
+            # The victory screen must not claim water that will never run.
+            if self.last_reward is not None:
+                self.last_reward = dict(self.last_reward, size=0, cancelled=True,
+                                        team=[dict(w, size=0) for w in self.last_reward.get("team", [])])
+        self.pending_water = []
+
     def _send_pending_water(self, now: float) -> list:
-        """Sends a won fight's water once the victory screen is over, if it is still safe."""
-        cmd = self.pending_water
-        if cmd is None or self.game.mode == S.REWARD:
+        """Sends won fights' water once the victory screen is over, one pump at a time: the next
+        pump starts only when the previous one's commanded run (plus a margin) is over. Each pot is
+        checked again just before its pump runs: the cube online, the plant still on the cube, its
+        own soil sensor heard recently, and (for a real soil boss) the pot still not wet."""
+        if self.pending_water and (self.game.stale or self.last_seen is None):
+            self._drop_pending_water("ESP32 offline")
             return []
-        self.pending_water = None
-        plant = cmd.topic.rsplit("/", 1)[-1]
-        if self.game.stale or self.last_seen is None:
-            log.info("water for %s dropped, ESP32 offline", plant)
+        if not self.pending_water or self.game.mode == S.REWARD or now < self.pumps_busy_until:
             return []
-        if not self.present(plant):
-            log.info("water for %s dropped, the plant left the cube", plant)
-            return []
-        log.info("command %s %s", cmd.topic, cmd.payload)
-        return [cmd]
+        sent = []
+        while self.pending_water and now >= self.pumps_busy_until:
+            cmd, demo = self.pending_water.pop(0)
+            pot = cmd.topic.rsplit("/", 1)[-1]
+            heard = self.soil_at.get(pot)
+            if not self.present(pot):
+                log.info("water for %s dropped, the plant left the cube", pot)
+                continue
+            if heard is None or now - heard > C.SOIL_FRESH_SECONDS:
+                log.info("water for %s dropped, no fresh reading from its soil sensor", pot)
+                continue
+            if not demo and self.soil_pct[pot] >= C.SOIL_WET_THRESHOLD_PCT:
+                log.info("water for %s dropped, the soil got wet meanwhile", pot)
+                continue
+            log.info("command %s %s", cmd.topic, cmd.payload)
+            self.last_reward_at[pot] = now
+            self.pumps_busy_until = now + int(cmd.payload) / 1000.0 + C.TEAM_WATER_MARGIN_SECONDS
+            sent.append(cmd)
+        return sent
 
     def _award_xp(self, tier: int):
         """XP for a won fight against a real (soil) boss, once per fight. Who gets it: every plant

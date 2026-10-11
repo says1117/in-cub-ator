@@ -23,8 +23,10 @@ def feed_dry(g, plant="A", n=C.SOIL_DRY_READINGS_N, now=0.0):
 
 
 def talking(e):
-    """The same engine with an ESP32 that never goes quiet, for tests that do not send readings."""
+    """The same engine with an ESP32 that never goes quiet, for tests that do not send readings:
+    the cube and every soil sensor count as heard from just now, all the time."""
     e.last_seen = float("inf")
+    e.soil_at = {p: float("inf") for p in C.PLANTS}
     return e
 
 
@@ -238,8 +240,10 @@ class EngineFlowTests(unittest.TestCase):
                 cmds, t = self.play_demo(e, 0.0)  # soil is 100% wet by default
                 if cmds:
                     break
-            self.assertEqual(len(cmds), 1)
-            self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
+            # Team watering: the win waters every pot on the cube once, one command per pot.
+            self.assertEqual(sorted(c.topic for c in cmds), sorted(C.TOPIC_CMD_PUMP.format(plant=p) for p in C.PLANTS))
+            for c in cmds:
+                self.assertLessEqual(int(c.payload), C.PUMP_MAX_MS)
             for _ in range(5):  # repeated presses cannot flood the pot
                 again, t = self.play_demo(e, t)
                 self.assertEqual(again, [])
@@ -1002,7 +1006,8 @@ class StaleTimerTests(unittest.TestCase):
         self.assertIsNone(self.reward_seen)              # no watering is claimed
         e = GameEngine(rng=random.Random(1))
         e.on_soil_raw("A", WET_RAW, 0.0)
-        self.assertEqual(len(self.won_demo(e)), 1)
+        e.soil_at["A"] = float("inf")  # A keeps reporting (this test is about being heard from at all)
+        self.assertEqual(len(self.won_demo(e)), 1)   # only A: B's sensor never reported, so no water for B
 
     def test_status_messages_cannot_hide_missing_readings(self):
         e = GameEngine()

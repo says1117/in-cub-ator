@@ -31,6 +31,8 @@ class Stats:
     hp: int = C.DEFAULT_CREATURE_HP
     atk: int = C.DEFAULT_CREATURE_ATK
     skill: str = C.DEFAULT_CREATURE_SKILL  # a key of config.SKILLS, or "" for none
+    plant_id: str = ""     # the plant database id, "" for the old pad defaults and bosses
+    moves: tuple = ()      # (category, move_id, power) for each category, () for the old defaults
 
 
 def plant_fighter(plant: str) -> Stats:
@@ -130,6 +132,22 @@ def _send_in_next(b: Battle) -> Battle:
     log = dict(b.last_move, swap={"out": b.plant, "in": plant, "name": stats.name})
     return replace(b, creature=stats, creature_hp=stats.hp, plant=plant, bench=rest,
                    fallen=b.fallen + ((b.plant, b.creature),), skill_ready_in=0, last_move=log)
+
+
+def withdraw(b: Battle, plant: str) -> Optional[Battle]:
+    """A plant was lifted off its pad during the fight. On the bench it just leaves. If it was the
+    one fighting, the next plant on the bench steps in at full strength. Returns None when nobody
+    is left to fight (the battle is cancelled: no win, no water, no XP)."""
+    if any(p == plant for p, _ in b.bench):
+        return replace(b, bench=tuple((p, s) for p, s in b.bench if p != plant))
+    if plant != b.plant:
+        return b  # not in this fight (or already fainted)
+    if not b.bench:
+        return None
+    (nxt, stats), rest = b.bench[0], b.bench[1:]
+    log = dict(b.last_move or {}, swap={"out": b.plant, "in": nxt, "name": stats.name, "reason": "lifted"})
+    return replace(b, creature=stats, creature_hp=stats.hp, plant=nxt, bench=rest,
+                   skill_ready_in=0, last_move=log)
 
 
 def auto_move(b: Battle, rng: random.Random) -> str:

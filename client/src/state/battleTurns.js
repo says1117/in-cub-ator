@@ -54,7 +54,6 @@ export function describeTurn(prev, move) {
     playerMove: move.creature,
     bossMove: move.boss,
     hidden: shown === "?",
-    countered: !skill && shown !== "?" && shown !== null && move.creature === COUNTER[shown],
     plantLands: (move.dealt || 0) > 0 || (move.healed || 0) > 0,
     bossLands: (move.taken || 0) > 0,
     dealt: move.dealt || 0,

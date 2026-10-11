@@ -18,7 +18,7 @@ const BUTTONS = [
 ];
 const BTN_W = 274;
 const BTN_H = 110;
-export const INTENT_AT = { x: 742, y: 214 };   // the boss's sign floats here, to the left of its head
+const INTENT_AT = { x: 742, y: 214 };   // the boss's sign floats here, to the left of its head
 
 export class BattleHud {
   constructor(scene, layer, overlay, stageScale) {

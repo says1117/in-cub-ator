@@ -35,11 +35,10 @@ test("intent: a hidden move reads as ?", () => {
   assert.equal(intentOf(battle({ intent: null })), null);
 });
 
-test("describeTurn tells who won, whether the sign was countered and what happened to blooms", () => {
+test("describeTurn tells who won and what happened to blooms", () => {
   const prev = battle({ blooms: 2 });
   const win = describeTurn(prev, { creature: COUNTER.attack, boss: "attack", hit: "creature", dealt: 8, taken: 0, healed: 0, bloom_gain: 1 });
   assert.equal(win.verdict, "win");
-  assert.equal(win.countered, true);
   assert.equal(win.bloomGain, 1);
   const lose = describeTurn(prev, { creature: "special", boss: "attack", hit: "boss", dealt: 0, taken: 7, healed: 0 });
   assert.equal(lose.verdict, "lose");
@@ -60,4 +59,10 @@ test("result words never claim water that was not given", () => {
     assert.doesNotMatch(w.detail, /s of real water/);
   }
   assert.equal(resultWords({ outcome: "lost", plant: "B" }, "Zest").title, "DEFEAT");
+});
+
+test("a wiped bloom count from the server (negative bloom_gain) is not a gain", () => {
+  const d = describeTurn(battle({ blooms: 2 }), { creature: "guard", boss: "special", hit: "boss", dealt: 0, taken: 7, healed: 0, bloom_gain: -2 });
+  assert.equal(d.bloomGain, 0);
+  assert.equal(d.bloomsWiped, true);
 });

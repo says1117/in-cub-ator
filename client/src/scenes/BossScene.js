@@ -18,7 +18,7 @@ import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.j
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 import { ensureArenaTexture, addFireflies } from "../battle/arena.js";
 import { ensureIcons, iconFor, MOVE_COLORS } from "../battle/icons.js";
-import { BattleHud, INTENT_AT } from "../battle/hud.js";
+import { BattleHud } from "../battle/hud.js";
 import { nextBattleEvent, resultFor, describeTurn, resultWords, intentOf } from "../state/battleTurns.js";
 import { textStyle } from "../ui/font.js";
 
@@ -202,6 +202,7 @@ export default class BossScene extends Phaser.Scene {
       const ev = nextBattleEvent(this.tail, battle);
       if (ev.kind === "fight") {
         if (this.fightId && this.fightId !== battle.id) { this.scene.restart(); return; }   // a new fight before this one left
+        this.fightBoss = state.boss || this.fightBoss || {};   // this fight's boss, kept even if the state moves on
         this.enqueue({ kind: "fight", battle });
       } else if (ev.kind === "turn") {
         this.enqueue({ kind: "turn", prev: ev.prev, next: battle });
@@ -218,6 +219,17 @@ export default class BossScene extends Phaser.Scene {
     }
     // Nothing to show at all (the fight was over before this screen opened): back to the forest.
     if (!battle && !this.tail && state.mode !== "battle") this.leave(0);
+    // The fight vanished with no result for it (the server restarted, say): end it as "the boss fled"
+    // after a moment, rather than wait forever on a fight that no longer exists.
+    if (!battle && this.tail && !this.resultQueued && state.mode !== "battle" && !this.vanishCheck) {
+      this.vanishCheck = this.time.delayedCall(1200, () => {
+        this.vanishCheck = null;
+        const now = this.state;
+        if (this.resultQueued || (now && now.battle) || (now && now.mode === "battle")) return;
+        this.resultQueued = true;
+        this.enqueue({ kind: "result", result: { fight: this.tail.id, outcome: "dismissed", plant: this.tail.plant, water_ms: 0, blocked: null } });
+      });
+    }
     this.refreshLive();
   }
 
@@ -232,7 +244,13 @@ export default class BossScene extends Phaser.Scene {
     // A turn while more turns are already waiting (a slow screen): catch up instead of animating each.
     if (event.kind === "turn" && this.queue.some((e) => e.kind === "turn" || e.kind === "sync")) event = { kind: "sync", battle: event.next };
     this.busy = true;
-    const ms = this[{ fight: "playFight", turn: "playTurn", sync: "playSync", result: "playResult" }[event.kind]](event) || 0;
+    let ms = 0;
+    try {
+      ms = this[{ fight: "playFight", turn: "playTurn", sync: "playSync", result: "playResult" }[event.kind]](event) || 0;
+    } catch (error) {
+      // never let one bad event freeze the screen: report it and carry on with the next
+      console.error("battle event failed", event.kind, error);
+    }
     this.time.delayedCall(ms, () => {
       this.busy = false;
       this.refreshLive();
@@ -268,8 +286,9 @@ export default class BossScene extends Phaser.Scene {
     const send = this.registry.get("sendMove");
     const btn = this.hud.buttons[move];
     if (b.autopilot && b.manual) {
-      // Taking over from the autopilot: any press wakes the server. If it is accepting, it is also the move.
-      send && send(move, b.turn);
+      // Taking over from the autopilot: any press wakes the server. It is also the move only if the
+      // buttons are live (the next sign is on screen); otherwise turn -1 means "I'm here", not a move.
+      send && send(move, btn && btn.enabled ? b.turn : -1);
       this.hud.banner("YOU'RE IN!", "#ffe680", { size: 40, y: 200, hold: 500 });
       this.sfx("ui_select");
       if (btn && btn.enabled) this.lockIn(move, b.turn);
@@ -305,7 +324,7 @@ export default class BossScene extends Phaser.Scene {
   // A new fight. Everyone is put in place; a fight that is just starting gets the dragon's call.
   playFight({ battle }) {
     const state = this.state;
-    const boss = state.boss || {};
+    const boss = this.fightBoss || {};
     this.fightId = battle.id;
     this.shown = battle;
     this.resultQueued = false;
@@ -338,7 +357,7 @@ export default class BossScene extends Phaser.Scene {
 
   // Every panel straight to what a snapshot says, with no animation.
   applySnapshot(b) {
-    const boss = this.state.boss || {};
+    const boss = this.fightBoss || {};
     this.hud.setBossHP(b.boss_hp, boss.max_hp || b.boss_hp, { instant: true });
     this.setPlantPanel(b, b.creature_hp, { instant: true });
     this.hud.setTeam(b.team, { A: PLANTS.A.name, B: PLANTS.B.name });
@@ -371,7 +390,7 @@ export default class BossScene extends Phaser.Scene {
     const d = describeTurn(prev, move);
     const actorId = d.swap ? d.swap.out : prev.plant;
     const actor = this.fighters[actorId] || this.fighters[this.activeId];
-    const bossName = (this.state.boss && this.state.boss.name) || "The boss";
+    const bossName = (this.fightBoss && this.fightBoss.name) || "The boss";
     const plantName = prev.creature || this.plantName(actorId, prev);
     const final = next.boss_hp <= 0;
     const lastStand = !d.swap && next.creature_hp <= 0;
@@ -427,7 +446,7 @@ export default class BossScene extends Phaser.Scene {
         this.knock(this.enemy, 26);
         this.floating(this.enemy.x - 40, this.enemy.y - 250, `-${d.dealt}`, "#fff48e", 44 + 6 * d.bloomsSpent);
         this.cameras.main.shake(final ? 260 : 130, (final ? 0.012 : 0.005) + 0.002 * d.bloomsSpent);
-        this.hud.setBossHP(next.boss_hp, (this.state.boss && this.state.boss.max_hp) || next.boss_hp);
+        this.hud.setBossHP(next.boss_hp, (this.fightBoss && this.fightBoss.max_hp) || next.boss_hp);
         this.sfx(d.dealt >= 12 || final ? "hit_heavy" : "hit_light");
         if (d.dealt >= 12 || final) this.audio("duck", 400);
         this.benchCheers();
@@ -488,8 +507,7 @@ export default class BossScene extends Phaser.Scene {
     at(end - 260, () => {
       this.hud.setLog(this.turnWords(d, plantName, bossName));
       this.hud.setTeam(next.team, { A: PLANTS.A.name, B: PLANTS.B.name });
-      if (!d.bloomGain && !d.bloomsWiped && !d.bloomsSpent) this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
-      else this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
+      this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
       if (!final && !lastStand) this.showIntent(this.state.battle && this.state.battle.id === next.id ? this.state.battle : next);
     });
     return end;
@@ -582,7 +600,7 @@ export default class BossScene extends Phaser.Scene {
   // ================================================================ the plant team
   fightingPlant(battle) {
     if (battle && this.fighters[battle.plant]) return battle.plant;
-    const boss = this.state && this.state.boss;
+    const boss = this.fightBoss;
     if (boss && this.fighters[boss.plant]) return boss.plant;
     return PLANT_IDS[0];
   }

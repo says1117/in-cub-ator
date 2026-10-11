@@ -57,7 +57,7 @@ const unsigned long PAD_I2C_TIMEOUT_MS = 20;      // longest single I2C transfer
 // ---------- Safety limits (enforced in safety.cpp, not by the game) ----------
 // Starting values, TBD with Role 2. Keep them small until the pumps are proven.
 
-const unsigned long PUMP_MAX_RUN_MS = 3000;     // longest single pump run
+const unsigned long PUMP_MAX_RUN_MS = 1000;     // longest single pump run (1 s: set by Role 1 after testing, 3 s was too much water)
 const unsigned long PUMP_MIN_GAP_MS = 30000;    // minimum time between runs of the same pump
 const unsigned long LIGHT_MAX_MINUTES = 30;     // longest single light run
 const unsigned long LIGHT_MIN_GAP_MS = 60000;   // minimum time between light runs

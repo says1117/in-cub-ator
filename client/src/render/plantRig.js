@@ -12,6 +12,10 @@
 //   plant.emote("alert")           a little mark above its head: see EMOTES
 //   plant.point("fist")            where a spot is on screen right now, for effects (see `points` in data/plantRigs.js)
 //   plant.pose.lift = 0.1          the same dials the actions use, for a scene to drive by hand
+//   plant.flashWhite(90)           turns it solid white for a moment, for a hit (see flashWhite below)
+//
+// TIME: it runs on its own clock, which moves by delta x scene.time.timeScale each frame. Set the
+// scene's time.timeScale to 0 (a hit-stop) and the plant freezes mid-move with everything else.
 //
 // ADDING A MOVE LATER
 // 1. An action is a small function: given how far through it is (k, from 0 to 1) it turns the pose
@@ -45,6 +49,24 @@ const newPose = () => ({
   gesture: {},   // named arm poses from data/plants.js, 0 to 1
   turn: {},      // extra turn for single pieces by name, in radians
 });
+
+const MOOD_DIALS = ["open", "lean", "sway", "stretch", "tremble", "tip"];
+const POSE_DIALS = ["lift", "x", "stretch", "lean", "bend", "open", "shake", "scale"];
+
+// Starts a pose over for a new frame without making a new object: the dials go back to the
+// scene's own nudges (`manual`), and the named arm poses and piece turns back to zero.
+function resetPose(pose, manual) {
+  for (let i = 0; i < POSE_DIALS.length; i++) pose[POSE_DIALS[i]] = manual[POSE_DIALS[i]];
+  for (const name in pose.gesture) pose.gesture[name] = 0;
+  for (const name in pose.turn) pose.turn[name] = 0;
+  Object.assign(pose.gesture, manual.gesture);
+  Object.assign(pose.turn, manual.turn);
+  pose.face = manual.face;
+  return pose;
+}
+
+// The real time now, in ms. A flash runs on it so it shows even while the scene's clock is stopped.
+const realNow = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
 // MOODS: how it stands and looks between actions. Changes are eased, never snapped.
 // sway: how lively the idle is. tip: 1 is fallen over on its side.
@@ -261,7 +283,8 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     const rows = Math.min(stripRows + overlap, baseSpec.h - row);
     const image = scene.add.image(left, top + row * enlarge, baseKey, frame(`strip-${stripRows}-${row}`, row, rows));
     image.setOrigin(0, 0).setScale(enlarge);
-    strips.push({ image, at: top + (row + stripRows / 2) * enlarge });
+    const at = top + (row + stripRows / 2) * enlarge;
+    strips.push({ image, at, reach: crown * Math.pow(clamp01((rig.rim - at) / crown), 1.6) });
     body.add(image);
   }
   const pot = scene.add.image(left, top + rimRow * enlarge, baseKey, frame(`pot-${rimRow}`, rimRow, baseSpec.h - rimRow));
@@ -290,7 +313,8 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
       a2: Phaser.Math.FloatBetween(0.015, 0.035), f2: Phaser.Math.FloatBetween(2.3, 3.6), p2: Phaser.Math.FloatBetween(0, 6.28),
     };
   }
-  for (const piece of Object.values(pieces)) {
+  const pieceList = Object.values(pieces);
+  for (const piece of pieceList) {
     const parent = pieces[piece.spec.parent];
     if (parent) {
       piece.node.setPosition(piece.spec.x - parent.spec.x, piece.spec.y - parent.spec.y);
@@ -304,12 +328,25 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   const face = scene.add.graphics();
   body.add(face);
   const DARK = 0x1a1208;
-  let faceShown = "";
+  let faceMode = null;          // what the face shows now: an expression, or "blink"
+  let faceStep = NaN;           // and how far the leaves had bent it sideways, in half pixels
+  // How far the eyes slide for a bend of 1, at the eye that moves the most.
+  const eyeReach = Math.max(...rig.eyes.map(([, ey]) => Math.abs(crown * Math.pow(clamp01((rig.rim - ey) / crown), 1.6))));
+  // How many screen pixels one rig unit is drawn as right now (its own scale and every container it sits in).
+  const screenScale = () => {
+    let k = Math.abs(root.scaleX * body.scaleX);
+    for (let parent = root.parentContainer; parent; parent = parent.parentContainer) k *= Math.abs(parent.scaleX);
+    return k;
+  };
 
+  // The face is redrawn only when it would look different: a new expression, or the leaves have
+  // bent the eyes at least half a pixel further on screen.
   function drawFace(mode, blinking) {
-    const key = `${blinking ? "blink" : mode}:${Math.round(bend * 200)}`;
-    if (key === faceShown) return;
-    faceShown = key;
+    const shown = blinking ? "blink" : mode;
+    const step = shown === "open" ? 0 : Math.round(bend * eyeReach * screenScale() * 2);
+    if (shown === faceMode && step === faceStep) return;
+    faceMode = shown;
+    faceStep = step;
     face.clear();
     if (mode === "open" && !blinking) return;
     rig.eyes.forEach(([ex, ey, rx, ry], index) => {
@@ -359,11 +396,18 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   let lastY = null;
   let velX = 0;
   let velY = 0;
-  let blinkAt = scene.time.now + Phaser.Math.Between(600, 3200);
-  let blinkUntil = 0;
+  // its own clock: it starts at the scene's time and moves by delta x scene.time.timeScale, so a
+  // hit-stop (timeScale 0) freezes it and slow motion slows it
   let now = scene.time.now;
+  let blinkAt = now + Phaser.Math.Between(600, 3200);
+  let blinkUntil = 0;
   const beat = Phaser.Math.FloatBetween(0, 40);     // so two plants never move in step
   const manual = newPose();                         // root.pose: a scene's own nudges
+  const pose = newPose();                           // this frame's dials, reused every frame
+  const gestureSets = [];                           // this frame's arm poses that are switched on
+  const gestureAmounts = [];
+  const ended = [];
+  let flashUntil = 0;                               // real time when a white flash ends, or 0
 
   function drawEmote(name) {
     const rows = EMOTES[name];
@@ -381,35 +425,44 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     });
   }
 
-  function update(time, delta) {
-    now = time;
-    const dt = clamp(delta, 1, 50) / 1000;
+  // Called every frame by the scene. delta is real ms; the plant's clock moves by delta x timeScale.
+  function update(sceneTime, delta) {
+    if (flashUntil && realNow() >= flashUntil) setFlash(false);
+    const step = delta * (scene.time.timeScale ?? 1);
+    if (step > 0) advance(step);               // a stopped clock (hit-stop): hold still
+  }
+
+  // One frame of the plant's own time, `step` ms long.
+  function advance(step) {
+    now += step;
+    const time = now;
+    const dt = clamp(step, 1, 50) / 1000;
     const t = time / 1000 + beat;
     const sin = Math.sin;
 
     // the mood eases toward where it should be
     const target = MOODS[moodName];
     const ease = Math.min(1, dt * (moodName === "fainted" ? 5 : 7));
-    for (const dial of ["open", "lean", "sway", "stretch", "tremble", "tip"]) mood[dial] += (target[dial] - mood[dial]) * ease;
+    for (let i = 0; i < MOOD_DIALS.length; i++) {
+      const dial = MOOD_DIALS[i];
+      mood[dial] += (target[dial] - mood[dial]) * ease;
+    }
 
     // add up every running action
-    const pose = newPose();
-    for (const dial of ["lift", "x", "stretch", "lean", "bend", "open", "shake", "scale"]) pose[dial] = manual[dial];
-    Object.assign(pose.gesture, manual.gesture);
-    Object.assign(pose.turn, manual.turn);
-    pose.face = manual.face;
-    const running = [];
-    const ended = [];
-    for (const play of plays) {
+    resetPose(pose, manual);
+    ended.length = 0;
+    let kept = 0;
+    for (let i = 0; i < plays.length; i++) {
+      const play = plays[i];
       const k = (time - play.start) / play.ms;
       if (k < 1 || play.action.hold) {
         if (k >= 0) play.action.run(Math.min(1, k), pose, play.options, root);
-        running.push(play);                    // an action marked `hold` keeps its last pose
+        plays[kept++] = play;                  // an action marked `hold` keeps its last pose
       }
       if (k >= 1 && !play.done) { play.done = true; ended.push(play); }
     }
-    plays = running;
-    for (const play of ended) if (play.options.onDone) play.options.onDone();
+    plays.length = kept;
+    for (let i = 0; i < ended.length; i++) if (ended[i].options.onDone) ended[i].options.onDone();
 
     // the body: where it is, how it leans, how squashed it is
     const stretch = pose.stretch + mood.stretch + 0.012 * sin(t * 2.1) * mood.sway;
@@ -438,15 +491,25 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     const bendTo = clamp(wind + pose.bend - velX * 0.045 - pose.lean * 0.12, -0.22, 0.22);
     bendSpeed += ((bendTo - bend) * 70 - bendSpeed * 9) * dt;
     bend += bendSpeed * dt;
-    for (const strip of strips) strip.image.x = left + slide(strip.at);
+    for (let i = 0; i < strips.length; i++) strips[i].image.x = left + bend * strips[i].reach;
+
+    // the arm poses switched on this frame
+    let gestureCount = 0;
+    for (const name in pose.gesture) {
+      const set = plant.gestures && plant.gestures[name];
+      if (!set || !pose.gesture[name]) continue;
+      gestureSets[gestureCount] = set;
+      gestureAmounts[gestureCount++] = pose.gesture[name];
+    }
 
     // the loose pieces
-    for (const piece of Object.values(pieces)) {
+    for (let p = 0; p < pieceList.length; p++) {
+      const piece = pieceList[p];
       const idle = (piece.a1 * sin(t * piece.f1 + piece.p1) + piece.a2 * sin(t * piece.f2 + piece.p2)) * mood.sway;
       let turn = idle + (pose.open + mood.open) * 0.3 * piece.raise + (pose.turn[piece.name] || 0);
-      for (const [name, amount] of Object.entries(pose.gesture)) {
-        const set = plant.gestures && plant.gestures[name];
-        if (set && set[piece.name]) turn += set[piece.name] * amount;
+      for (let g = 0; g < gestureCount; g++) {
+        const amount = gestureSets[g][piece.name];
+        if (amount) turn += amount * gestureAmounts[g];
       }
       const trailTo = clamp(0.24 * (-piece.dx * velY + piece.dy * velX), -0.75, 0.75);
       piece.speed += ((trailTo - piece.lag) * 95 - piece.speed * 7.5) * dt;
@@ -481,6 +544,18 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
         emoteLayer.setPosition(body.x + 0.1 * H, -H * (1.02 + pose.lift * 0.6) + sin(time * 0.012) * H * 0.012);
       }
     }
+  }
+
+  // A white flash: every picture piece is filled solid white; the drawn face is hidden under it.
+  const tinted = [...strips.map((strip) => strip.image), pot, ...pieceList.map((piece) => piece.node.list[0])];
+  function setFlash(on) {
+    flashUntil = on ? flashUntil : 0;
+    for (const image of tinted) {
+      if (!image.active) continue;
+      if (on) image.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+      else image.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+    }
+    face.setVisible(!on);
   }
 
   scene.events.on(Phaser.Scenes.Events.UPDATE, update);
@@ -519,6 +594,15 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     return (playOptions.delay || 0) + (playOptions.ms || action.ms) * (action.hitAt ?? 0.5);
   };
   root.isBusy = () => plays.some((play) => !play.done);
+  // Turns it solid white for `ms` of real time, for the moment a hit lands. It runs on real time,
+  // not the plant's clock, so it shows during a hit-stop and ends on time. Returns the plant.
+  root.flashWhite = (ms = 90) => {
+    flashUntil = realNow() + Math.max(0, ms);
+    setFlash(true);
+    return root;
+  };
+  // The plant's own clock, in ms: what play() and hitTime() count from.
+  root.clock = () => now;
   root.stopActions = () => { plays = []; return root; };
 
   root.emote = (name, ms = 1100) => {
@@ -544,6 +628,8 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   };
 
   root.setHeight(height);
-  update(now, 16);
+  // draw the first frame where it stands (the clock is moved back so this first step lands on now)
+  now -= 16;
+  advance(16);
   return root;
 }

@@ -6,6 +6,7 @@
 // Coordinates are the 1280 x 720 battle stage. The stage is drawn at 0.625 into the 800 x 450 game,
 // so text is made at its real on-screen pixel size and scaled back up: the pixel font stays crisp.
 import Phaser from "phaser";
+import { animateBadgeEarned } from "../render/badgeArt.js";
 import { FONT, outline } from "../ui/font.js";
 import { MOVE_COLORS, MOVE_CSS, MOVE_NAMES, iconFor, iconKey } from "./icons.js";
 import { BEATS, COUNTER } from "../state/battleTurns.js";
@@ -426,7 +427,32 @@ export class BattleHud {
   }
 
   // ------------------------------------------------------------ result
-  showResult(words, { waterMs = 0 } = {}) {
+  showBadgeResult(words, badge, waterMs) {
+    const dim=this.scene.add.rectangle(0,0,1280,720,0x050b1c,.0).setOrigin(0);
+    this.overlay.add(dim);
+    this.scene.tweens.add({targets:dim,fillAlpha:.76,duration:350});
+    this.plate(260,165,760,505,0xf0c35a,this.overlay,.96);
+    const title=this.text(640,110,"VICTORY!",64,"#ffd867",{},this.overlay).setOrigin(.5);
+    title.setAlpha(0);
+    this.scene.tweens.add({targets:title,alpha:1,duration:300});
+    this.badgeReveal=animateBadgeEarned(this.scene,this.overlay,badge,640,270,2.1,this.scene.reducedMotion);
+    const earned=this.text(640,378,"NEW BADGE EARNED",24,"#ffe7a4",{},this.overlay).setOrigin(.5).setAlpha(0);
+    const name=this.text(640,417,badge.name,34,badge.color,{wordWrap:{width:680},align:"center"},this.overlay).setOrigin(.5).setAlpha(0);
+    this.scene.tweens.add({targets:[earned,name],alpha:1,delay:this.scene.reducedMotion?200:850,duration:400});
+    this.resultLine=this.text(640,470,words.line,26,"#ffffff",{wordWrap:{width:690},align:"center"},this.overlay).setOrigin(.5,0);
+    const detail=words.detail.replace(/^Badge earned:[^\n]*\n/,"");
+    this.resultDetail=this.text(640,514,detail,20,"#d3ddf5",{wordWrap:{width:680},align:"center"},this.overlay).setOrigin(.5,0);
+    if(words.water && waterMs>0) {
+      const bar=this.scene.add.rectangle(384,596,512,16,0x4aa3ff).setOrigin(0,.5);
+      this.overlay.add(bar);bar.width=0;
+      this.scene.tweens.add({targets:bar,width:512,duration:waterMs,ease:"Linear"});
+    }
+    this.text(640,639,"Saved to COLLECTION · keep exploring to earn more",20,"#c4b5ed",{},this.overlay).setOrigin(.5);
+    return title;
+  }
+
+  showResult(words, { waterMs = 0, badge = null } = {}) {
+    if(badge && words.title === "VICTORY!") return this.showBadgeResult(words,badge,waterMs);
     const dim = this.scene.add.rectangle(0, 0, 1280, 720, 0x050b1c, 0.0).setOrigin(0);
     this.overlay.add(dim);
     this.scene.tweens.add({ targets: dim, fillAlpha: 0.55, duration: 300 });

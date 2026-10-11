@@ -32,6 +32,15 @@ export default class AdventureScene extends Phaser.Scene {
         this.registry.get("audio")?.sfx("ui_select");
         this.registry.get("navigate")("/footage");
       });
+    this.add.text(740, 111, "COLLECTION", { fontFamily: "Tiny5", fontSize: "16px",
+      color: "#fff2b0", backgroundColor: "#24120f", padding: { x: 6, y: 4 } })
+      .setOrigin(1, 0).setDepth(100).setInteractive({ useHandCursor: true })
+      .on("pointerover", function () { this.setColor("#ffd77a").setBackgroundColor("#35325e"); })
+      .on("pointerout", function () { this.setColor("#fff2b0").setBackgroundColor("#24120f"); })
+      .on("pointerdown", () => {
+        this.registry.get("audio")?.sfx("ui_select");
+        this.registry.get("navigate")("/collection");
+      });
     this.storageButton = this.add.text(740, 436, "STORAGE >", {
       fontFamily: "Tiny5", fontSize: "16px", color: "#fff2b0",
       backgroundColor: "#24120f", padding: { x: 6, y: 4 }

@@ -670,12 +670,14 @@ export default class BossScene extends Phaser.Scene {
       }
     });
     this.time.delayedCall(won ? 650 : 350, () => {
-      this.hud.showResult(words, { waterMs: result.water_ms || 0 });
+      this.hud.showResult(words, { waterMs: result.water_ms || 0, badge: won ? result.badge : null });
+      if (won && result.badge) this.time.delayedCall(650, () => this.sfx("badge_earned"));
       if (won) this.confetti();
       if (words.water) this.sfx("victory_water", { durationMs: result.water_ms || 1600 });
     });
-    this.time.delayedCall(RESULT_SECONDS * 1000, () => this.leave());
-    return RESULT_SECONDS * 1000 + 1000;
+    const duration = won && result.badge ? 5.6 : RESULT_SECONDS;
+    this.time.delayedCall(duration * 1000, () => this.leave());
+    return duration * 1000 + 1000;
   }
 
   leave(delay = 0) {

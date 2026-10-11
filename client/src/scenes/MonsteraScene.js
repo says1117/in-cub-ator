@@ -248,7 +248,7 @@ export default class MonsteraScene extends Phaser.Scene {
     }
     if (this.infoText) {
       this.infoText.setText(this.plant
-        ? `ID: ${this.plant.plantId}   NFC: ${this.plant.nfcTagId}   HP: ${this.plant.hp ?? "--"}`
+        ? `MAX HP: ${this.plant.combatStats?.maxHp ?? "--"}   ATK: ${this.plant.combatStats?.attackDamage ?? "--"}   SHIELD: ${this.plant.combatStats?.shield ?? "--"}`
         : "PLANT DATA NOT AVAILABLE");
     }
   }
@@ -257,7 +257,7 @@ export default class MonsteraScene extends Phaser.Scene {
     const { W, H } = this;
     const y = H * 0.895, h = H * 0.085;
     this.rect(W * 0.045, y, W * 0.91, h);
-    this.label(W * 0.14, y + h / 2, "🌿 ABOUT",
+    this.label(W * 0.14, y + h / 2, "BATTLE STATS",
       Math.max(12, Math.min(19, W * 0.024)));
     this.infoText = this.add.text(W * 0.28, y + h / 2, "", {
       fontFamily: FONT,

@@ -32,7 +32,15 @@ class Stats:
     hp: int = C.DEFAULT_CREATURE_HP
     atk: int = C.DEFAULT_CREATURE_ATK
     level: int = 1
+    shield: int = 0  # flat damage absorbed from each incoming hit
     skill: str = C.DEFAULT_CREATURE_SKILL  # a key of config.SKILLS, or "" for none
+
+
+def levelled(stats: Stats, level: int) -> Stats:
+    level = max(1, int(level))
+    bonus = level - 1
+    return replace(stats, level=level, hp=stats.hp + 5 * bonus,
+                   atk=stats.atk + bonus, shield=stats.shield + bonus)
 
 
 def plant_fighter(plant: str) -> Stats:
@@ -198,6 +206,9 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
             took = clash_hit(b)  # a tie: the two moves meet and the plant is grazed
         seen = (seen + (creature_move,))[-2:]
 
+    absorbed = min(took, max(0, b.creature.shield))
+    took -= absorbed
+    log["shield_absorbed"] = absorbed
     c_hp -= took
     blooms = 0 if not b.extended or use_skill or took else min(3, b.blooms + (1 if who == "creature" else 0))
     log.update(hit=who, took=took, bloom_gain=max(0, blooms-b.blooms),

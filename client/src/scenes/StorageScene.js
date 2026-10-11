@@ -384,7 +384,7 @@ export default class StorageScene extends Phaser.Scene {
 
     // Plant stat card
     this.drawFrame(
-      cardX, cardY, 276, 119
+      cardX, cardY, 276, 130
     );
 
     this.track(
@@ -446,6 +446,10 @@ export default class StorageScene extends Phaser.Scene {
       LIGHT_DISPLAY_MAX_LUX
     );
 
+    const stats = plant.combatStats;
+    this.track(this.add.text(cardX + 20, cardY + 106,
+      `MAX HP ${stats?.maxHp ?? "--"}  ATK ${stats?.attackDamage ?? "--"}  SHD ${stats?.shield ?? "--"}`,
+      { fontFamily: FONT, fontSize: "16px", color: "#ffd77a" }));
     this.drawingPlant = false;
   }
 

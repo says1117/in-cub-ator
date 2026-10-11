@@ -73,3 +73,13 @@ class HardwareWatering(Base):
     requestId: Mapped[str] = mapped_column(String, primary_key=True)
     plantId: Mapped[str] = mapped_column(String)
     payload: Mapped[str] = mapped_column(String)
+
+
+class VictoryBadge(Base):
+    """One permanent collectible per server-confirmed winning encounter."""
+    __tablename__ = "victory_badges"
+    battleId: Mapped[str] = mapped_column(String, primary_key=True)
+    number: Mapped[int] = mapped_column(Integer, unique=True)
+    boss: Mapped[str] = mapped_column(String)
+    plantId: Mapped[str] = mapped_column(String)
+    earnedAt: Mapped[float] = mapped_column(Float)

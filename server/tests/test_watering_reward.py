@@ -62,6 +62,24 @@ class WateringRewardTests(unittest.TestCase):
         with self.sessions() as db:
             self.assertEqual(db.get(Plant, "PLANT_001").soilMoisture, 90)
 
+    def test_full_transition_upgrades_stats_once_and_survives_restart(self):
+        with self.client.websocket_connect('/ws/plants', headers={'origin':'http://localhost:5173'}) as socket:
+            before=socket.receive_json()['plants'][0]
+            self.reward('upgrade-first'); socket.receive_json()
+            self.reward('upgrade-full')
+            full=socket.receive_json()['plants'][0]
+            old, new=before['combatStats'], full['combatStats']
+            self.assertEqual(new['maxHp'], old['maxHp']+5)
+            self.assertEqual(new['attackDamage'], old['attackDamage']+1)
+            self.assertEqual(new['shield'], old['shield']+1)
+            self.reward('upgrade-full')
+            self.assertEqual(socket.receive_json()['plants'][0]['combatStats'], new)
+            self.reward('upgrade-blocked')
+            self.assertEqual(socket.receive_json()['plants'][0]['combatStats'], new)
+        self.client.__exit__(None,None,None)
+        self.client=TestClient(main.app); self.client.__enter__()
+        self.assertEqual(self.client.get('/api/plants/PLANT_001').json()['combatStats'],new)
+
     def test_duplicate_survives_server_restart_and_rebroadcasts(self):
         battle_id = str(uuid4())
         self.reward(battle_id)

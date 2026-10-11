@@ -12,7 +12,8 @@ from pathlib import Path
 from . import battle as B, config as C, state_machine as S
 from .engine import GameEngine
 from .moisture_sim import MoistureSim
-from ..models import GameCheckpoint, HardwareWatering, Plant
+from ..models import GameCheckpoint, HardwareWatering, Plant, VictoryBadge
+from ..badges import badge_to_dict, collection
 from ..progression import update_moisture
 
 BOSS_ORDER = ("chomper", "sporelings")
@@ -38,11 +39,11 @@ class IntegratedEngine(GameEngine):
             self.last_reward = None
         super()._set(new)
 
-    def fighter(self, plant):
+    def fighter(self, plant, level=None):
         stats = super().fighter(plant)
-        level = self.levels.get(plant, 1)
+        level = self.levels.get(plant, 1) if level is None else level
         name = stats.name if self.pads.get(plant) in self.creatures else self.names.get(plant, stats.name)
-        return replace(stats, name=name, atk=stats.atk + level - 1, level=level)
+        return replace(B.levelled(stats, level), name=name)
 
     def _start_battle(self, now):
         super()._start_battle(now)
@@ -76,7 +77,8 @@ class IntegratedEngine(GameEngine):
         if last:
             last.update(dealt=last.get("damage", 0), taken=last.get("took", 0))
         skill = B.skill_of(b.creature)
-        data.update(id=self.encounter_id, last_move=last, blooms=b.blooms,
+        data.update(creature_atk=b.creature.atk, creature_shield=b.creature.shield,
+                    id=self.encounter_id, last_move=last, blooms=b.blooms,
                     over=B.winner(b) is not None, accepting_move=data["awaiting_move"],
                     autopilot=not self.manual, move_deadline_in_ms=int(max(0, self.move_deadline-time.time())*1000))
         if data["skill"]:
@@ -92,7 +94,8 @@ class IntegratedEngine(GameEngine):
                      bossBreatherUntil=self.game.quiet_until, cooldownUntil=self.game.cooldown_until,
                      authoritative=True)
         for plant, fighter in state["fighters"].items():
-            fighter["level"] = self.levels.get(plant, 1)
+            stats = self.fighter(plant)
+            fighter.update(level=stats.level, maxHp=stats.hp, attackDamage=stats.atk, shield=stats.shield)
         state["meters"]["thirsty"] = {p: self.soil_pct[p] < 50 for p in C.PLANTS}
         if state["boss"]:
             kind = state["boss"]["kind"]
@@ -118,6 +121,8 @@ class GameRuntime:
         self._saved = None
         self.restore()
         self.seed()
+        with self.sessions() as db:
+            self.badges = collection(db)
 
     def seed(self):
         with self.sessions() as db:
@@ -236,6 +241,21 @@ class GameRuntime:
 
     async def drain_reward(self):
         e = self.engine
+        # Independent of watering: a wet plant or unavailable relay still earns a badge.
+        if e.result and e.result.get("outcome") == "won" and e.result.get("fight") and not e.result.get("badge"):
+            with self.sessions() as db:
+                row = db.get(VictoryBadge, e.result["fight"])
+                if row is None:
+                    number = (db.query(VictoryBadge.number).order_by(VictoryBadge.number.desc()).first() or (0,))[0] + 1
+                    row = VictoryBadge(battleId=e.result["fight"], number=number,
+                                       boss=e.result.get("kind") or e.boss_kind or "unknown",
+                                       plantId=self.slot_ids.get(e.result["plant"], e.result["plant"]),
+                                       earnedAt=time.time())
+                    db.add(row)
+                    db.commit()
+                e.result["badge"] = badge_to_dict(row)
+                self.badges = collection(db)
+            self.save()
         pending = e.pending_reward
         if not pending:
             return
@@ -243,6 +263,8 @@ class GameRuntime:
         plant_id = self.slot_ids.get(slot)
         if self.simulation:
             result = await self.watering(plant_id, pending["battleId"])
+            if "level" in result:
+                e.levels[slot] = max(1, result["level"])
             e.result.update(simulated=True, increase=result["increase"], soilMoisture=result["soilMoisture"],
                             blocked=None if result["increase"] else "soil_wet", water_ms=0)
             e.soil_pct[slot] = result["soilMoisture"]
@@ -360,9 +382,11 @@ class GameRuntime:
             await self.drain_reward()
             await self.publish()
 
+    def snapshot(self):
+        return {**self.engine.snapshot(), "badges": self.badges, "simulatedWatering": self.simulation}
+
     async def publish(self):
-        state = self.engine.snapshot()
-        state["simulatedWatering"] = self.simulation
+        state = self.snapshot()
         for ws in list(self.clients):
             try:
                 await ws.send_json({"type": "game_updated", "state": state})

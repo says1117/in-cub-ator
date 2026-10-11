@@ -1,6 +1,7 @@
 import { connectGameSource } from "./state/gameSource.js";
 import Phaser from "phaser";
 import AdventureScene from "./scenes/AdventureScene.js";
+import CollectionScene from "./scenes/CollectionScene.js";
 import FootageScene from "./scenes/FootageScene.js";
 import StorageScene from "./scenes/StorageScene.js";
 import CastIronScene from "./scenes/CastIronScene.js";
@@ -18,6 +19,7 @@ const routes = {
   "/adventure": "AdventureScene",
   "/storage": "StorageScene",
   "/footage": "FootageScene",
+  "/collection": "CollectionScene",
   "/cast_iron": "CastIronScene",
   "/monstera": "MonsteraScene",
   "/boss": "BossScene"
@@ -46,7 +48,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [BootScene, AdventureScene, FootageScene, StorageScene, CastIronScene, MonsteraScene, BossScene, HudScene]
+  scene: [BootScene, AdventureScene, CollectionScene, FootageScene, StorageScene, CastIronScene, MonsteraScene, BossScene, HudScene]
 };
 
 await loadFont();

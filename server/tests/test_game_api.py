@@ -15,6 +15,14 @@ class GameAPITests(unittest.TestCase):
             sessions=sessionmaker(bind=engine)
             with patch.object(main,'engine',engine),patch.object(main,'SessionLocal',sessions),patch.object(main,'start_mqtt',return_value=Mock()):
                 with TestClient(main.app) as client:
+                    def badge_db():
+                        with sessions() as db:
+                            yield db
+                    main.app.dependency_overrides[main.get_db] = badge_db
+                    try:
+                        self.assertEqual(client.get('/api/collection').json(), {"badges": []})
+                    finally:
+                        main.app.dependency_overrides.pop(main.get_db, None)
                     with client.websocket_connect('/ws/game',headers={'origin':'http://localhost:5173'}) as a:
                         self.assertTrue(a.receive_json()['state']['authoritative'])
                         runtime=main.app.state.game

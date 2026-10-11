@@ -133,3 +133,19 @@ No trained model is provided yet. The assessment is explicitly
 the UI displays **Model not configured · not assessed**. A future trained model
 can populate that contract with its output for the corresponding cropped view.
 This page displays live footage; it does not save recordings.
+
+Each level adds +5 maximum battle HP, +1 attack damage, and +1 shield. Shield
+absorbs that many points per incoming hit, including clashes and lasers. Stats
+are derived from the persisted level and are sent as `combatStats` through the
+plant API/WebSocket; storage and care pages display them. Battle HP bars use the
+increased maximum, including the bench fighter. Reaching 100% still levels once
+per cycle; the existing moisture hold prevents duplicate upgrades. `hp` in the
+plant database remains the separate plant-care health reading.
+
+### Victory badges
+
+Every server-confirmed boss victory awards one permanent badge, including wins where watering is blocked. `/collection` displays the collection with six badges per page, newest first, using the adventure forest theme. Open COLLECTION from `/` or `/adventure`. The victory panel names the earned badge. Eight distinct designs progress through ranks (victory 9 starts rank 2), so every win has a different badge type. Defeats and dismissed encounters do not award badges.
+
+The SQLite `victory_badges` table saves encounter receipts and acquisition order; retries and restarts cannot duplicate a reward. The table is created automatically when the backend starts. `GET /api/collection` loads saved badges, and `/ws/game` carries live collection updates. As with existing game state, this is a shared collection for this installation; there are no separate player accounts.
+
+Badge artwork is shared between collection cards and the victory reveal: layered gold frames, ribbons, laurel engravings, colored emblems and rank jewels. Badge victories display for 5.6 seconds, with a medal reveal, gem sparks and a chime; reduced-motion mode uses a short fade instead.

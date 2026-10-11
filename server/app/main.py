@@ -5,6 +5,7 @@ from .footage import PlantFootage
 from fastapi.responses import Response
 from .mqtt_client import start_mqtt
 from .game.runtime import GameRuntime
+from .game import battle as battle_rules
 import asyncio
 import time
 import os
@@ -41,7 +42,15 @@ def plant_to_dict(plant):
     with SessionLocal() as db:
         cooldown = db.get(WateringCooldown, plant.plantId)
         until = cooldown.until if cooldown else None
+    runtime = getattr(app.state, "game", None)
+    slot = next((slot for slot, pid in runtime.slot_ids.items() if pid == plant.plantId), None) if runtime else None
+    if slot:
+        fighter = runtime.engine.fighter(slot, level=plant.level)
+    else:
+        slot = "B" if "monstera" in plant.species.lower() else "A"
+        fighter = battle_rules.levelled(battle_rules.plant_fighter(slot), plant.level)
     return {
+        "combatStats": {"maxHp": fighter.hp, "attackDamage": fighter.atk, "shield": fighter.shield},
         "plantId": plant.plantId,
         "nfcTagId": plant.nfcTagId,
         "species": plant.species,
@@ -323,7 +332,7 @@ async def plant_websocket(websocket: WebSocket):
 
 @app.get("/api/game")
 async def game_snapshot():
-    return {**app.state.game.engine.snapshot(), "simulatedWatering": app.state.game.simulation}
+    return app.state.game.snapshot()
 
 
 @app.websocket("/ws/game")
@@ -335,7 +344,7 @@ async def game_websocket(websocket: WebSocket):
     runtime = app.state.game
     runtime.clients.add(websocket)
     try:
-        await websocket.send_json({"type": "game_updated", "state": {**runtime.engine.snapshot(), "simulatedWatering": runtime.simulation}})
+        await websocket.send_json({"type": "game_updated", "state": runtime.snapshot()})
         while True:
             try:
                 data = await websocket.receive_json()
@@ -373,3 +382,9 @@ async def plant_footage_status(plant_id: str, db: Session = Depends(get_db)):
     if db.get(Plant, plant_id) is None:
         raise HTTPException(404, "Plant not found")
     return app.state.footage.status(plant_id)
+
+
+@app.get("/api/collection")
+def badge_collection(db: Session = Depends(get_db)):
+    from .badges import collection
+    return {"badges": collection(db)}

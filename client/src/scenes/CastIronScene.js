@@ -618,9 +618,9 @@ export default class CastIronScene extends Phaser.Scene {
     if (this.infoText) {
       if (this.plant) {
         this.infoText.setText(
-          `ID: ${this.plant.plantId}   ` +
-          `NFC: ${this.plant.nfcTagId}   ` +
-          `HP: ${this.plant.hp}`
+          `MAX HP: ${this.plant.combatStats?.maxHp ?? "--"}   ` +
+          `ATK: ${this.plant.combatStats?.attackDamage ?? "--"}   ` +
+          `SHIELD: ${this.plant.combatStats?.shield ?? "--"}`
         );
       } else {
         this.infoText.setText(
@@ -641,7 +641,7 @@ export default class CastIronScene extends Phaser.Scene {
     this.label(
       W * 0.14,
       y + h / 2,
-      "🌿 ABOUT",
+      "BATTLE STATS",
       Math.max(
         12,
         Math.min(19, W * 0.024)

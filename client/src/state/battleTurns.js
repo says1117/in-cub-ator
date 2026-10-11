@@ -70,6 +70,12 @@ export function describeTurn(prev, move) {
 
 // The words for the result panel. Honest about water that was not given, and why.
 export function resultWords(result, plantName) {
+  const words = waterResultWords(result, plantName);
+  if (result.badge) words.detail = `Badge earned: ${result.badge.name}\n${words.detail}`;
+  return words;
+}
+
+function waterResultWords(result, plantName) {
   const who = plantName || `Plant ${result.plant}`;
   if (result.outcome === "won") {
     if (result.simulated && result.increase > 0) {

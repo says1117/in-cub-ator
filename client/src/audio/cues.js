@@ -268,6 +268,13 @@ export const CUES = {
   },
 
   // ---- result ----
+  badge_earned(s, out, t) {
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      s.tone(out, { type: "sine", f0: f, t: t + i * .085, a: .006, d: .5, gain: .12 });
+      s.tone(out, { type: "triangle", f0: f * 2, t: t + i * .085, a: .003, d: .25, gain: .035 });
+    });
+    return .85;
+  },
   // durationMs: the real pump time, so the bubbling lasts as long as the water does
   victory_water(s, out, t, o) {
     const dur = Math.min(6, Math.max(0.3, (o.durationMs ?? 2000) / 1000));

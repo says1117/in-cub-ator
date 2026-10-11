@@ -18,10 +18,34 @@ class RulesTests(unittest.TestCase):
         e.last_seen=100; e.on_demo_boss(100,'A'); e.tick(106)
         b=replace(e.battle,attack_count=2,intent={'move':'special','grade':'sure','chance':1,'heavy':False,'bluff':None,'laser':True},boss_next='special')
         hit=B.resolve_turn(b,'guard','special')
-        self.assertEqual(hit.last_move['took'],11); self.assertEqual(hit.attack_count,3)
+        self.assertEqual(hit.last_move['took'],8); self.assertEqual(hit.last_move['shield_absorbed'],3); self.assertEqual(hit.attack_count,3)
         b=replace(e.battle,charge=0,intent=None)
         b=B.resolve_turn(b,'guard','attack'); self.assertFalse(B.skill_ready(b))
         b=B.resolve_turn(b,'special','guard'); self.assertTrue(B.skill_ready(b)); self.assertEqual(b.blooms,2)
+
+    def test_levelled_health_damage_shield_and_bench(self):
+        engine = IntegratedEngine(rng=random.Random(5))
+        engine.levels.update(A=2, B=3)
+        a, b = engine.fighter('A'), engine.fighter('B')
+        self.assertEqual((a.hp, a.atk, a.shield), (35, 9, 1))
+        self.assertEqual((b.hp, b.atk, b.shield), (44, 9, 2))
+        engine.last_seen=100
+        engine.on_demo_boss(100, 'A'); engine.tick(106)
+        self.assertEqual(engine.battle.creature_hp, 35)
+        self.assertEqual(engine.battle.bench[0][1].hp, 44)
+        snap=engine.snapshot()
+        self.assertEqual(snap['battle']['creature_max_hp'], 35)
+        self.assertEqual(snap['battle']['creature_shield'], 1)
+        self.assertEqual(snap['fighters']['B']['maxHp'], 44)
+        lost = B.resolve_turn(engine.battle, 'special', 'attack')
+        self.assertEqual(lost.last_move['shield_absorbed'], 1)
+        self.assertEqual(lost.last_move['took'], B.boss_hit(engine.battle, 'attack')-1)
+        protected=replace(engine.battle, creature=replace(a, shield=99))
+        hit=B.resolve_turn(protected, 'special', 'attack')
+        self.assertEqual(hit.last_move['took'], 0)
+        self.assertEqual(hit.creature_hp, protected.creature_hp)
+        swapped=B.resolve_turn(replace(engine.battle, creature_hp=1), "special", "attack")
+        self.assertEqual((swapped.creature.hp, swapped.creature.atk, swapped.creature.shield), (44, 9, 2))
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -121,6 +145,45 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         restored=GameRuntime(self.sessions,self.water,self.broadcast,simulation=True); await restored.drain_reward(); self.water.assert_awaited_once()
         e.tick(now+14); e.on_demo_boss(now+15,'B'); self.assertEqual(e.boss_kind,'sporelings')
         e.on_esp_status('offline',now+16); e.on_demo_boss(now+17,'A'); self.assertEqual(e.boss_kind,'sporelings')
+    async def test_distinct_badges_without_water_and_restart_idempotency(self):
+        e = self.rt.engine
+        for i in range(18):
+            e.result = {"fight": f"badge-{i}", "outcome": "won", "plant": "A",
+                        "kind": "chomper" if i % 2 == 0 else "sporelings"}
+            e.pending_reward = None  # full moisture / blocked watering
+            self.rt.save()
+            await self.rt.drain_reward()
+            await self.rt.drain_reward()
+        self.assertEqual(len(self.rt.badges), 18)
+        self.assertEqual(len({b["type"] for b in self.rt.badges}), 18)
+        self.assertEqual(self.rt.badges[8]["rank"], 2)
+        self.water.assert_not_awaited()
+        restored = GameRuntime(self.sessions, self.water, self.broadcast, simulation=True)
+        await restored.drain_reward()
+        self.assertEqual(restored.badges, self.rt.badges)
+        await restored.publish()
+        self.ws.send_json.reset_mock()
+        restored.clients.add(self.ws)
+        await restored.publish()
+        self.assertEqual(self.ws.send_json.call_args.args[0]["state"]["badges"], self.rt.badges)
+        for outcome in ("lost", "dismissed"):
+            restored.engine.result = {"fight": outcome, "outcome": outcome, "plant": "A"}
+            await restored.drain_reward()
+        self.assertEqual(len(restored.badges), 18)
+
+    async def test_badge_recovers_after_receipt_committed_before_checkpoint(self):
+        from app.models import VictoryBadge
+        e = self.rt.engine
+        e.result = {"fight": "crash-win", "outcome": "won", "plant": "A", "kind": "chomper"}
+        self.rt.save()
+        with self.sessions() as db:
+            db.add(VictoryBadge(battleId="crash-win", number=1, boss="chomper", plantId="PLANT_001", earnedAt=123))
+            db.commit()
+        restored = GameRuntime(self.sessions, self.water, self.broadcast, simulation=True)
+        await restored.drain_reward()
+        self.assertEqual(len(restored.badges), 1)
+        self.assertEqual(restored.engine.result["badge"]["earnedAt"], 123)
+
     async def test_hardware_stale_cancels_without_pump(self):
         rt=GameRuntime(self.sessions,self.water,self.broadcast,mqtt=Mock(),simulation=False); now=time.time()
         rt.engine.on_esp_status('online',now); rt.engine.on_demo_boss(now,'A'); await rt.step(now+C.ESP32_STALE_SECONDS+1)

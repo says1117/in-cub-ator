@@ -26,3 +26,10 @@ test('result text distinguishes simulated water, pump commands, and blocked rewa
   assert.match(hardware.detail,/awaiting soil sensor/);
   assert.match(resultWords({outcome:'won',blocked:'offline'},'Cast Iron').detail,/offline/);
 });
+
+test('victory announces the badge even when watering is blocked', () => {
+  const words=resultWords({outcome:'won',plant:'A',blocked:'soil_wet',badge:{name:'Dew Guardian · Rank 1'}},'Cast Iron');
+  assert.equal(words.title,'VICTORY!');
+  assert.match(words.detail,/Badge earned: Dew Guardian/);
+  assert.equal(words.water,false);
+});

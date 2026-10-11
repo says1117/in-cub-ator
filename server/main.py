@@ -33,14 +33,33 @@ def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
                 except ValueError:
                     log.warning("bad soil payload on %s: %r", topic, payload)
             elif topic == C.TOPIC_PAD.format(plant=p):
-                engine.on_pad(p, payload)
+                engine.on_pad(p, payload, now)
     return []
+
+
+def load_plant_db():
+    """The plant database, or None. A broken plant file must never stop the server, because the
+    server is also what waters the plants: on any problem it logs why and runs the old way."""
+    if not C.USE_PLANT_DB:
+        return None
+    try:
+        import plant_db
+        plants = plant_db.PlantDB.load()
+    except Exception as err:  # noqa: BLE001 - any failure here falls back to the old engine
+        log.exception("plant database not loaded (%s); running without NFC summoning", err)
+        return None
+    log.info("plant database: %d plants, %d moves", len(plants.plants), len(plants.moves))
+    return plants
+
+
+def make_engine() -> GameEngine:
+    return GameEngine(creatures=battle.load_creatures(), plant_db=load_plant_db())
 
 
 async def main():
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
-    engine = GameEngine(creatures=battle.load_creatures())
+    engine = make_engine()
     feed = api.Feed(engine, queue)
     client = mqtt_io.connect(loop, queue)
 

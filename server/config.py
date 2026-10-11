@@ -115,6 +115,10 @@ SIM_SOAK_SECONDS = 20.0                 # freshly watered soil holds its moistur
 # Plant database (plant_db.py). Plants follow their NFC tag. Paths are relative to this folder,
 # so the server works whatever folder it is started from.
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# On: only plants whose NFC tag is on a pad are in the game (plant_db.py). Off: the old way, where
+# both pads always have a fighter. Off by default until the game screen understands summoning
+# (plan Step 5). Turn on with INCUBE_PLANT_DB=1.
+USE_PLANT_DB = os.environ.get("INCUBE_PLANT_DB", "0") == "1"
 PLANTS_FILE = os.path.join(_HERE, "data", "plants.json")
 MOVES_FILE = os.path.join(_HERE, "data", "moves.json")
 PROGRESS_DB = os.environ.get("INCUBE_PROGRESS_DB", os.path.join(_HERE, "data", "progress.db"))

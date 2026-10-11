@@ -170,13 +170,13 @@ export class BattleHud {
     const glow = this.scene.add.rectangle(0, 0, BTN_W + 14, BTN_H + 14).setStrokeStyle(6, 0xffffff, 1).setVisible(false);
     const keyPlate = this.scene.add.rectangle(-BTN_W / 2 + 26, -BTN_H / 2 + 26, 32, 32, 0x0b0e1c, 0.75).setStrokeStyle(2, 0xffffff, 0.6);
     const keyText = this.text(-BTN_W / 2 + 26, -BTN_H / 2 + 26, key, 20, "#ffffff", { bold: true }).setOrigin(0.5);
-    const name = this.text(-BTN_W / 2 + 52, -BTN_H / 2 + 12, move === "skill" ? "SKILL" : MOVE_NAMES[move], 26, "#ffffff", { bold: true });
+    const name = this.text(-BTN_W / 2 + 52, -BTN_H / 2 + 14, move === "skill" ? "SKILL" : MOVE_NAMES[move], 24, "#ffffff", { bold: true });
     const sub = this.text(-BTN_W / 2 + 18, BTN_H / 2 - 34, "", 17, "#f6f1dc");
     const parts = [shadow, glow, bg, shine, keyPlate, keyText, name, sub];
     let beatsIcon = null;
     if (move !== "skill") {
-      sub.setText("beats");
-      beatsIcon = this.scene.add.image(-BTN_W / 2 + 92, BTN_H / 2 - 24, iconFor(BEATS[move])).setScale(2.4);
+      sub.setText(`${move} · beats`);
+      beatsIcon = this.scene.add.image(sub.x + sub.displayWidth + 18, BTN_H / 2 - 24, iconFor(BEATS[move])).setScale(2.4);
       const ownIcon = this.scene.add.image(BTN_W / 2 - 40, -6, iconFor(move)).setScale(4.2);
       parts.push(beatsIcon, ownIcon);
     }
@@ -294,8 +294,16 @@ export class BattleHud {
   }
 
   // ------------------------------------------------------------ buttons
-  // enabled: which moves can be pressed now. skill: the server's skill info.
-  setButtons(enabled, skill) {
+  // Each plant calls its three moves by its own names (data/plants.js): "Vine Haymaker" for attack.
+  setMoveNames(names) {
+    for (const move of ["attack", "guard", "special"]) {
+      if (names[move]) this.buttons[move].name.setText(names[move].toUpperCase());
+    }
+  }
+
+  // enabled: which moves can be pressed now. skill: the server's skill info. blurb: the plant's own
+  // one-line description of its skill (data/plants.js), shown while it is ready.
+  setButtons(enabled, skill, blurb = null) {
     for (const b of Object.values(this.buttons)) {
       const on = enabled && (b.move !== "skill" || (skill && skill.ready));
       b.enabled = on;
@@ -305,7 +313,7 @@ export class BattleHud {
     const s = this.buttons.skill;
     if (skill) {
       s.name.setText(skill.name.toUpperCase());
-      const what = skill.kind === "heal" ? `heals ${skill.power}` : skill.kind === "shield" ? `blocks · ${skill.power} back` : `${skill.power} damage`;
+      const what = blurb ? blurb.toLowerCase() : skill.kind === "heal" ? `heals ${skill.power}` : skill.kind === "shield" ? `blocks · ${skill.power} back` : `${skill.power} damage`;
       s.sub.setText(skill.ready ? `always hits · ${what}` : `recharging · ${skill.ready_in} turn${skill.ready_in === 1 ? "" : "s"}`);
     } else {
       s.name.setText("SKILL");

@@ -1,284 +1,189 @@
-// client/src/render/bossFx.js: What the boss throws, spits and flashes in a fight. Owner: Role 3 (client, art, demo).
-// render/bossRig.js uses these for its intent poses and its moves (rig.setIntent, rig.perform).
+// client/src/render/bossFx.js: What the boss's moves look like. Owner: Role 3 (client, art, demo).
+// The boss has three moves, the same three the plants have, and each one looks like what it is:
+//   attack   bite    a pair of huge jaws snaps shut on the plant
+//   special  ray     its mouth opens, a ball of heat builds, and a beam burns across the field
+//   guard    quake   it slams the ground: a crack races over and roots spike up under the plant
+// data/bosses.js names the moves for each tier and gives each tier its own colours.
 //
-//   createChargeSparks(scene, parent)   sparks that gather at the mouth while it charges (lives in the rig)
-//   spitOrb(scene, options)             a glowing orb spat from the mouth at a target. Returns ms until it hits.
-//   shieldGlint(scene, options)         a shield that flashes up in front of it, or shatters
-//   biteSnap(scene, options)            the snap of a bite landing, or the clink of one that was blocked
-//
-// Positions are in the `layer` given (for the battle screen, the 1280 x 720 stage). Without a layer
-// things go straight into the scene, in its own coordinates. Everything made here destroys itself.
-// Movement runs on the scene's tweens and clock, so a hit-stop (timeScale 0) freezes it too.
-import Phaser from "phaser";
+// An effect is given:
+//   kit                      the paint box (render/fxKit.js)
+//   palette                  this tier's colours: { hot, main, deep, core }
+//   mouth()                  where the boss's mouth is right now
+//   boss, bossGround         the middle of the boss, and the spot it stands on
+//   target, targetGround     the middle of the plant, and the spot it stands on
+//   lands                    true if this move hurts the plant this turn
+//   blocked                  true if the plant's guard stopped it (it lands on the shield instead)
+//   meet                     in a tie, the spot in the middle where both moves run into each other
+//   roar(), lunge(dx, ms)    make the boss open its mouth, or throw itself forward and back
+// It returns how many ms from now its blow arrives. The battle screen shows the damage then.
 
-const rand = Phaser.Math.FloatBetween;
-const between = Phaser.Math.Between;
-export const GLOW_KEY = "bossFxGlow";
+const between = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
 
-const ORB = { core: 0xfff1c4, hot: 0xffb04a, mid: 0xf0502f, rim: 0xc21d36 };
-
-// A soft white dot, tinted for every glow and spark here.
-export function ensureGlowTexture(scene) {
-  if (scene.textures.exists(GLOW_KEY)) return GLOW_KEY;
-  const texture = scene.textures.createCanvas(GLOW_KEY, 64, 64);
-  const ctx = texture.getContext();
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.3, "rgba(255,255,255,0.6)");
-  g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
-  texture.refresh();
-  return GLOW_KEY;
-}
-
-// A point on screen (world coordinates) as a point in `layer`.
-export function toLayer(layer, point) {
-  if (!layer || !layer.getWorldTransformMatrix) return { x: point.x, y: point.y };
-  const local = layer.getWorldTransformMatrix().applyInverse(point.x, point.y);
-  return { x: local.x, y: local.y };
-}
-
-function put(scene, layer, object) {
-  if (layer) layer.add(object);
-  return object;
-}
-
-// ---- charge sparks: a fixed pool of glints that drift in toward the mouth and wink out ----
-// `parent` is a container inside the rig, so the sparks move and scale with it. update() is
-// called by the rig every frame with its own clock, so they freeze in a hit-stop.
-export function createChargeSparks(scene, parent, options = {}) {
-  ensureGlowTexture(scene);
-  const size = options.size || 1;          // rig units per spark scale step
-  const reach = options.reach || 150;      // how far out they start, in rig units
-  const colors = [ORB.core, ORB.hot, 0xffd9a0, 0xffffff];
-  const sparks = [];
-  for (let i = 0; i < 18; i++) {
-    const image = scene.add.image(0, 0, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
-    image.setTint(colors[i % colors.length]);
-    parent.add(image);
-    sparks.push({ image, alive: false, age: 0, life: 0, angle: 0, from: 0, spin: 0 });
+// One jaw: a gum line with a row of fangs. dir is 1 for the upper jaw (fangs point down), -1 for the lower.
+function jaw(g, x, y, width, dir, palette, alpha) {
+  const fangs = 7;
+  const curve = (s) => (1 - Math.pow(s * 2 - 1, 2)) * 34 * dir;      // the jaw bows away from the bite
+  g.fillStyle(palette.deep, alpha);
+  g.beginPath();
+  for (let i = 0; i <= 12; i++) { const s = i / 12; const px = x - width / 2 + s * width, py = y - curve(s); if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+  for (let i = 12; i >= 0; i--) { const s = i / 12; g.lineTo(x - width / 2 + s * width, y - curve(s) - (44 + 22 * Math.sin(Math.PI * s)) * dir); }
+  g.closePath();
+  g.fillPath();
+  for (let i = 0; i < fangs; i++) {
+    const s = (i + 0.5) / fangs;
+    const px = x - width / 2 + s * width;
+    const py = y - curve(s);
+    const long = (i % 2 ? 46 : 78) * (0.7 + 0.5 * Math.sin(Math.PI * s));
+    const half = width / fangs * 0.42;
+    g.fillStyle(0x3a1018, alpha); g.fillTriangle(px - half - 4, py - 2 * dir, px + half + 4, py - 2 * dir, px, py + (long + 8) * dir);
+    g.fillStyle(0xfff3d6, alpha); g.fillTriangle(px - half, py, px + half, py, px, py + long * dir);
+    g.fillStyle(0xd9b98a, alpha); g.fillTriangle(px + half * 0.2, py, px + half, py, px, py + long * dir);
   }
-  let due = 0;
-  return {
-    // ms: how far the rig's clock moved. (x, y): the mouth, in parent coordinates. strength: 0 to 1+.
-    update(ms, x, y, strength) {
-      due += (ms / 1000) * 22 * Math.min(1.6, strength);    // about 22 a second at full strength
-      while (due >= 1) {
-        due -= 1;
-        const spark = sparks.find((s) => !s.alive);
-        if (!spark) break;
-        spark.alive = true;
-        spark.age = 0;
-        spark.life = rand(0.32, 0.55);
-        spark.angle = rand(0, Math.PI * 2);
-        spark.from = rand(reach * 0.55, reach);
-        spark.spin = rand(-2.5, 2.5);
-        spark.scale = rand(0.22, 0.42) * size;
-        spark.image.setVisible(true);
-      }
-      for (const spark of sparks) {
-        if (!spark.alive) continue;
-        spark.age += ms / 1000;
-        const k = spark.age / spark.life;
-        if (k >= 1) { spark.alive = false; spark.image.setVisible(false); continue; }
-        const pull = k * k * (3 - 2 * k);                     // slow, then fast, into the mouth
-        const angle = spark.angle + spark.spin * k;
-        const r = spark.from * (1 - pull);
-        spark.image.setPosition(x + Math.cos(angle) * r, y + Math.sin(angle) * r * 0.8);
-        spark.image.setScale(spark.scale * (1 - 0.6 * k));
-        spark.image.setAlpha(Math.min(1, k * 5) * (1 - k * 0.5) * Math.min(1, strength + 0.2));
-      }
-    },
-    clear() {
-      due = 0;
-      for (const spark of sparks) { spark.alive = false; spark.image.setVisible(false); }
-    },
-  };
 }
 
-// ---- the orb: spat from the mouth, it flies at the target and bursts, or fizzles out short ----
-// options: from {x, y} and target {x, y} in layer coordinates, layer, lands, delay (ms),
-// scale (sizes are tuned for the 1280 x 720 battle stage; default 1 in a layer, 0.625 without one).
-// Returns ms from now until it hits the target (or, when it does not land, until it fizzles).
-export function spitOrb(scene, options) {
-  ensureGlowTexture(scene);
-  const { layer = null, lands = true, delay = 0 } = options;
-  const from = options.from;
-  const target = options.target || { x: from.x - 400, y: from.y + 120 };
-  const unit = options.scale ?? (layer ? 1 : 0.625);
-  const distance = Math.hypot(target.x - from.x, target.y - from.y);
-  const travel = Phaser.Math.Clamp(distance * 0.45, 170, 240);
-  const share = lands ? 1 : 0.62;          // a beaten orb dies about two thirds of the way
-  const rise = Math.min(90, distance * 0.16);
-  const pointAt = (k) => ({
-    x: Phaser.Math.Linear(from.x, target.x, k),
-    y: Phaser.Math.Linear(from.y, target.y, k) - rise * 4 * k * (1 - k),
-  });
-
-  const orb = put(scene, layer, scene.add.container(from.x, from.y)).setVisible(false);
-  const halo = scene.add.image(0, 0, GLOW_KEY).setTint(ORB.mid).setBlendMode(Phaser.BlendModes.ADD).setScale(1.5 * unit);
-  const body = scene.add.circle(0, 0, 13 * unit, ORB.rim, 1).setStrokeStyle(3 * unit, 0x2a0410, 0.9);
-  const inner = scene.add.circle(0, 0, 9 * unit, ORB.mid, 1);
-  const core = scene.add.circle(-2 * unit, -2 * unit, 5 * unit, ORB.core, 1);
-  orb.add([halo, body, inner, core]);
-
-  const path = { k: 0 };
-  let trailAt = 0;
-  scene.tweens.add({
-    targets: path,
-    k: share,
-    delay,
-    duration: travel * share,
-    ease: lands ? "Quad.easeIn" : "Sine.easeOut",
-    onStart: () => orb.setVisible(true).setScale(0.4),
-    onUpdate: () => {
-      const p = pointAt(path.k);
-      orb.setPosition(p.x, p.y);
-      orb.setScale(Math.min(1, 0.4 + path.k * 3) * (lands ? 1 : 1 - 0.35 * (path.k / share)));
-      halo.setAlpha(0.65 + 0.35 * Math.sin(path.k * 40));
-      // a trail of embers
-      if (path.k - trailAt > 0.07) {
-        trailAt = path.k;
-        const ember = put(scene, layer, scene.add.image(p.x, p.y, GLOW_KEY));
-        ember.setTint(path.k * 20 % 2 < 1 ? ORB.hot : ORB.mid).setBlendMode(Phaser.BlendModes.ADD).setScale(0.55 * unit).setAlpha(0.8);
-        scene.tweens.add({ targets: ember, scale: 0.1 * unit, alpha: 0, y: ember.y + rand(-6, 10) * unit, duration: 260, onComplete: () => ember.destroy() });
-      }
-    },
-    onComplete: () => {
-      const at = { x: orb.x, y: orb.y };
-      orb.destroy();
-      if (lands) burstAt(scene, layer, at, unit);
-      else fizzleAt(scene, layer, at, unit);
-    },
-  });
-  return delay + travel * share;
+// A thorny root that stabs up out of the ground. rise: 0 hidden, 1 fully out.
+function spike(g, x, groundY, tall, lean, rise, alpha) {
+  if (rise <= 0) return;
+  const tipX = x + lean * tall * rise, tipY = groundY - tall * rise;
+  const half = 16 + tall * 0.07;
+  g.fillStyle(0x2a1418, alpha); g.fillTriangle(x - half - 5, groundY + 10, x + half + 5, groundY + 10, tipX, tipY - 10);
+  g.fillStyle(0x6b3a36, alpha); g.fillTriangle(x - half, groundY + 8, x + half, groundY + 8, tipX, tipY);
+  g.fillStyle(0xa9655a, alpha); g.fillTriangle(x - half, groundY + 8, x - half * 0.2, groundY + 8, tipX, tipY);
+  g.fillStyle(0xf2b8c0, alpha); g.fillTriangle(tipX - 7 * rise, tipY + 30 * rise, tipX + 7 * rise, tipY + 30 * rise, tipX, tipY);
+  // thorns down its sides
+  for (let i = 1; i <= 3; i++) {
+    const s = i / 4;
+    const cx = x + lean * tall * rise * s, cy = groundY - tall * rise * s;
+    const w = half * (1 - s);
+    const side = i % 2 ? 1 : -1;
+    g.fillStyle(0xe8c9a8, alpha);
+    g.fillTriangle(cx + side * w * 0.5, cy - 8, cx + side * w * 0.5, cy + 8, cx + side * (w + 20), cy - 6);
+  }
 }
 
-function burstAt(scene, layer, at, unit) {
-  const flash = put(scene, layer, scene.add.image(at.x, at.y, GLOW_KEY)).setTint(ORB.core).setBlendMode(Phaser.BlendModes.ADD).setScale(1 * unit);
-  scene.tweens.add({ targets: flash, scale: 3.4 * unit, alpha: 0, duration: 260, ease: "Cubic.easeOut", onComplete: () => flash.destroy() });
-  const ring = put(scene, layer, scene.add.circle(at.x, at.y, 60 * unit)).setStrokeStyle(5 * unit, ORB.hot, 1).setScale(0.2);
-  scene.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 320, ease: "Cubic.easeOut", onComplete: () => ring.destroy() });
-  const colors = [ORB.core, ORB.hot, ORB.mid, ORB.rim];
-  for (let i = 0; i < 12; i++) {
-    const bit = put(scene, layer, scene.add.rectangle(at.x, at.y, between(4, 9) * unit, between(4, 9) * unit, colors[i % colors.length]));
-    bit.setRotation(rand(0, 3));
-    const angle = rand(0, Math.PI * 2);
-    const far = rand(30, 90) * unit;
-    scene.tweens.add({
-      targets: bit, x: at.x + Math.cos(angle) * far, y: at.y + Math.sin(angle) * far, alpha: 0, scale: 0.3,
-      rotation: bit.rotation + rand(-4, 4), duration: between(260, 480), ease: "Cubic.easeOut", onComplete: () => bit.destroy(),
+export const BOSS_FX = {
+  // BITE: jaws out of nowhere, as tall as the plant.
+  bite(ctx) {
+    const { kit, palette } = ctx;
+    const shut = 430;
+    ctx.roar();
+    kit.at(120, () => ctx.lunge(ctx.lands || ctx.blocked ? -150 : -90, 300));
+    // where the jaws close: on the plant, on its shield, or on thin air halfway there
+    const where = ctx.lands ? ctx.target : ctx.blocked ? { x: ctx.target.x + 150, y: ctx.target.y - 20 } : ctx.meet || between(ctx.boss, ctx.target, 0.5);
+    const size = ctx.lands ? 1 : 0.72;
+    kit.draw(shut + 190, (g, k, ms) => {
+      const appear = kit.ease.out(Math.min(1, ms / 150));
+      const close = ms < 250 ? 0 : kit.ease.in(Math.min(1, (ms - 250) / (shut - 250)));
+      const after = ms > shut ? (ms - shut) / 190 : 0;
+      const gap = kit.lerp(230, 4, close) * size + after * 30;
+      const alpha = appear * (1 - after);
+      const shiver = ms < 250 ? Math.sin(ms * 0.09) * 5 : 0;
+      jaw(g, where.x + shiver, where.y - gap, 330 * size, 1, palette, alpha);
+      jaw(g, where.x - shiver, where.y + gap, 300 * size, -1, palette, alpha);
     });
-  }
-}
-
-// A beaten orb: it wobbles, shrinks to nothing and leaves a puff of dull smoke.
-function fizzleAt(scene, layer, at, unit) {
-  const pop = put(scene, layer, scene.add.circle(at.x, at.y, 10 * unit, ORB.mid, 1));
-  scene.tweens.add({ targets: pop, scale: 0.1, alpha: 0, duration: 200, ease: "Back.easeIn", onComplete: () => pop.destroy() });
-  for (let i = 0; i < 7; i++) {
-    const puff = put(scene, layer, scene.add.image(at.x + rand(-8, 8) * unit, at.y + rand(-6, 6) * unit, GLOW_KEY));
-    puff.setTint(i % 2 ? 0x8a7d9a : 0x5c4f6b).setScale(0.35 * unit).setAlpha(0.6);
-    scene.tweens.add({
-      targets: puff, y: puff.y - rand(14, 40) * unit, x: puff.x + rand(-20, 20) * unit, scale: rand(0.7, 1.1) * unit, alpha: 0,
-      duration: between(380, 620), ease: "Cubic.easeOut", onComplete: () => puff.destroy(),
+    kit.draw(shut, (g, k) => { g.fillStyle(palette.main, 0.2 * kit.ease.arc(k)); g.fillEllipse(where.x, where.y, 420 * size, 420 * size); }, { add: true });
+    kit.at(shut, () => {
+      if (ctx.lands) {
+        kit.impact(where.x, where.y, { power: 1.35, color: palette.main, color2: palette.hot, shape: "fang" });
+        kit.slash(where.x, where.y, { angle: 0.9, length: 330, width: 34, color: palette.main, ms: 280, add: true });
+        kit.slash(where.x, where.y, { angle: -0.9, length: 330, width: 34, color: palette.hot, ms: 280, add: true, delay: 50 });
+        kit.flash(palette.main, 0.3, 140);
+        kit.burst(where.x, where.y, { count: 12, colors: [0xfff3d6, 0xffffff], shape: "fang", speed: [200, 560], size: [10, 20], life: [400, 800], gravity: 1100, spin: [-10, 10] });
+      } else {
+        kit.ring(where.x, where.y, { from: 20, to: 150 * size, color: 0xffffff, thick: 6, ms: 240 });
+        kit.burst(where.x, where.y, { count: 8, colors: [0xfff3d6, 0xd7e3ff], shape: "streak", speed: [200, 480], size: [3, 5], life: [140, 280] });
+        kit.shake(90, 0.004);
+      }
     });
-  }
-}
+    return shut;
+  },
 
-// ---- the shield: a curved pane of light in front of the boss, with a glint running across it ----
-// options: at {x, y} (the middle of the boss, in layer coordinates), height (of the boss, in layer
-// units), layer, lands (false: it was beaten, so it cracks and shatters).
-export function shieldGlint(scene, options) {
-  ensureGlowTexture(scene);
-  const { layer = null, lands = true, at } = options;
-  const h = options.height || 300;
-  const w = h * 0.62;
-  const cx = at.x - w * 0.18;              // a little toward the plant, on the left
-  const pane = put(scene, layer, scene.add.graphics({ x: cx, y: at.y }));
-  const drawPane = (alpha) => {
-    pane.clear();
-    pane.fillStyle(0xfff3d6, 0.16 * alpha);
-    pane.fillEllipse(0, 0, w, h);
-    pane.lineStyle(Math.max(2, h * 0.012), 0xffe2b8, 0.9 * alpha);
-    pane.strokeEllipse(0, 0, w, h);
-    pane.lineStyle(Math.max(1, h * 0.006), 0xffffff, 0.6 * alpha);
-    pane.strokeEllipse(0, 0, w * 0.82, h * 0.86);
-  };
-  drawPane(1);
-  pane.setScale(0.7, 0.85).setAlpha(0);
-  scene.tweens.add({ targets: pane, scaleX: 1, scaleY: 1, alpha: 1, duration: 110, ease: "Back.easeOut" });
-
-  // the glint: a bright slanted streak that sweeps across the pane
-  const streak = put(scene, layer, scene.add.rectangle(cx - w * 0.45, at.y, w * 0.09, h * 0.9, 0xffffff, 0.85));
-  streak.setRotation(0.35).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
-  scene.tweens.add({ targets: streak, x: cx + w * 0.45, alpha: { from: 0.95, to: 0 }, delay: 70, duration: 240, ease: "Sine.easeInOut", onComplete: () => streak.destroy() });
-  const star = put(scene, layer, scene.add.image(cx - w * 0.22, at.y - h * 0.28, GLOW_KEY)).setBlendMode(Phaser.BlendModes.ADD).setScale(0.1);
-  scene.tweens.add({ targets: star, scale: h * 0.006, alpha: 0, delay: 90, duration: 260, ease: "Quad.easeOut", onComplete: () => star.destroy() });
-
-  if (lands) {
-    scene.tweens.add({ targets: pane, alpha: 0, delay: 300, duration: 260, onComplete: () => pane.destroy() });
-    return;
-  }
-  // beaten: cracks run across it, then it falls apart in shards
-  scene.time.delayedCall(150, () => {
-    pane.lineStyle(Math.max(2, h * 0.01), 0x3a1320, 0.85);
-    for (let i = 0; i < 5; i++) {
-      const angle = rand(0, Math.PI * 2);
-      pane.lineBetween(0, 0, Math.cos(angle) * w * 0.48, Math.sin(angle) * h * 0.48);
-    }
-  });
-  scene.time.delayedCall(240, () => {
-    pane.destroy();
-    for (let i = 0; i < 12; i++) {
-      const angle = rand(0, Math.PI * 2);
-      const sx = cx + Math.cos(angle) * w * 0.45;
-      const sy = at.y + Math.sin(angle) * h * 0.45;
-      const s = h * rand(0.03, 0.06);
-      const shard = put(scene, layer, scene.add.triangle(sx, sy, 0, 0, s, s * 0.3, s * 0.2, s * 1.2, i % 2 ? 0xfff3d6 : 0xffe2b8, 0.85));
-      shard.setRotation(rand(0, 3));
-      scene.tweens.add({
-        targets: shard, x: sx + Math.cos(angle) * h * 0.25, y: sy + h * rand(0.15, 0.4), rotation: shard.rotation + rand(-5, 5), alpha: 0,
-        duration: between(380, 620), ease: "Quad.easeIn", onComplete: () => shard.destroy(),
+  // RAY: the beam. It is aimed for a moment first, so you see it coming.
+  ray(ctx) {
+    const { kit, palette } = ctx;
+    const fire = 500;
+    ctx.roar();
+    const aim = ctx.lands ? ctx.target : ctx.blocked ? { x: ctx.target.x + 150, y: ctx.target.y - 20 } : { x: ctx.target.x - 40, y: ctx.target.y - 330 };
+    const end = ctx.lands || ctx.blocked ? aim : ctx.meet || { x: -80, y: aim.y - 150 };
+    // the build-up: a ball of heat in its mouth and a thin line showing where it will go
+    kit.at(120, () => { const m = ctx.mouth(); kit.gather(m.x, m.y, { count: 26, ms: fire - 140, from: [90, 220], colors: [palette.hot, palette.main, 0xffffff], size: [3, 7], add: true }); });
+    kit.draw(fire, (g, k, ms) => {
+      const m = ctx.mouth();
+      const size = kit.ease.in(k) * (1 + 0.2 * Math.sin(ms * 0.08));
+      for (const [r, color, alpha] of [[96, palette.main, 0.25], [60, palette.hot, 0.6], [30, palette.core, 1]]) { g.fillStyle(color, alpha); g.fillCircle(m.x, m.y, r * size); }
+      if (k > 0.3 && Math.floor(ms / 50) % 2) { g.lineStyle(3, palette.hot, 0.7); g.lineBetween(m.x, m.y, end.x, end.y); }
+    }, { add: true });
+    kit.at(fire, () => {
+      const life = ctx.lands ? 560 : 320;
+      kit.flash(palette.hot, ctx.lands ? 0.5 : 0.22, 160);
+      kit.shake(life, ctx.lands ? 0.014 : 0.006);
+      kit.beam(ctx.mouth, end, { width: ctx.lands ? 56 : 30, color: palette.main, mid: palette.hot, core: palette.core, ms: life, shoot: 0.12, holdUntil: 0.72 });
+      const m = ctx.mouth();
+      kit.ring(m.x, m.y, { from: 20, to: 170, color: palette.hot, thick: 8, ms: 260, add: true });
+      kit.burst(m.x, m.y, { count: 12, colors: [palette.hot, palette.core], shape: "streak", speed: [200, 520], angle: Math.atan2(end.y - m.y, end.x - m.x), spread: 1.4, size: [3, 6], life: [160, 320], add: true });
+      if (!ctx.lands && !ctx.blocked) return;
+      for (let t = 0; t < life * 0.75; t += 36) {
+        kit.at(t + 50, () => {
+          kit.burst(aim.x, aim.y, { count: 4, colors: [palette.hot, palette.main, palette.core], speed: [200, 700], angle: 0, spread: 5.5, size: [8, 20], life: [200, 480], gravity: -200, add: true });
+          if (ctx.lands) kit.burst(aim.x, ctx.targetGround.y, { count: 1, colors: [0x3a2a2a, 0x57444a], speed: [40, 140], angle: -Math.PI / 2, spread: 1.4, size: [22, 40], life: [500, 900], gravity: -160, alpha: 0.5, fade: 1.2 });
+        });
+      }
+      kit.at(60, () => {
+        if (ctx.lands) kit.impact(aim.x, aim.y, { power: 1.5, color: palette.main, color2: palette.hot, shape: "shard" });
+        kit.glow(aim.x, aim.y, { from: 100, to: 260, color: palette.hot, alpha: 0.6, ms: life });
       });
-    }
-  });
-}
-
-// ---- the bite: jaws of light snapping shut on the target, or a clink where the bite was stopped ----
-// options: at {x, y} in layer coordinates, size (layer units), layer, lands.
-export function biteSnap(scene, options) {
-  ensureGlowTexture(scene);
-  const { layer = null, lands = true, at } = options;
-  const size = options.size || 60;
-  if (lands) {
-    // two rows of teeth that slam together
-    for (const side of [-1, 1]) {
-      const jaw = put(scene, layer, scene.add.graphics({ x: at.x, y: at.y + side * size * 0.55 }));
-      jaw.fillStyle(0xfff6e0, 1);
-      for (let i = -2; i <= 2; i++) {
-        const x = i * size * 0.22;
-        jaw.fillTriangle(x - size * 0.1, 0, x + size * 0.1, 0, x, -side * size * 0.3);
-      }
-      jaw.setAlpha(0.95);
-      scene.tweens.add({ targets: jaw, y: at.y + side * size * 0.12, duration: 70, ease: "Quad.easeIn" });
-      scene.tweens.add({ targets: jaw, alpha: 0, scaleX: 1.25, delay: 110, duration: 180, onComplete: () => jaw.destroy() });
-    }
-    const flash = put(scene, layer, scene.add.image(at.x, at.y, GLOW_KEY)).setTint(0xffd9a0).setBlendMode(Phaser.BlendModes.ADD).setScale(size * 0.012);
-    scene.tweens.add({ targets: flash, scale: size * 0.04, alpha: 0, delay: 60, duration: 220, ease: "Cubic.easeOut", onComplete: () => flash.destroy() });
-    return;
-  }
-  // blocked: a cold clink star and a few sparks glancing off
-  const star = put(scene, layer, scene.add.star(at.x, at.y, 4, size * 0.08, size * 0.42, 0xe8f0ff, 1)).setRotation(0.4).setScale(0.3);
-  scene.tweens.add({ targets: star, scale: 1, alpha: 0, rotation: 0.9, duration: 240, ease: "Cubic.easeOut", onComplete: () => star.destroy() });
-  for (let i = 0; i < 6; i++) {
-    const spark = put(scene, layer, scene.add.rectangle(at.x, at.y, size * 0.16, size * 0.04, i % 2 ? 0xffffff : 0xb8c8e8));
-    const angle = rand(-0.9, 0.9);          // glancing back toward the boss, on the right
-    spark.setRotation(angle);
-    scene.tweens.add({
-      targets: spark, x: at.x + Math.cos(angle) * size * rand(0.6, 1.2), y: at.y + Math.sin(angle) * size * rand(0.6, 1.2),
-      alpha: 0, scaleX: 0.3, duration: between(180, 300), ease: "Quad.easeOut", onComplete: () => spark.destroy(),
     });
-  }
+    return fire + 60;
+  },
+
+  // QUAKE: the counter. What it does when it is not countering is put up a wall of roots.
+  quake(ctx) {
+    const { kit, palette } = ctx;
+    const g0 = ctx.bossGround;
+    if (!ctx.lands) {
+      // a wall of roots in front of itself: up, hold, down
+      const wall = [0, 1, 2, 3].map((i) => ({ x: g0.x - 250 + i * 34, tall: 250 - Math.abs(i - 1.5) * 40, lean: -0.1 + i * 0.05, wait: i * 40 }));
+      kit.burst(g0.x - 200, g0.y + 6, { count: 12, colors: [0x7a5a3a, 0x5a3f28], shape: "rock", speed: [120, 340], angle: -Math.PI / 2, spread: 1.8, size: [8, 16], life: [300, 560], gravity: 1300, spin: [-8, 8], radius: 60, squash: 0.2 });
+      kit.draw(760, (g, k, ms) => {
+        const down = kit.ease.in((k - 0.72) / 0.28);
+        for (const s of wall) spike(g, s.x, g0.y, s.tall, s.lean, kit.ease.back((ms - s.wait) / 160) * (1 - down), 1);
+      });
+      kit.at(160, () => { kit.ring(g0.x - 200, g0.y, { from: 30, to: 220, squash: 0.3, color: 0xe8c9a8, thick: 6, ms: 320, layer: "back" }); kit.shake(110, 0.005); });
+      return 220;
+    }
+    const strike = 470;
+    const t0 = ctx.targetGround;
+    kit.at(0, () => ctx.lunge(30, 240));
+    kit.at(110, () => {
+      kit.shake(360, 0.012);
+      kit.ring(g0.x, g0.y, { from: 40, to: 300, squash: 0.3, color: palette.hot, thick: 10, ms: 380, layer: "back", add: true });
+      kit.burst(g0.x, g0.y, { count: 14, colors: [0x7a5a3a, 0x5a3f28, 0xb8935a], shape: "rock", speed: [160, 460], angle: -Math.PI / 2, spread: 2.4, size: [10, 20], life: [400, 700], gravity: 1500, spin: [-8, 8], floor: g0.y + 16 });
+      for (const spread of [-22, 0, 24]) kit.crack({ x: g0.x - 120, y: g0.y + 6 }, { x: t0.x + 40, y: t0.y + spread }, { ms: 900, race: 0.36, color: palette.main, core: palette.core });
+    });
+    // dust kicked up along the crack as it runs
+    for (let i = 1; i <= 5; i++) {
+      kit.at(110 + i * 55, () => { const p = between({ x: g0.x - 120, y: g0.y }, t0, i / 5); kit.burst(p.x, p.y, { count: 5, colors: [0xcbb08a, 0x9a7f5c], speed: [60, 220], angle: -Math.PI / 2, spread: 1.6, size: [10, 20], life: [300, 600], gravity: 300, alpha: 0.7, fade: 1.4 }); });
+    }
+    const spikes = [-2, -1, 0, 1, 2].map((i) => ({ x: t0.x + i * 46 + kit.rand(-8, 8), tall: 250 - Math.abs(i) * 56 + kit.rand(-14, 14), lean: i * 0.11, wait: Math.abs(i) * 34 }));
+    kit.at(strike - 60, () => kit.glow(t0.x, t0.y, { from: 40, to: 240, squash: 0.3, color: palette.hot, alpha: 0.7, ms: 220, layer: "back" }));
+    kit.at(strike, () => {
+      kit.draw(900, (g, k, ms) => {
+        const down = kit.ease.in((k - 0.7) / 0.3);
+        for (const s of spikes) spike(g, s.x, t0.y, s.tall, s.lean, kit.ease.back((ms - s.wait) / 130) * (1 - down), 1);
+      });
+      kit.impact(t0.x, t0.y - 110, { power: 1.4, color: palette.hot, color2: 0xe8c9a8, shape: "rock" });
+      kit.flash(palette.hot, 0.35, 140);
+      kit.ring(t0.x, t0.y, { from: 40, to: 420, squash: 0.3, color: 0xffffff, thick: 10, ms: 460, layer: "back" });
+      kit.burst(t0.x, t0.y, { count: 26, colors: [0x7a5a3a, 0x5a3f28, 0xb8935a, 0x3a2620], shape: "rock", speed: [260, 820], angle: -Math.PI / 2, spread: 1.9, size: [10, 24], life: [600, 1100], gravity: 1700, spin: [-9, 9], floor: t0.y + 18 });
+      kit.burst(t0.x, t0.y - 40, { count: 18, colors: [palette.hot, palette.main, palette.core], speed: [200, 640], angle: -Math.PI / 2, spread: 2.2, size: [10, 22], life: [300, 620], gravity: -100, add: true });
+      kit.burst(t0.x, t0.y - 30, { count: 12, colors: [0xcbb08a, 0x9a7f5c], speed: [60, 240], size: [24, 46], life: [600, 1000], gravity: -120, radius: 120, squash: 0.3, alpha: 0.6, fade: 1.3 });
+    });
+    return strike;
+  },
+};
+
+// Runs a named boss effect and returns when its blow arrives, in ms from now.
+export function playBossFx(name, ctx) {
+  const effect = BOSS_FX[name];
+  return (effect && effect(ctx)) || 0;
 }

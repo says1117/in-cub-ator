@@ -420,8 +420,10 @@ class SnapshotTests(unittest.TestCase):
     def test_skill_block_describes_the_skill(self):
         e, _ = battle_engine()
         skill = e.snapshot()["battle"]["skill"]
-        self.assertEqual(skill, {"id": "thorn_burst", "name": "Thorn Burst", "kind": "damage",
-                                 "power": C.PLANT_FIGHTERS["A"]["atk"], "ready": True, "ready_in": 0})
+        expected_power = B.round_half_up(C.PLANT_FIGHTERS["A"]["atk"] * C.SKILLS["inferno_bloom"]["damage_factor"])
+        self.assertEqual(skill, {"id": "inferno_bloom", "name": "Inferno Bloom", "kind": "damage",
+                                 "power": expected_power, "ready": True, "ready_in": 0,
+                                 "recharge": C.SKILL_COOLDOWN_TURNS})
 
     def test_top_level_fields(self):
         e = GameEngine()

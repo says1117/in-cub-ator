@@ -177,6 +177,64 @@ export const ACTIONS = {
       pose.lean += k > 0.5 ? 0.16 * arc((k - 0.5) / 0.5) : -0.06 * gather;
     },
   },
+  // Gathers power for a big skill: rises off the ground trembling, arms spread, then slams it out.
+  channel: {
+    ms: 1500,
+    hitAt: 0.55,
+    run(k, pose) {
+      pose.face = "angry";
+      if (k < 0.55) {
+        const a = smooth(k / 0.4);                               // rise and gather
+        pose.lift += 0.16 * a + 0.012 * Math.sin(k * 60);
+        pose.open += 1.15 * a;
+        pose.stretch += 0.1 * a;
+        pose.lean -= 0.1 * a;
+        pose.shake += 1.2 * clamp01((k - 0.2) / 0.35);
+        pose.bend += 0.05 * Math.sin(k * 40) * a;
+      } else {
+        const b = (k - 0.55) / 0.45;                             // let go: drop, squash, lean into it
+        const drop = backOut(Math.min(1, b / 0.25));
+        pose.lift += 0.16 * (1 - drop);
+        pose.open += b < 0.5 ? mix(1.15, -0.4, backOut(b / 0.3)) : mix(-0.4, 0, smooth((b - 0.5) / 0.5));
+        pose.stretch += b < 0.3 ? mix(0.1, -0.2, b / 0.3) : -0.2 * (1 - smooth((b - 0.3) / 0.7));
+        pose.lean += b < 0.5 ? mix(-0.1, 0.3, backOut(b / 0.25)) : 0.3 * (1 - smooth((b - 0.5) / 0.5));
+        pose.x += 0.05 * arc(b);
+      }
+    },
+  },
+  // Darts in and cuts three times before the eye can follow, then springs back.
+  // options.reach: how far it travels, as a share of its own height.
+  rush: {
+    ms: 960,
+    hitAt: 0.34,
+    run(k, pose, o) {
+      const reach = o.reach ?? 0.7;
+      pose.face = "angry";
+      if (k < 0.16) {
+        const a = smooth(k / 0.16);                              // coil
+        pose.x -= 0.09 * a; pose.lean -= 0.24 * a; pose.stretch -= 0.14 * a; pose.open -= 0.3 * a;
+      } else if (k < 0.34) {
+        const a = backOut((k - 0.16) / 0.18);                    // dart in, stretched thin
+        pose.x += mix(-0.09, reach, a); pose.lean += mix(-0.24, 0.42, a); pose.stretch += mix(-0.14, 0.16, a);
+        pose.gesture.punch = a;
+      } else if (k < 0.66) {
+        const c = (k - 0.34) / 0.32;                             // three cuts: it whips side to side
+        const swing = Math.cos(c * Math.PI * 3);
+        pose.x += reach + 0.04 * Math.sin(c * Math.PI * 3);
+        pose.lean += 0.3 * swing;
+        pose.bend += 0.12 * swing;
+        pose.lift += 0.05 * Math.abs(Math.sin(c * Math.PI * 3));
+        pose.gesture.punch = 0.4 + 0.6 * Math.abs(swing);
+        pose.turn.fist = 0.5 * swing;
+        pose.turn.handT = -0.4 * swing;
+      } else {
+        const a = smooth((k - 0.66) / 0.34);                     // spring back home in one bound
+        pose.x += reach * (1 - a); pose.lift += 0.2 * arc(a); pose.lean -= 0.2 * arc(a);
+        pose.stretch += 0.08 * arc(a) - (a > 0.85 ? 0.12 * arc((a - 0.85) / 0.15) : 0);
+        pose.gesture.punch = 0.4 * (1 - a);
+      }
+    },
+  },
   // Takes a hit: thrown back, flinches, shakes it off.
   hurt: {
     ms: 520,

@@ -348,6 +348,7 @@ class GameEngine:
                 "power": B.skill_power(b),
                 "ready": b.skill_ready_in == 0,
                 "ready_in": b.skill_ready_in,
+                "recharge": C.SKILL_COOLDOWN_TURNS,   # turns a used skill takes to come back
             },
             "last_move": None if b.last_move is None else dict(b.last_move),
             "manual": self.manual,

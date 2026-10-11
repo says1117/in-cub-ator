@@ -9,11 +9,13 @@
 //   - nothing is played twice, and a page opened mid-fight just takes the state as it is.
 // Buttons only work while the server is accepting a move and the last turn has finished playing.
 import Phaser from "phaser";
-import { bossArt, preloadBossArt } from "../data/bosses.js";
+import { bossArt, bossMove, bossPalette, preloadBossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "../render/bossRig.js";
 import { PLANTS, PLANT_IDS, plantMove, preloadPlantArt } from "../data/plants.js";
 import { createPlantRig } from "../render/plantRig.js";
 import { playBattleFx } from "../render/battleFx.js";
+import { playBossFx } from "../render/bossFx.js";
+import { createFxKit } from "../render/fxKit.js";
 import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 import { ensureArenaTexture, addFireflies } from "../battle/arena.js";
@@ -29,7 +31,7 @@ const TRAINER = { x: 98, y: 568, height: 196 };     // the dragon, who sends the
 const MOVE_KEYS = { Digit1: "attack", Digit2: "guard", Digit3: "special", Digit4: "skill",
                     Numpad1: "attack", Numpad2: "guard", Numpad3: "special", Numpad4: "skill" };
 const RESULT_SECONDS = 3.4;   // how long the result panel stays before the forest comes back
-const BOSS_HIT_MS = 420;      // the longest a boss move may take to land; the turn's timing assumes it
+const BOSS_BLOW_MS = 620;     // about how long a boss move takes to arrive (render/bossFx.js)
 
 export default class BossScene extends Phaser.Scene {
   constructor() {
@@ -74,6 +76,8 @@ export default class BossScene extends Phaser.Scene {
     addFireflies(this, this.backLayer);
     ensureIcons(this);
     this.buildActors();
+    // the effects kit (render/fxKit.js): drawn on the ground behind the fighters, and in front of them
+    this.kit = createFxKit(this, { back: this.groundLayer, front: this.fxLayer });
     this.hud = new BattleHud(this, this.uiLayer, this.overlayLayer, this.root.scaleX);
     for (const b of Object.values(this.hud.buttons)) b.container.on("pointerdown", () => this.press(b.move));
 
@@ -176,15 +180,33 @@ export default class BossScene extends Phaser.Scene {
     return { x: (point.x - this.root.x) / this.root.scaleX, y: (point.y - this.root.y) / this.root.scaleY };
   }
 
-  bossTarget() { return { x: this.enemy.x - 20, y: this.enemy.y - 150 }; }
-
-  fxContext(rig, at, lands) {
+  // What a plant's effect in render/battleFx.js is given.
+  plantCtx(rig, at, lands) {
     return {
-      scene: this, layer: this.fxLayer, plant: rig.plant, at, lands,
+      scene: this, kit: this.kit, plant: rig.plant, at, lands,
       from: (name) => this.stagePoint(rig.point(name)),
-      to: this.bossTarget(),
+      ground: { x: FIGHTER.x, y: FIGHTER.y },
+      boss: { x: ENEMY.x - 20, y: ENEMY.y - 150 },
+      bossGround: { x: ENEMY.x, y: ENEMY.y },
     };
   }
+
+  // What the boss's effect in render/bossFx.js is given. rig: the plant it is aimed at.
+  bossCtx(rig, lands, blocked, meet = null) {
+    const enemy = this.enemy;
+    return {
+      scene: this, kit: this.kit, palette: bossPalette(this.tier()), lands, blocked, meet,
+      mouth: () => (enemy.mouthPoint ? this.stagePoint(enemy.mouthPoint()) : { x: ENEMY.x - 40, y: ENEMY.y - 230 }),
+      boss: { x: ENEMY.x - 20, y: ENEMY.y - 150 },
+      bossGround: { x: ENEMY.x, y: ENEMY.y },
+      target: { x: FIGHTER.x + 10, y: FIGHTER.y - rig.getHeight() * 0.45 },
+      targetGround: { x: FIGHTER.x, y: FIGHTER.y },
+      roar: () => enemy.roar && enemy.roar(),
+      lunge: (dx, ms) => this.knock(enemy, dx, ms),
+    };
+  }
+
+  tier() { return (this.fightBoss && this.fightBoss.tier) || 1; }
 
   plantName(id, battle = this.state && this.state.battle) {
     const team = (battle && battle.team) || {};
@@ -244,6 +266,15 @@ export default class BossScene extends Phaser.Scene {
     // A turn while more turns are already waiting (a slow screen): catch up instead of animating each.
     if (event.kind === "turn" && this.queue.some((e) => e.kind === "turn" || e.kind === "sync")) event = { kind: "sync", battle: event.next };
     this.busy = true;
+    let finished = false;
+    // An event ends after the ms it returns, or ("async") when it calls eventDone(ms) itself.
+    this.eventDone = (ms) => this.time.delayedCall(Math.max(0, ms || 0), () => {
+      if (finished) return;
+      finished = true;
+      this.busy = false;
+      this.refreshLive();
+      this.pump();
+    });
     let ms = 0;
     try {
       ms = this[{ fight: "playFight", turn: "playTurn", sync: "playSync", result: "playResult" }[event.kind]](event) || 0;
@@ -251,11 +282,7 @@ export default class BossScene extends Phaser.Scene {
       // never let one bad event freeze the screen: report it and carry on with the next
       console.error("battle event failed", event.kind, error);
     }
-    this.time.delayedCall(ms, () => {
-      this.busy = false;
-      this.refreshLive();
-      this.pump();
-    });
+    if (ms !== "async") this.eventDone(ms);
   }
 
   // Buttons, the move timer and the autopilot ribbon follow the latest state, between turns.
@@ -264,7 +291,7 @@ export default class BossScene extends Phaser.Scene {
     const current = b && this.shown && b.id === this.shown.id && b.turn === this.shown.turn;
     const live = Boolean(current && !b.over && !this.busy && !this.resultQueued);
     const canPress = live && b.accepting_move && !this.locked;
-    this.hud.setButtons(canPress, b && b.skill);
+    this.hud.setButtons(canPress, b && b.skill, this.skillBlurb(b));
     const auto = live && b.manual && b.autopilot;
     this.hud.setAuto(Boolean(auto));
     this.audio("setQuiet", Boolean(b && b.autopilot));
@@ -362,7 +389,21 @@ export default class BossScene extends Phaser.Scene {
     this.setPlantPanel(b, b.creature_hp, { instant: true });
     this.hud.setTeam(b.team, { A: PLANTS.A.name, B: PLANTS.B.name });
     this.hud.setBlooms(b.blooms || 0, { skillReady: b.skill && b.skill.ready });
-    this.hud.setButtons(false, b.skill);
+    this.showMoveNames(b.plant);
+    this.hud.setButtons(false, b.skill, this.skillBlurb(b));
+  }
+
+  // The fighting plant's own names for its moves, and its skill's one-liner (data/plants.js).
+  showMoveNames(plantId) {
+    const plant = PLANTS[plantId];
+    if (!plant) return;
+    this.hud.setMoveNames({ attack: plant.moves.attack.name, guard: plant.moves.guard.name, special: plant.moves.special.name });
+  }
+
+  skillBlurb(b) {
+    const plant = b && PLANTS[b.plant];
+    if (!plant || !b.skill) return null;
+    return plantMove(plant, "skill", b.skill.name).blurb || null;
   }
 
   setPlantPanel(b, hp, opts) {
@@ -384,16 +425,30 @@ export default class BossScene extends Phaser.Scene {
     if (this.enemy.setIntent) this.enemy.setIntent(move);
   }
 
-  // One turn, told in beats. Returns how long it takes (ms).
+  // One turn, told in beats:
+  //   reveal   the hidden sign turns over (or the shown one pulses), the plant's pick pops up
+  //   verdict  who beat whom, in icons (a skill gets its name instead)
+  //   the exchange, as each plant and boss move is drawn (data/plants.js, data/bosses.js):
+  //     a guard against a bite goes up just in time; a tie has both go at once and meet in the
+  //     middle; otherwise the plant goes, then the boss answers (no answer to a final blow)
+  //   health moves as each blow LANDS, then the next sign appears.
+  // The exchange's length is only known once its effects start, so it ends the event itself.
   playTurn({ prev, next }) {
     const move = next.last_move;
     const d = describeTurn(prev, move);
     const actorId = d.swap ? d.swap.out : prev.plant;
     const actor = this.fighters[actorId] || this.fighters[this.activeId];
-    const bossName = (this.fightBoss && this.fightBoss.name) || "The boss";
+    const enemy = this.enemy;
+    const boss = this.fightBoss || {};
+    const bossName = boss.name || "The boss";
     const plantName = prev.creature || this.plantName(actorId, prev);
+    const mine = plantMove(actor.plant, move.creature, move.skill);
+    const theirs = bossMove(this.tier(), move.boss);
+    const palette = bossPalette(this.tier());
     const final = next.boss_hp <= 0;
     const lastStand = !d.swap && next.creature_hp <= 0;
+    const tie = move.hit === "tie";
+    const shielded = move.boss === "attack" && !d.bossLands && mine.body === "guard";
     this.shown = next;
     this.locked = null;
     this.hud.clearLock();
@@ -404,144 +459,157 @@ export default class BossScene extends Phaser.Scene {
     let t = 0;
     const at = (ms, fn) => this.time.delayedCall(ms, fn);
     const pressed = d.skillName ? "skill" : d.playerMove;
-    if (d.auto && next.manual) { this.hud.ghostPress(pressed); this.sfx("ui_select", { gain: 0.6 }); t += 260; }
+    if (d.auto && next.manual) { this.hud.ghostPress(pressed); this.sfx("ui_select", { gain: 0.6 }); t += 240; }
 
-    // Reveal: the hidden sign turns over, or the shown one pulses. The plant's pick pops up.
+    // Reveal
     at(t, () => {
       if (d.hidden) { this.hud.flipIntent(d.bossMove); this.sfx("flip"); } else { this.hud.pulseIntent(); this.sfx("reveal"); }
       if (!d.skillName) this.popIcon(actor, d.playerMove);
       this.enemySetIntent(d.bossMove);
     });
-    t += 300;
+    t += 220;
 
-    // Verdict: who beat whom, in icons. A skill gets its name instead.
+    // Verdict
     at(t, () => {
       if (d.verdict === "skill") {
-        const mult = d.bloomsSpent ? ` ×${(1 + 0.5 * d.bloomsSpent).toString()}` : "";
+        const mult = d.bloomsSpent ? ` ×${1 + 0.5 * d.bloomsSpent}` : "";
         this.hud.banner(`${d.skillName.toUpperCase()}${mult}!`, "#ead8ff", { size: 46 + 6 * d.bloomsSpent, y: 280, hold: 700 });
         this.sfx("unleash", { pitch: 1 + 0.1 * d.bloomsSpent });
-        if (d.bloomsSpent) this.dimFor(500 + 120 * d.bloomsSpent);
+        if (d.bloomsSpent) { this.dimFor(500 + 120 * d.bloomsSpent); this.hud.setBlooms(0, { skillReady: false }); }
       } else if (d.verdict === "win") { this.hud.verdict(d.playerMove, d.bossMove, "win"); this.sfx("clash_win"); }
       else if (d.verdict === "lose") { this.hud.verdict(d.bossMove, d.playerMove, "lose"); this.sfx("clash_lose"); }
       else { this.hud.verdict(d.playerMove, d.bossMove, "tie"); this.sfx("clash_tie"); }
     });
-    t += 180;
+    t += 160;
 
-    // The plant acts: its move lands if it beat the boss (or always, for a skill).
-    const what = plantMove(actor.plant, move.creature, move.skill);
-    const plantStart = t;
-    at(plantStart, () => {
-      actor.play(what.body, { reach: d.plantLands ? 0.85 : 0.4 });
-      playBattleFx(what.fx, this.fxContext(actor, actor.hitTime(what.body), d.dealt > 0));
-      this.sfx("whoosh", { gain: 0.6 });
-    });
-    const plantHit = plantStart + actor.hitTime(what.body);
-    let lastImpact = plantHit;
-    let hpAfterHeal = prev.creature_hp;
+    // What happens when each side's blow lands
+    let hpShown = prev.creature_hp;
+    const onBossHurt = () => {
+      this.impact(final ? 160 : 70 + 35 * d.bloomsSpent, final ? 420 : 0);
+      this.flashRig(enemy);
+      this.knock(enemy, 26);
+      this.floating(ENEMY.x - 40, ENEMY.y - 300, `-${d.dealt}`, "#fff48e", 44 + 6 * d.bloomsSpent);
+      this.cameras.main.shake(final ? 260 : 130, (final ? 0.012 : 0.005) + 0.002 * d.bloomsSpent);
+      this.hud.setBossHP(next.boss_hp, boss.max_hp || next.boss_hp);
+      this.sfx(d.dealt >= 12 || final ? "hit_heavy" : "hit_light");
+      if (d.dealt >= 12 || final) this.audio("duck", 400);
+      this.benchCheers();
+      if (d.bloomGain) {
+        this.time.delayedCall(160, () => {
+          this.hud.setBlooms(next.blooms, { gain: true, skillReady: next.skill && next.skill.ready });
+          this.sfx("bloom_gain", { pitch: 1 + 0.12 * (next.blooms - 1) });
+        });
+      }
+    };
+    const onHeal = () => {
+      hpShown = Math.min(prev.creature_max_hp, hpShown + d.healed);
+      const top = this.stagePoint(actor.point("top"));
+      this.floating(top.x - 30, top.y - 30, `+${d.healed}`, "#8dff9b", 40);
+      this.setPlantPanel(prev, hpShown);
+      this.sfx("heal");
+    };
+    const onPlantHurt = () => {
+      hpShown = Math.max(0, hpShown - d.taken);
+      this.impact(lastStand ? 160 : 70, lastStand ? 380 : 0);
+      this.flashRig(actor);
+      actor.play("hurt", { force: 1.3 });
+      const top = this.stagePoint(actor.point("top"));
+      this.floating(top.x - 40, top.y - 20, `-${d.taken}`, "#ff8f90", 42);
+      this.cameras.main.shake(160, 0.007);
+      this.setPlantPanel(prev, hpShown);
+      this.sfx("hit_heavy");
+      this.sfx("hurt");
+      if (d.bloomsWiped) { this.hud.setBlooms(0, { wipe: true }); this.sfx("bloom_wipe"); }
+    };
+    // The boss's move starts now; returns when its blow arrives.
+    const bossGoes = (blocked, meet = null) => {
+      this.callout("right", bossName, theirs.name, palette.main);
+      this.sfx(move.boss === "attack" ? "boss_bite" : move.boss === "special" ? "boss_orb" : "clang", { gain: d.bossLands ? 1 : 0.6 });
+      return playBossFx(theirs.fx, this.bossCtx(actor, d.bossLands, blocked, meet));
+    };
+    const reach = () => {
+      if (!d.plantLands) return 0.42;
+      return mine.reach === "boss" ? (ENEMY.x - 235 - FIGHTER.x) / actor.getHeight() : 0.85;
+    };
 
-    if (d.dealt > 0) {
-      at(plantHit, () => {
-        this.impact(final ? 160 : 70 + 35 * d.bloomsSpent, final ? 420 : 0);
-        this.flashRig(this.enemy);
-        this.knock(this.enemy, 26);
-        this.floating(this.enemy.x - 40, this.enemy.y - 250, `-${d.dealt}`, "#fff48e", 44 + 6 * d.bloomsSpent);
-        this.cameras.main.shake(final ? 260 : 130, (final ? 0.012 : 0.005) + 0.002 * d.bloomsSpent);
-        this.hud.setBossHP(next.boss_hp, (this.fightBoss && this.fightBoss.max_hp) || next.boss_hp);
-        this.sfx(d.dealt >= 12 || final ? "hit_heavy" : "hit_light");
-        if (d.dealt >= 12 || final) this.audio("duck", 400);
-        this.benchCheers();
-        if (d.bloomGain) {
-          this.time.delayedCall(160, () => {
-            this.hud.setBlooms(next.blooms, { gain: true, skillReady: next.skill && next.skill.ready });
-            this.sfx("bloom_gain", { pitch: 1 + 0.12 * (next.blooms - 1) });
-          });
+    // The exchange
+    at(t, () => {
+      let length;
+      try {
+        this.callout("left", plantName, mine.name, actor.plant.glow);
+        this.sfx("whoosh", { gain: 0.6 });
+        if (shielded) {
+          // the boss comes first; the shield goes up just in time
+          const blow = bossGoes(true);
+          const options = { ms: mine.ms, delay: 0 };
+          options.delay = Math.max(0, blow - actor.hitTime(mine.body, options));
+          actor.play(mine.body, options);
+          const extra = playBattleFx(mine.fx, this.plantCtx(actor, blow, d.plantLands));
+          at(blow, () => { this.word("BLOCKED!", "#bfe6ff", FIGHTER.x + 230, FIGHTER.y - 330); this.knock(enemy, 40, 160); this.sfx("parry"); });
+          if (d.plantLands) at(blow + extra, onBossHurt);
+          length = blow + extra + 700;
+        } else {
+          const options = { ms: mine.ms, delay: 0, reach: reach() };
+          actor.play(mine.body, options);
+          const hitAt = actor.hitTime(mine.body, options);
+          const extra = playBattleFx(mine.fx, this.plantCtx(actor, hitAt, d.plantLands));
+          const landed = hitAt + extra;
+          if (d.dealt > 0) at(landed, onBossHurt);
+          if (d.healed > 0) at(hitAt, onHeal);
+          if (tie) {
+            // both at once: they meet in the middle and nothing gets through
+            const mid = { x: (FIGHTER.x + ENEMY.x) / 2 + 30, y: FIGHTER.y - 240 };
+            const blow = bossGoes(false, mid);
+            const meet = Math.max(hitAt, blow);
+            at(meet, () => {
+              this.kit.impact(mid.x, mid.y, { power: 1.1, color: 0xd7e3ff });
+              this.word(move.creature === "guard" ? "STANDOFF" : "CLASH!", "#d7e3ff", mid.x, mid.y - 70);
+              this.sfx("clang");
+            });
+            length = meet + 750;
+          } else if (final) {
+            length = landed + 520;               // that was the last blow: the boss has no answer
+          } else {
+            const bossStart = landed + (d.plantLands ? 460 : 260);
+            at(bossStart, () => {
+              const blow = bossGoes(false);
+              if (d.taken > 0) at(blow, onPlantHurt);
+            });
+            length = bossStart + BOSS_BLOW_MS + (d.taken > 0 ? 520 : 200);
+          }
         }
-      });
-    }
-    if (d.healed > 0) {
-      hpAfterHeal = prev.creature_hp + d.healed;
-      at(plantHit, () => {
-        const top = this.stagePoint(actor.point("top"));
-        this.floating(top.x - 30, top.y - 30, `+${d.healed}`, "#8dff9b", 40);
-        this.setPlantPanel(prev, hpAfterHeal);
-        this.sfx("heal");
-      });
-    }
-    if (d.bloomsSpent) at(plantStart + 80, () => this.hud.setBlooms(0, { skillReady: false }));
+      } catch (error) {
+        console.error("turn animation failed", error);
+        length = 0;
+      }
 
-    // The boss acts: its move lands if it beat the plant (or it attacked through a non-shield skill).
-    const bossStart = d.verdict === "lose" ? plantStart + 60 : Math.max(plantHit + 240, plantStart + 420);
-    if (d.taken > 0) {
-      lastImpact = Math.max(lastImpact, bossStart + BOSS_HIT_MS);
-      const hpAfter = Math.max(0, hpAfterHeal - d.taken);
-      this.bossPerform(d.bossMove, bossStart, actor, true, () => {
-        this.impact(lastStand ? 160 : 70, lastStand ? 380 : 0);
-        this.flashRig(actor);
-        actor.play("hurt");
-        const top = this.stagePoint(actor.point("top"));
-        this.floating(top.x - 40, top.y - 20, `-${d.taken}`, "#ff8f90", 42);
-        this.cameras.main.shake(160, 0.007);
-        this.setPlantPanel(prev, hpAfter);
-        this.sfx("hit_heavy");
-        this.sfx("hurt");
-        if (d.bloomsWiped) { this.hud.setBlooms(0, { wipe: true }); this.sfx("bloom_wipe"); }
+      // a plant that runs out of health tips over; if the other one is ready, the dragon sends it in
+      if (d.swap) { this.swapFighter(d.swap.out, d.swap.in, length - 60, next); length += 1500; }
+      else if (lastStand) at(length - 60, () => { actor.setMood("fainted"); this.sfx("faint"); });
+
+      // words for the log, and the next sign once the dust has settled
+      at(Math.max(0, length - 200), () => {
+        this.hud.setLog(this.turnWords(d, plantName, bossName, mine.name, theirs.name));
+        this.hud.setTeam(next.team, { A: PLANTS.A.name, B: PLANTS.B.name });
+        this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
+        if (!final && !lastStand) this.showIntent(this.state.battle && this.state.battle.id === next.id ? this.state.battle : next);
       });
-    } else if (!final) {
-      // The boss still does its (beaten) move at the same moment, so you can see what it picked.
-      this.bossPerform(d.bossMove, plantStart, actor, false);
-      if (d.verdict === "tie") at(plantHit, () => { this.clashSpark(); this.sfx("clang"); });
-      if (d.verdict === "win" && d.playerMove === "guard") at(plantHit, () => this.sfx("parry"));
-    }
-
-    // A plant that runs out of health tips over; if the other one is ready, the dragon sends it in.
-    let end = lastImpact + 420;
-    if (d.swap) {
-      this.swapFighter(d.swap.out, d.swap.in, lastImpact + 380, next);
-      end = lastImpact + 380 + 1500;
-    } else if (lastStand) {
-      at(lastImpact + 380, () => { actor.setMood("fainted"); this.sfx("faint"); });
-      end = lastImpact + 900;
-    }
-
-    // Words for the log, and the next sign once the dust has settled.
-    at(end - 260, () => {
-      this.hud.setLog(this.turnWords(d, plantName, bossName));
-      this.hud.setTeam(next.team, { A: PLANTS.A.name, B: PLANTS.B.name });
-      this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
-      if (!final && !lastStand) this.showIntent(this.state.battle && this.state.battle.id === next.id ? this.state.battle : next);
+      this.eventDone(length);
     });
-    return end;
+    return "async";
   }
 
-  turnWords(d, plant, boss) {
-    const name = (m) => (m ? m.toUpperCase() : "");
+  turnWords(d, plant, boss, mine, theirs) {
     if (d.verdict === "skill") {
       const parts = [];
       if (d.dealt) parts.push(`hit for ${d.dealt}`);
       if (d.healed) parts.push(`healed ${d.healed}`);
-      const back = d.taken ? ` ${boss}'s ${name(d.bossMove)} still hit for ${d.taken}.` : "";
+      const back = d.taken ? ` ${boss}'s ${theirs} still hit for ${d.taken}.` : "";
       return `${plant}'s ${d.skillName}${d.bloomsSpent ? ` ×${1 + 0.5 * d.bloomsSpent}` : ""} ${parts.join(" and ") || "landed"}!${back}`;
     }
-    if (d.verdict === "win") return `${name(d.playerMove)} beats ${name(d.bossMove)}! ${plant} hits for ${d.dealt}.${d.bloomGain ? " A bloom opens." : ""}`;
-    if (d.verdict === "lose") return `${name(d.bossMove)} beats ${name(d.playerMove)}. ${plant} takes ${d.taken}.${d.bloomsWiped ? " Blooms lost!" : ""}`;
-    return `Both picked ${name(d.playerMove)}. A tie: nobody is hurt.`;
-  }
-
-  // The boss does its move after `delay` ms. onHit runs when it lands (the rig says when).
-  bossPerform(move, delay, actor, lands, onHit) {
-    this.time.delayedCall(delay, () => {
-      const target = this.stagePoint(actor.point("face"));
-      this.sfx(move === "attack" ? "boss_bite" : move === "special" ? "boss_orb" : "clang", { gain: lands ? 1 : 0.5 });
-      let hitMs = 160;
-      if (this.enemy.perform) {
-        hitMs = this.enemy.perform(move, { target, layer: this.fxLayer, lands }) || hitMs;
-      } else {
-        // a boss without actions: a roar and a lunge
-        if (this.enemy.roar && lands) this.enemy.roar();
-        this.knock(this.enemy, lands ? -60 : -18);
-      }
-      if (onHit) this.time.delayedCall(Math.min(hitMs, BOSS_HIT_MS), onHit);
-    });
+    if (d.verdict === "win") return `${mine} beats ${theirs}! ${plant} hits for ${d.dealt}.${d.bloomGain ? " A bloom opens." : ""}`;
+    if (d.verdict === "lose") return `${theirs} beats ${mine}. ${plant} takes ${d.taken}.${d.bloomsWiped ? " Blooms lost!" : ""}`;
+    return `${mine} meets ${theirs}. A tie: nobody is hurt.`;
   }
 
   // ================================================================ result
@@ -635,7 +703,7 @@ export default class BossScene extends Phaser.Scene {
       this.trainerCall();
       rig.play("enter");
       rig.emote("anger", 1100);
-      playBattleFx("arrive", this.fxContext(rig, 60, true));
+      playBattleFx("arrive", this.plantCtx(rig, 60, true));
     }
   }
 
@@ -671,9 +739,10 @@ export default class BossScene extends Phaser.Scene {
       this.tweens.add({
         targets: nextRig, x: FIGHTER.x, y: FIGHTER.y, scaleX: FIGHTER.size, scaleY: FIGHTER.size,
         duration: 640, ease: "Sine.easeInOut",
-        onComplete: () => playBattleFx("arrive", this.fxContext(nextRig, 0, true)),
+        onComplete: () => playBattleFx("arrive", this.plantCtx(nextRig, 0, true)),
       });
       this.setPlantPanel(next, next.creature_hp, { instant: true });
+      this.showMoveNames(inId);
       this.hud.setBlooms(next.blooms || 0, { skillReady: next.skill && next.skill.ready });
     });
   }
@@ -702,8 +771,28 @@ export default class BossScene extends Phaser.Scene {
     this.tweens.add({ targets: rig, alpha: 0.35, duration: 70, yoyo: true, repeat: 1 });
   }
 
-  knock(sprite, dx) {
-    this.tweens.add({ targets: sprite, x: sprite.x + dx, duration: 120, yoyo: true, ease: "Quad.easeOut" });
+  knock(sprite, dx, ms = 120) {
+    this.tweens.add({ targets: sprite, x: sprite.x + dx, duration: ms, yoyo: true, ease: "Quad.easeOut" });
+  }
+
+  // A word that pops at a spot on the stage: "BLOCKED!", "CLASH!".
+  word(str, color, x, y) {
+    this.floating(x, y, str, color, 36);
+  }
+
+  // Who is doing what, in a small plate over their side: "Ember · Vine Haymaker".
+  callout(side, who, what, color) {
+    const x = side === "left" ? FIGHTER.x - 20 : ENEMY.x + 60;   // the clear strip under the top panels
+    const y = side === "left" ? 162 : 150;
+    const label = `${who} · ${what}`;
+    const t = this.hud.text(x, y, label, 22, "#ffffff", {}, this.overlayLayer).setOrigin(0.5);
+    const plate = this.add.rectangle(x, y, t.displayWidth + 34, t.displayHeight + 16, 0x0e1224, 0.88).setStrokeStyle(3, color, 1);
+    this.overlayLayer.add(plate);
+    this.overlayLayer.bringToTop(t);
+    const group = [plate, t];
+    group.forEach((o) => o.setAlpha(0));
+    this.tweens.add({ targets: group, alpha: 1, duration: 140 });
+    this.tweens.add({ targets: group, alpha: 0, delay: 1100, duration: 260, onComplete: () => group.forEach((o) => o.destroy()) });
   }
 
   popIcon(rig, move) {
@@ -737,25 +826,34 @@ export default class BossScene extends Phaser.Scene {
     this.tweens.add({ targets: t, y: y - 50, alpha: 0, delay: 420, duration: 560, ease: "Quad.easeIn", onComplete: () => t.destroy() });
   }
 
+  // The boss comes apart: it shudders, cracks with light, and bursts.
   dissolveBoss() {
-    const x = this.enemy.x;
-    const y = this.enemy.y - 140;
+    const enemy = this.enemy;
+    const palette = bossPalette(this.tier());
+    const x = ENEMY.x - 20, y = ENEMY.y - 150;
     this.sfx("dissolve");
-    this.tweens.add({ targets: this.enemy, alpha: 0, duration: 420 });
     this.bossRing.setColor(0xffe28a);
-    for (let i = 0; i < 48; i++) {
-      const p = this.add.rectangle(x + Phaser.Math.Between(-60, 60), y + Phaser.Math.Between(-120, 120), 7, 7, i % 2 ? 0xf2aa62 : 0xffd676, 1);
-      this.fxLayer.add(p);
-      this.tweens.add({ targets: p, x: p.x + Phaser.Math.Between(-160, 160), y: p.y - Phaser.Math.Between(40, 200), alpha: 0, duration: 600 + i * 12, onComplete: () => p.destroy() });
+    this.tweens.add({ targets: enemy, x: enemy.x + 7, duration: 45, yoyo: true, repeat: 9 });
+    for (let i = 0; i < 6; i++) {
+      this.kit.at(i * 80, () => {
+        const px = x + this.kit.rand(-90, 90), py = y + this.kit.rand(-130, 120);
+        this.kit.star(px, py, { size: 46, color: 0xffffff, ms: 180 });
+        this.kit.glow(px, py, { r: 70, color: palette.hot, alpha: 0.6, ms: 220 });
+      });
     }
+    this.kit.at(520, () => {
+      enemy.setVisible(false);
+      if (!this.reducedMotion) this.kit.flash(0xffffff, 0.45, 240);
+      this.kit.shake(380, 0.012);
+      this.kit.impact(x, y, { power: 2, color: palette.hot, color2: palette.main, shape: "petal" });
+      this.kit.ring(ENEMY.x, ENEMY.y, { from: 60, to: 560, squash: 0.3, color: 0xffffff, thick: 12, ms: 560, layer: "back" });
+      this.kit.burst(x, y, { count: 60, colors: [palette.main, palette.hot, 0xf2aa62, 0xffd676], shape: "petal", speed: [200, 900], size: [12, 28], life: [700, 1400], gravity: 700, spin: [-8, 8] });
+      this.kit.burst(x, y, { count: 30, colors: [0xffffff, palette.core, palette.hot], shape: "star", speed: [100, 500], size: [8, 18], life: [600, 1200], gravity: -60, add: true });
+    });
   }
 
   confetti() {
-    for (let i = 0; i < 40; i++) {
-      const p = this.add.rectangle(640, 170, 8, 12, [0xffd867, 0x8dff9b, 0xff9db0, 0x9fd8ff][i % 4], 1);
-      this.overlayLayer.add(p);
-      this.tweens.add({ targets: p, x: Phaser.Math.Between(240, 1040), y: Phaser.Math.Between(240, 640), angle: 360, alpha: 0, duration: 900 + i * 16, onComplete: () => p.destroy() });
-    }
+    this.kit.burst(640, 120, { count: 70, colors: [0xffd867, 0x8dff9b, 0x7fd0ff, 0xff8f9c, 0xffffff], shape: "sq", speed: [200, 760], angle: Math.PI / 2, spread: 3.4, size: [8, 14], life: [1400, 2400], gravity: 420, drag: 0.97, spin: [-10, 10], stretch: 1.8 });
   }
 
   // ================================================================ per frame

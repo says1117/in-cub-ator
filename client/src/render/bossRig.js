@@ -8,7 +8,6 @@
 //
 //   boss.roar()                       the roar (see above)
 //   boss.setIntent("guard")           shows what it will do next, as a pose: see INTENT_POSES
-//   boss.perform("special", options)  does that move now; returns ms until it hits: see perform()
 //   boss.flashWhite(90)               turns it solid white for a moment, for a hit
 //   boss.mouthPoint()                 where the mouth is on screen, for anything that comes out of it
 //
@@ -17,7 +16,7 @@
 import Phaser from "phaser";
 import { rigPartKey } from "../data/bosses.js";
 import { createCastShadow, outlineOfPicture } from "./castShadow.js";
-import { GLOW_KEY, ensureGlowTexture, createChargeSparks, spitOrb, shieldGlint, biteSnap, toLayer } from "./bossFx.js";
+import { GLOW_KEY, ensureGlowTexture, createChargeSparks, toLayer } from "./bossTellFx.js";
 
 const ROAR_MS = 1500;
 const RAISE = 0.92;       // how far the middle head swings up, in radians
@@ -27,7 +26,6 @@ const GAPE_B = 0.5;
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const smooth = (v) => v * v * (3 - 2 * v);
 const backOut = (v) => 1 + 2.7 * Math.pow(v - 1, 3) + 1.7 * Math.pow(v - 1, 2);
-const arc = (v) => Math.sin(Math.PI * clamp01(v));
 
 // The inside of the mouth: a dark halo, then the orb from its rim to its hot middle.
 const MAW_RINGS = [[0xc21d36, 1, 0.3], [0xd8263a, 0.72, 0.6], [0xf0502f, 0.44, 1], [0xffb04a, 0.2, 1]];
@@ -56,88 +54,6 @@ const INTENTS = Object.keys(INTENT_POSES);
 const DIALS = ["lean", "crouch", "widen", "headL", "headR", "raise", "sink", "gape", "pulse", "shut", "glow", "bob", "flutter",
   "sparks", "inPhase", "leafL", "leafR", "leafT", "lunge", "shake"];
 const zeroDials = () => Object.fromEntries(DIALS.map((dial) => [dial, 0]));
-
-// MOVES: what perform() plays. run(ms, act, o) adds to the same dials as the poses, for one frame
-// `ms` into the move; `hit` is when it lands; `events` fire once, on the rig's clock, as it passes them.
-const LUNGE = 130;   // how far the bite lunges, in rig pixels (the picture is 685 tall)
-const MOVES = {
-  // A lunge-bite: rears back with the mouth wide, throws itself forward and snaps shut on the plant.
-  // When it is beaten it is stopped short and knocked back.
-  attack: {
-    ms: 860,
-    hit: 330,
-    run(ms, act, o) {
-      const reach = o.lands ? 1 : 0.55;
-      if (ms < 200) {                                  // rear back, mouth opening wide
-        const k = smooth(clamp01(ms / 200));
-        act.lunge += 30 * k; act.lean += 0.05 * k; act.raise += 0.6 * k; act.gape += 0.95 * k; act.crouch += 0.04 * k;
-      } else if (ms < 330) {                           // the lunge
-        const k = backOut(clamp01((ms - 200) / 130));
-        act.lunge += 30 - (30 + LUNGE * reach) * k; act.lean += 0.05 - 0.19 * k; act.raise += 0.6 - 0.5 * k;
-        act.gape += 0.95 * (1 - smooth(clamp01((ms - 270) / 60))); act.crouch += 0.04 * (1 - k);
-      } else if (ms < 470) {                           // the snap: jaw shut on the target
-        const k = clamp01((ms - 330) / 140);
-        if (o.lands) {
-          act.lunge -= LUNGE; act.lean -= 0.14; act.raise += 0.1 - 0.1 * k; act.shut += 1; act.shake += 1 - k;
-        } else {                                       // stopped short and knocked back
-          const back = backOut(k);
-          act.lunge -= LUNGE * reach * (1 - back) - 20 * back; act.lean += -0.14 * (1 - back) + 0.05 * back;
-          act.raise += 0.1 + 0.25 * arc(k); act.shut += 1; act.shake += 1.4 * (1 - k);
-        }
-      } else {                                         // back home
-        const k = smooth(clamp01((ms - 470) / 390));
-        const lunge = o.lands ? -LUNGE : 20;
-        const lean = o.lands ? -0.14 : 0.05;
-        act.lunge += lunge * (1 - k); act.lean += lean * (1 - k); act.shut += 1 - k;
-      }
-    },
-    events: [{ at: 330, fire: (rig, o) => {
-      const at = rig.fxPoint(o.layer, "mouth");
-      biteSnap(rig.scene, { at, layer: o.layer, lands: o.lands, size: 70 * rig.fxScale(o.layer) });
-    } }],
-  },
-  // A clamp: squats, slams every head and leaf shut round the middle head, and a shield glints in front.
-  // When it is beaten the shield cracks and shatters and it flinches.
-  guard: {
-    ms: 720,
-    hit: 150,
-    run(ms, act, o) {
-      const k = ms < 130 ? backOut(clamp01(ms / 130)) : 1 - smooth(clamp01((ms - 420) / 300));
-      act.crouch += 0.06 * k; act.headL -= 0.2 * k; act.headR += 0.2 * k; act.shut += k; act.sink += 8 * k;
-      act.leafL += 0.25 * k; act.leafR -= 0.25 * k;
-      if (!o.lands && ms > 240 && ms < 560) {         // the shield breaks: thrown back
-        const f = arc((ms - 240) / 320);
-        act.lean += 0.08 * f; act.lunge += 26 * f; act.shake += f;
-      }
-    },
-    events: [{ at: 120, fire: (rig, o) => {
-      const at = rig.fxPoint(o.layer, "middle");
-      shieldGlint(rig.scene, { at, layer: o.layer, lands: o.lands, height: 330 * rig.fxScale(o.layer) });
-    } }],
-  },
-  // A charge and a spit: rears up with the mouth wide and glowing, then spits an orb at the target.
-  // The charge is short (the special pose has already shown it gathering), so the orb lands
-  // within about 400 ms of the call.
-  special: {
-    ms: 760,
-    hit: 170,                     // when the orb leaves the mouth; perform() adds its flight
-    run(ms, act) {
-      if (ms < 170) {
-        const k = smooth(clamp01(ms / 170));
-        act.raise += 0.32 * k; act.gape += 0.75 * k; act.glow += 1.4 * k; act.sparks += 1.5 * k;
-        act.lean += 0.05 * k; act.lunge += 18 * k; act.headL += 0.1 * k; act.headR -= 0.1 * k; act.flutter += 2 * k;
-      } else {
-        const k = clamp01((ms - 170) / 590);
-        const kick = arc(Math.min(1, k * 4));           // the spit: a jerk forward
-        const rest = 1 - smooth(k);
-        act.raise += 0.32 * rest - 0.2 * kick; act.gape += 0.75 * rest * (1 - kick * 0.7); act.glow += 1.4 * rest * (1 - k);
-        act.lean += 0.05 * rest - 0.07 * kick; act.lunge += 18 * rest - 40 * kick; act.shake += kick * 0.6;
-        act.headL += 0.1 * rest; act.headR -= 0.1 * rest;
-      }
-    },
-    events: [],                   // the orb is thrown by perform() itself, so it can return its flight time
-  },
-};
 
 export function hasBossRig(scene, art) {
   return Boolean(art.rig) && Object.keys(art.rig.parts).every((part) => scene.textures.exists(rigPartKey(art, part)));
@@ -263,8 +179,6 @@ export function createBossRig(scene, art, x, y, height, options = {}) {
   let intent = null;
   const blend = Object.fromEntries(INTENTS.map((name) => [name, 0]));
   const dials = zeroDials();                     // this frame's pose dials
-  const act = zeroDials();                       // this frame's move dials
-  let move = null;                               // the move being performed: { spec, start, options, fired }
   let flashUntil = 0;                            // real time when a white flash ends, or 0
   let guardLayers = false;                       // side heads and leaves drawn over the middle head
 
@@ -306,8 +220,8 @@ export function createBossRig(scene, art, x, y, height, options = {}) {
     const calm = 1 - clamp01(raise);
     const buzz = rattle * sin(time * 0.09);
 
-    // ---- the extra dials: the intent pose, eased in, plus the move being performed ----
-    for (const dial of DIALS) { dials[dial] = 0; act[dial] = 0; }
+    // ---- the extra dials: the intent pose, eased in ----
+    for (const dial of DIALS) dials[dial] = 0;
     for (const name of INTENTS) {
       blend[name] = clamp01(blend[name] + (name === intent ? 1 : -1) * (step / INTENT_MS));
       const w = smooth(blend[name]);
@@ -315,17 +229,6 @@ export function createBossRig(scene, art, x, y, height, options = {}) {
       const pose = INTENT_POSES[name];
       for (const dial in pose) dials[dial] += pose[dial] * w;
     }
-    if (move) {
-      const ms = time - move.start;
-      if (ms >= move.spec.ms) move = null;
-      else {
-        move.spec.run(ms, act, move.options);
-        for (const event of move.spec.events) {
-          if (!move.fired.has(event) && ms >= event.at) { move.fired.add(event); event.fire(root, move.options); }
-        }
-      }
-    }
-    for (const dial of DIALS) dials[dial] += act[dial];
     const d = dials;
     const keep = 1 - 0.85 * clamp01(d.inPhase);             // how much of the out-of-phase idle stays
     const together = clamp01(d.inPhase) * (0.17 * sin(t * 1.5) + 0.04 * sin(t * 3.1 + 1));   // the in-phase sway
@@ -435,29 +338,6 @@ export function createBossRig(scene, art, x, y, height, options = {}) {
   };
   root.getIntent = () => intent;
 
-  // Does a move now: "attack" (a lunge-bite), "guard" (a clamp with a shield glint) or "special"
-  // (an orb spat at the target). The intent pose eases back to the idle while it plays, so call
-  // setIntent() again for the next turn.
-  //   options.target  {x, y} what it is aimed at, in the layer's coordinates (the battle stage)
-  //   options.layer   the container effects are drawn in (none: straight into the scene)
-  //   options.lands   false if the move was beaten: the bite is stopped short, the shield shatters,
-  //                   the orb fizzles out before it gets there. Default true.
-  // Returns ms from now until the move lands (or is stopped), for the hit to be timed to.
-  // Everything it makes destroys itself. Unknown moves do nothing and return 0.
-  root.perform = (name, performOptions = {}) => {
-    const spec = MOVES[name];
-    if (!spec) return 0;
-    const o = { lands: true, layer: null, ...performOptions };
-    if (o.lands === undefined) o.lands = true;
-    intent = null;
-    move = { spec, start: now, options: o, fired: new Set() };
-    if (name !== "special") return spec.hit;
-    // the orb leaves the mouth at spec.hit; work out its flight now so the hit time is known
-    const from = root.fxPoint(o.layer, "mouth", { raise: 0.3, open: 0.7 });
-    const flight = spitOrb(scene, { from, target: o.target, layer: o.layer, lands: o.lands, delay: spec.hit, scale: root.fxScale(o.layer) });
-    return flight;
-  };
-  root.isPerforming = () => move !== null;
 
   // Turns it solid white for `ms` of real time, for the moment a hit lands. It runs on real time,
   // not the boss's clock, so it shows during a hit-stop and ends on time. Returns the boss.

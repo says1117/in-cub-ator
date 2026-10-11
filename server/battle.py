@@ -152,14 +152,14 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
     log = {"creature": creature_move, "boss": boss_move}
 
     if use_skill:
-        power = skill_power(b)
-        kind = skill_kind(skill)
-        damage = 0 if kind == "heal" else power
-        heal = min(power, b.creature.hp - c_hp) if kind == "heal" else 0
+        # A skill can both hurt and heal (Sunburst does): each part is scaled by the blooms spent.
+        k = bloom_factor(b.blooms)
+        damage = round_half_up(b.creature.atk * skill.get("damage_factor", 0) * k)
+        heal = min(round_half_up(skill.get("heal", 0) * k), b.creature.hp - c_hp)
         c_hp += heal
         who = "creature" if damage else "none"
         # Only a shield protects. With any other skill an attacking boss still lands its hit.
-        if boss_move == "attack" and kind != "shield":
+        if boss_move == "attack" and skill_kind(skill) != "shield":
             taken = b.boss.atk
             who = "both" if damage else "boss"
         spent, blooms = blooms, 0

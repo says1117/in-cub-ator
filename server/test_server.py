@@ -444,6 +444,37 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(e.battle.bench[0][1].name, "Mossling")
 
 
+class PlantSkillTests(unittest.TestCase):
+    """Each plant has a skill of its own."""
+
+    def test_ember_inferno_bloom_hits_harder_than_a_plain_attack(self):
+        ember = B.plant_fighter("A")
+        b = B.resolve_turn(B.start(ember, B.boss_for_tier(1)), "skill", "guard")
+        dealt = B.boss_for_tier(1).hp - b.boss_hp
+        self.assertEqual(b.last_move["skill"], "Inferno Bloom")
+        self.assertGreater(dealt, ember.atk)
+        self.assertEqual(b.creature_hp, ember.hp)          # a guarding boss does not hit back
+
+    def test_zest_sunburst_heals_and_hits(self):
+        zest = B.plant_fighter("B")
+        hurt = replace(B.start(zest, B.boss_for_tier(1)), creature_hp=10)
+        b = B.resolve_turn(hurt, "skill", "special")
+        self.assertEqual(b.last_move["skill"], "Sunburst")
+        self.assertEqual(b.creature_hp, 10 + C.SKILLS["sunburst"]["heal"])
+        self.assertLess(b.boss_hp, B.boss_for_tier(1).hp)
+        self.assertEqual(b.last_move["hit"], "creature")
+
+    def test_an_attacking_boss_still_hits_through_either_skill(self):
+        for plant in C.PLANTS:
+            stats = B.plant_fighter(plant)
+            b = B.resolve_turn(replace(B.start(stats, B.boss_for_tier(1)), creature_hp=20), "skill", "attack")
+            self.assertEqual(b.last_move["hit"], "both")
+
+    def test_every_plant_skill_exists(self):
+        for plant in C.PLANTS:
+            self.assertIn(C.PLANT_FIGHTERS[plant]["skill"], C.SKILLS)
+
+
 class HealthTests(unittest.TestCase):
     def run_for(self, e, seconds, start=0.0):
         t = start

@@ -8,6 +8,7 @@
 import Phaser from "phaser";
 import { PLANTS, PLANT_IDS, otherPlant } from "../data/plants.js";
 import { createPlantRig, hasPlantRig } from "./plantRig.js";
+import { textStyle } from "../ui/font.js";
 
 const SIZE = 0.345;            // forest size: a share of the battle-screen picture
 const HOME = { A: -76, B: -144 };   // where each one hops, measured from the dragon
@@ -41,7 +42,10 @@ export function createPetParade(scene, groundY) {
   const tween = (config) => { const t = scene.tweens.add(config); tweens.push(t); return t; };
   const after = (ms, fn) => { timers.push(scene.time.delayedCall(ms, fn)); };
   const nameOf = (id, state) => (state && state.fighters && state.fighters[id] && state.fighters[id].name) || PLANTS[id].name;
+  // The server's thirsty flag (state v2), else the old rule: under DRY_BELOW percent.
   const isDry = (id, state) => {
+    const flags = state && state.meters && state.meters.thirsty;
+    if (flags && typeof flags[id] === "boolean") return flags[id];
     const water = state && state.meters && state.meters.water ? state.meters.water[id] : null;
     return water !== null && water !== undefined && water < DRY_BELOW;
   };
@@ -89,9 +93,7 @@ export function createPetParade(scene, groundY) {
   // ---- the boss arrival ----
   function callout(text, x, y) {
     const plate = scene.add.container(x, y).setDepth(22).setScale(0);
-    const label = scene.add.text(0, 0, text, {
-      fontFamily: "monospace", fontSize: "13px", fontStyle: "bold", color: "#ffffff", stroke: "#1a1208", strokeThickness: 4,
-    }).setOrigin(0.5);
+    const label = scene.add.text(0, 0, text, textStyle(16, "#ffffff")).setOrigin(0.5);
     const back = scene.add.graphics();
     const w = label.width + 14;
     back.fillStyle(0x07051a, 0.85);
@@ -197,9 +199,21 @@ export function createPetParade(scene, groundY) {
     else if (walking && standing) reset(state);       // the walk has started again
   }
 
+  // Where the HUD hangs each plant's tag (scenes/HudScene.js): its x right now, and the top of the
+  // plant standing on the ground. Hops lift the drawing, not the rig, so the tag does not hop.
+  function tagAnchors() {
+    const out = {};
+    for (const pet of list()) {
+      if (!pet.rig.visible || pet.rig.alpha < 0.5) continue;
+      out[pet.id] = { x: pet.rig.x, y: groundY - pet.rig.getHeight() };
+    }
+    return out;
+  }
+
   return {
     update,
     onEntrance,
+    tagAnchors,
     reset,
     celebrate,
     stand: () => { standing = true; },

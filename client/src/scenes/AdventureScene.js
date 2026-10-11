@@ -7,6 +7,9 @@ import { preloadPlantArt } from "../data/plants.js";
 import { createPetParade } from "../render/petParade.js";
 import { createCastShadow, outlineOfPicture } from "../render/castShadow.js";
 
+// How long a fight may wait for a slow boss arrival before the battle screen opens anyway (ms)
+const ENTRANCE_GRACE_MS = 2500;
+
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
     super("AdventureScene");
@@ -178,23 +181,8 @@ export default class AdventureScene extends Phaser.Scene {
     this.footL = makeFoot(0, splitX + seamOverlap);
     this.footR = makeFoot(splitX - seamOverlap, frameW - (splitX - seamOverlap));
 
-    // UI
-
-    this.add.text(20, 13, "PLANT CARE RPG", {
-      fontFamily: "monospace",
-      fontSize: "22px",
-      color: "#fff5df",
-      stroke: "#593a31",
-      strokeThickness: 4
-    }).setDepth(21);
-
-    this.statusText = this.add.text(
-      570, 19, "EXPLORING...", {
-        fontFamily: "monospace",
-        fontSize: "27px",
-        color: "#ffe4a0"
-      }
-    ).setDepth(21);
+    // UI: the title, mode text, pet tags and captions are all drawn by HudScene, above this scene.
+    // It reads this.pets.tagAnchors() for where to hang the tags.
 
     // Fireflies, drifting petals and a soft vignette
     addForestAmbience(this);
@@ -218,6 +206,7 @@ export default class AdventureScene extends Phaser.Scene {
       this.cutting = false;
       this.entrance.cleanup();
       this.cameras.main.fadeIn(450, 7, 5, 26);
+      this.music("forest");
       // back from a won fight: the plants celebrate while the reward is on screen
       const state = this.registry.get("serverState");
       if (state && state.mode === "reward") this.pets.celebrate();
@@ -245,10 +234,12 @@ export default class AdventureScene extends Phaser.Scene {
     };
     if (instant) return go();
 
+    // One soft flash, then a fade (two full-white flashes in a row is too much on a public screen)
     const cam = this.cameras.main;
-    cam.flash(110, 255, 255, 255);
-    this.time.delayedCall(170, () => cam.flash(110, 255, 255, 255));
-    this.time.delayedCall(340, () => {
+    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || /[?&]calm\b/.test(window.location.search);
+    if (!calm) cam.flash(140, 230, 220, 255);
+    this.registry.get("audio")?.sfx("cut");
+    this.time.delayedCall(200, () => {
       cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, go);
       cam.fade(260, 7, 5, 26);
     });
@@ -319,17 +310,22 @@ export default class AdventureScene extends Phaser.Scene {
     if (mode !== this.lastServerMode) {
       const was = this.lastServerMode;
       this.lastServerMode = mode;
+      if (mode === "battle") this.battleSince = performance.now();
       if (mode === "boss" && was !== "boss") {
         this.entrance.start(state);
+        this.music("boss");
       } else if (mode !== "battle" && this.entrance.isActive() && !this.cutting) {
         // the boss left before the fight started (the soil got wet, or the sensor dropped out)
         this.entrance.cancel();
       }
+      if ((mode === "walking" || mode === "cooldown") && !this.inBattleScene) this.music("forest");
     }
     if (mode === "battle" && !this.inBattleScene && !this.cutting) {
       // Page opened mid-fight: go straight in. Otherwise wait for the arrival to finish.
+      // On a slow machine the arrival can fall behind the server: once the fight has been on for a
+      // couple of seconds, cut anyway, so nobody misses their first move.
       if (!this.entrance.isActive()) this.cutToBattle(true);
-      else if (this.entrance.isDone()) this.cutToBattle();
+      else if (this.entrance.isDone() || performance.now() - (this.battleSince || 0) > ENTRANCE_GRACE_MS) this.cutToBattle();
     }
 
     const stand = state && ["boss", "battle", "reward"].includes(state.mode);
@@ -339,6 +335,10 @@ export default class AdventureScene extends Phaser.Scene {
     this.walking = shouldWalk;
 
     if (!this.walking) this.standStill();
+  }
+
+  music(state) {
+    this.registry.get("audio")?.music(state);
   }
 
   // Reset the step bounce so the dragon stops in a neutral pose.

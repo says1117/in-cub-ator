@@ -107,8 +107,10 @@ def load_moves(path: str = C.MOVES_FILE) -> Dict[str, Move]:
         _check_record(raw, Move, {
             "move_id": _is_text, "name": _is_text, "category": _is_text, "type": _is_text,
             "power": _is_whole, "animation_key": _is_text, "skill_key": lambda v: isinstance(v, str),
-            "animation": lambda v: isinstance(v, dict) and all(isinstance(x, str) for x in v.values()),
+            "animation": lambda v: isinstance(v, dict) and set(v) == {"body", "fx"}
+                         and all(_is_text(x) for x in v.values()),
         }, f"{path} move {i + 1}")
+        _require("animation" in raw, f"{path} move {i + 1}: needs an animation {{body, fx}}")
         m = Move(**raw)
         _require(m.move_id and m.move_id not in moves, f"move id missing or repeated: {m.move_id!r}")
         _require(m.category in C.MOVE_CATEGORIES, f"{m.move_id}: unknown category {m.category!r}")

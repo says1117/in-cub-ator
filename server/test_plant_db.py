@@ -110,6 +110,8 @@ class SeedDataTests(TempFiles):
         notobj = json.loads(json.dumps(plants)); notobj["plants"][0] = "ember"; cases.append(("plants", notobj))
         mv = json.loads(json.dumps(moves)); del mv["moves"][0]["animation_key"]; cases.append(("moves", mv))
         mv2 = json.loads(json.dumps(moves)); mv2["moves"][0]["power"] = "100"; cases.append(("moves", mv2))
+        mv3 = json.loads(json.dumps(moves)); mv3["moves"][0]["animation"] = {"body": "strike"}; cases.append(("moves", mv3))
+        mv4 = json.loads(json.dumps(moves)); del mv4["moves"][0]["animation"]; cases.append(("moves", mv4))
         for kind, case in cases:
             with self.assertRaises(ValueError, msg=str(case)[:80]):
                 (self.bad_catalog(plants=case) if kind == "plants" else self.bad_catalog(moves=case))()

@@ -181,9 +181,10 @@ class XpTests(Fixture):
         e = self.two_plants()
         def level_up_now(e, t):
             e.plant_db.xp["ember"] = P.xp_to_reach(5)
-            self.hp_in_fight = e.battle.creature.hp
         self.fight(e, WEAK_BOSS, after_start=level_up_now)
-        self.assertEqual(self.hp_in_fight, 30)  # level 1 numbers for the whole fight
+        self.assertGreater(e.battle.turn, 0)  # turns were played after the level-up
+        self.assertEqual((e.battle.creature.hp, e.battle.creature.atk), (30, 8))  # still level 1 numbers
+        self.assertGreater(e.fighter("A").hp, 30)  # the next fight uses the new level
 
     def test_xp_is_paid_once_even_if_the_finish_runs_twice(self):
         e = self.two_plants()

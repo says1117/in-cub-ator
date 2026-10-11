@@ -1,0 +1,31 @@
+{
+  "_comment": "One entry per real plant and its NFC tag. tag_uid is uppercase hex with no separators, exactly as the ESP32 sends it on incube/pad/A and incube/pad/B. The plant follows its tag: put the tag on either pad and that plant is summoned. Level and XP are not stored here; they live in data/progress.db on the Jetson. Moves refer to data/moves.json, one per category. skill must match the skill move's skill_key.",
+  "plants": [
+    {
+      "plant_id": "ember",
+      "tag_uid": "0450AA01F25713",
+      "name": "Ember",
+      "species": "Cast Iron Plant",
+      "type": "sun",
+      "base_hp": 30,
+      "base_atk": 8,
+      "skill": "thorn_burst",
+      "moves": {"attack": "ember-jab", "guard": "ember-bark-wall", "special": "ember-petal-flare", "skill": "thorn-burst"},
+      "sprite_key": "plant-ember",
+      "animation_set_key": "ember"
+    },
+    {
+      "plant_id": "zest",
+      "tag_uid": "0450A901055713",
+      "name": "Zest",
+      "species": "Monstera",
+      "type": "leaf",
+      "base_hp": 34,
+      "base_atk": 7,
+      "skill": "photosynthesis",
+      "moves": {"attack": "zest-leaf-slap", "guard": "zest-vine-guard", "special": "zest-spore-cloud", "skill": "photosynthesis"},
+      "sprite_key": "plant-zest",
+      "animation_set_key": "zest"
+    }
+  ]
+}

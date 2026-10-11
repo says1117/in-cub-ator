@@ -1,4 +1,5 @@
 """Every tunable number for the server lives here."""
+import os
 
 # Network
 MQTT_HOST = "localhost"
@@ -110,3 +111,19 @@ SIM_DRY_PCT_PER_SEC = (0.25, 0.45)      # how fast the soil dries: 50 points tak
 SIM_WATER_PCT_PER_SECOND_OF_PUMP = 30.0
 SIM_WATERED_AT_LEAST_PCT = 80.0         # a watering always leaves the soil at least this wet
 SIM_SOAK_SECONDS = 20.0                 # freshly watered soil holds its moisture this long
+
+# Plant database (plant_db.py). Plants follow their NFC tag. Paths are relative to this folder,
+# so the server works whatever folder it is started from.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+PLANTS_FILE = os.path.join(_HERE, "data", "plants.json")
+MOVES_FILE = os.path.join(_HERE, "data", "moves.json")
+PROGRESS_DB = os.environ.get("INCUBE_PROGRESS_DB", os.path.join(_HERE, "data", "progress.db"))
+MOVE_CATEGORIES = ("attack", "guard", "special", "skill")
+MOVE_POWER_MIN = 50   # percent of the plant's attack
+MOVE_POWER_MAX = 150
+# Experience and levels. Level L needs XP_LEVEL_STEP * (L - 1) * L / 2 total XP: 50, 150, 300, ...
+XP_PER_WIN_BY_TIER = {1: 20, 2: 30, 3: 45}
+XP_LEVEL_STEP = 50
+MAX_LEVEL = 10
+HP_PER_LEVEL = 2            # each level above 1 adds this much HP
+ATK_LEVELS_PER_POINT = 2    # every this many levels above 1 adds 1 attack

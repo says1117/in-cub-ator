@@ -60,6 +60,7 @@ class Battle:
     plant: str = ""          # which plant is fighting right now ("" when it is not a plant)
     bench: tuple = ()        # (plant, Stats) pairs still waiting to step in, in order
     fallen: tuple = ()       # (plant, Stats) pairs that have fainted in this fight
+    battle_id: str = ""      # unique per fight, so XP is paid once per fight
 
 
 def load_creatures(path: str = C.CREATURES_FILE) -> dict:
@@ -80,8 +81,33 @@ def skill_of(stats: Stats) -> Optional[dict]:
     return C.SKILLS.get(stats.skill)
 
 
-def start(creature: Stats, boss: Stats = BOSS_STATS, plant: str = "", bench: tuple = ()) -> Battle:
-    return Battle(creature, boss, creature.hp, boss.hp, plant=plant, bench=tuple(bench))
+def start(creature: Stats, boss: Stats = BOSS_STATS, plant: str = "", bench: tuple = (),
+          battle_id: str = "") -> Battle:
+    return Battle(creature, boss, creature.hp, boss.hp, plant=plant, bench=tuple(bench), battle_id=battle_id)
+
+
+def move_of(stats: Stats, category: str) -> tuple:
+    """(move_id, power) for a category. Plants without a moveset (the old defaults) use ("", 100)."""
+    for cat, move_id, power in stats.moves:
+        if cat == category:
+            return move_id, power
+    return "", 100
+
+
+def category_of(stats: Stats, move: str) -> Optional[str]:
+    """A player move as a category: "attack" stays "attack", and a plant's own move id (for example
+    "ember-jab") becomes its category. None if the plant does not have that move."""
+    if move in PLAYER_MOVES:
+        return move
+    for cat, move_id, _ in stats.moves:
+        if move_id == move:
+            return cat
+    return None
+
+
+def _scaled(value: float, power: int) -> int:
+    """Damage for a move's power. Exactly the old number at power 100, so balance does not move."""
+    return round(value) if power == 100 else round(value * power / 100)
 
 
 def winner(b: Battle) -> Optional[str]:
@@ -101,8 +127,11 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
     c_hp, b_hp, who = b.creature_hp, b.boss_hp, "tie"
     log = {"creature": creature_move, "boss": boss_move}
 
+    move_id, power = move_of(b.creature, SKILL if use_skill else creature_move)
+    if move_id:
+        log["move_id"] = move_id
     if use_skill:
-        damage = round(b.creature.atk * skill.get("damage_factor", 0))
+        damage = _scaled(b.creature.atk * skill.get("damage_factor", 0), power)
         heal = min(skill.get("heal", 0), b.creature.hp - c_hp)
         b_hp -= damage
         c_hp += heal
@@ -113,7 +142,7 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
             who = "both" if damage else "boss"
         log.update(skill=skill["name"], damage=damage, healed=heal)
     elif BEATS[creature_move] == boss_move:
-        b_hp, who = b_hp - b.creature.atk, "creature"
+        b_hp, who = b_hp - _scaled(b.creature.atk, power), "creature"
     elif BEATS[boss_move] == creature_move:
         c_hp, who = c_hp - b.boss.atk, "boss"
 

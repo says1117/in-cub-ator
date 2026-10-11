@@ -71,3 +71,7 @@ server/CLAUDE.md
 server/AGENTS.md
 *.py[cod]
 *$py.class
+
+# Plant progress database (lives on the Jetson only)
+server/data/progress.db
+server/data/progress.db-*

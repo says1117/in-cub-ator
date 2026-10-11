@@ -130,6 +130,10 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
     move_id, power = move_of(b.creature, SKILL if use_skill else creature_move)
     if move_id:
         log["move_id"] = move_id
+    if b.creature.plant_id:
+        # Who made this move, recorded now: the plant may later be swapped out or lifted.
+        log["actor_pad"] = b.plant
+        log["actor_plant_id"] = b.creature.plant_id
     if use_skill:
         damage = _scaled(b.creature.atk * skill.get("damage_factor", 0), power)
         heal = min(skill.get("heal", 0), b.creature.hp - c_hp)

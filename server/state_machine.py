@@ -64,21 +64,22 @@ def _to_walking(g: Game) -> Game:
     return replace(g, mode=WALKING, boss_plant=None, source=None, tier=0)
 
 
-def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
+def on_soil(g: Game, plant: str, pct: float, now: float, present: tuple = C.PLANTS) -> Game:
+    """`present` are the plants that are actually on the cube: only they can call a boss."""
     streaks = dict(g.dry_streak)
-    streaks[plant] = streaks[plant] + 1 if pct < C.SOIL_DRY_THRESHOLD_PCT else 0
+    streaks[plant] = streaks[plant] + 1 if pct < C.SOIL_DRY_THRESHOLD_PCT and plant in present else 0
     seen = dict(g.last_pct)
     seen[plant] = pct
     g = replace(g, dry_streak=streaks, last_pct=seen)
 
     if g.mode in (WALKING, COOLDOWN):
-        if all(tier_for(v) == 0 for v in seen.values()):
+        if all(tier_for(seen[p]) == 0 for p in present):
             g = replace(g, last_tier=0)  # every plant is fine, the next dip starts fresh
         if now < g.quiet_until:
             return g  # a fight has only just ended: a breather before anyone calls a boss
         # Any dry plant may call a boss. A harder tier than the last boss may skip the cooldown.
         ready = [
-            p for p in C.PLANTS
+            p for p in present
             if tier_for(seen[p]) >= 1
             and streaks[p] >= C.SOIL_DRY_READINGS_N
             and (now >= g.cooldown_until[p] or tier_for(seen[p]) > g.last_tier)
@@ -89,6 +90,16 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     elif g.mode in (BOSS, BATTLE) and plant == g.boss_plant and g.source == C.SOURCE_SOIL:
         if pct > C.SOIL_WET_THRESHOLD_PCT:
             return _to_walking(g)
+    return g
+
+
+def on_lift(g: Game, plant: str) -> Game:
+    """A plant was taken off the cube. Its dry count starts over, and a boss it called leaves."""
+    streaks = dict(g.dry_streak)
+    streaks[plant] = 0
+    g = replace(g, dry_streak=streaks)
+    if g.mode in (BOSS, BATTLE, REWARD) and g.boss_plant == plant:
+        g = _to_walking(g)
     return g
 
 

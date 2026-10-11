@@ -10,6 +10,7 @@ import rewards as R
 import state_machine as S
 from engine import GameEngine
 
+C.PLANTS_NEED_PADS = False   # most tests do not touch the pads: both plants count as on the cube (PresenceTests turns pads on)
 DRY_RAW = C.SOIL_RAW_DRY
 WET_RAW = C.SOIL_RAW_WET
 
@@ -1101,6 +1102,130 @@ class BothPlantsDryTests(unittest.TestCase):
         for _ in range(C.SOIL_DRY_READINGS_N - 1):
             g = S.on_soil(g, "B", 5.0, 0)
         self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "A"))
+
+
+class PresenceTests(unittest.TestCase):
+    """A plant only counts while its pad reads a tag: no tag, no meter, no boss, no water."""
+
+    def engine(self, *on):
+        e = GameEngine(rng=random.Random(5), need_pads=True)
+        for p in on:
+            e.on_pad(p, "TAG-" + p)
+        return e
+
+    def dry(self, e, plant, t=0.0):
+        cmds = []
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            cmds += e.on_soil_raw(plant, DRY_RAW, t)
+        return cmds
+
+    def test_no_plant_no_boss(self):
+        e = self.engine()
+        self.dry(e, "A")
+        self.dry(e, "B")
+        self.assertEqual(e.game.mode, S.WALKING)
+
+    def test_no_plant_no_demo_boss(self):
+        e = self.engine()
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        self.assertEqual(e.on_demo_boss(1.0), [])
+        self.assertEqual(e.on_debug_boss("A", 1.0), [])
+        self.assertEqual(e.game.mode, S.WALKING)
+
+    def test_only_the_plant_on_the_cube_calls_a_boss(self):
+        e = self.engine("B")
+        self.dry(e, "A")
+        self.assertEqual(e.game.mode, S.WALKING)
+        self.dry(e, "B")
+        self.assertEqual((e.game.mode, e.game.boss_plant), (S.BOSS, "B"))
+
+    def test_a_lone_plant_fights_alone_and_is_watered(self):
+        e = self.engine("A")
+        self.dry(e, "A")
+        self.assertEqual(e.game.mode, S.BOSS)
+        t, cmds = 0.0, []
+        while t < 3000 and e.game.mode != S.COOLDOWN:
+            t += 0.5
+            cmds += e.tick(t)
+            if e.battle:
+                self.assertEqual(e.battle.bench, ())
+        self.assertTrue(all(c.topic == C.TOPIC_CMD_PUMP.format(plant="A") for c in cmds))
+
+    def test_snapshot_hides_the_meter_of_a_missing_plant(self):
+        e = self.engine("A")
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        e.on_soil_raw("B", DRY_RAW, 0.0)
+        snap = e.snapshot()
+        self.assertEqual(snap["present"], {"A": True, "B": False})
+        self.assertIsNotNone(snap["meters"]["water"]["A"])
+        self.assertIsNone(snap["meters"]["water"]["B"])
+        e.on_pad("A", "")
+        snap = e.snapshot()
+        self.assertEqual(snap["present"], {"A": False, "B": False})
+        self.assertEqual(snap["meters"]["water"], {"A": None, "B": None})
+
+    def test_lifting_the_plant_that_called_the_boss_sends_it_away(self):
+        e = self.engine("A", "B")
+        self.dry(e, "A")
+        self.assertEqual(e.game.mode, S.BOSS)
+        e.on_pad("A", "")
+        self.assertEqual(e.game.mode, S.WALKING)
+        self.assertIsNone(e.game.boss_plant)
+
+    def test_lifting_it_mid_fight_ends_the_fight_without_water(self):
+        e = self.engine("A", "B")
+        self.dry(e, "A")
+        t = 0.0
+        while e.game.mode != S.BATTLE:
+            t += 0.5
+            e.tick(t)
+        e.on_pad("A", "")
+        self.assertEqual(e.game.mode, S.WALKING)
+        self.assertIsNone(e.battle)
+        self.assertEqual(e.tick(t + 1.0), [])
+
+    def test_lifting_the_bench_plant_takes_it_out_of_the_fight(self):
+        e = self.engine("A", "B")
+        self.dry(e, "A")
+        t = 0.0
+        while e.game.mode != S.BATTLE:
+            t += 0.5
+            e.tick(t)
+        self.assertEqual([p for p, _ in e.battle.bench], ["B"])
+        e.on_pad("B", "")
+        self.assertEqual(e.battle.bench, ())
+        self.assertEqual(e.game.mode, S.BATTLE)
+
+    def test_a_plant_that_is_set_down_starts_with_a_clean_dry_count(self):
+        e = self.engine()
+        self.dry(e, "A")       # dry the whole time, but not on the cube
+        e.on_pad("A", "TAG-A")
+        e.on_soil_raw("A", DRY_RAW, 1.0)
+        self.assertEqual(e.game.mode, S.WALKING)   # one reading is not enough
+
+    def test_health_holds_with_no_plant(self):
+        e = self.engine()
+        e.on_soil_raw("A", DRY_RAW, 0.0)
+        for i in range(1, 400):
+            e.tick(float(i))
+        self.assertEqual(e.health, 100.0)
+
+    def test_pads_not_in_use_means_both_plants_count(self):
+        e = GameEngine(rng=random.Random(5), need_pads=False)
+        self.dry(e, "A")
+        self.assertEqual(e.game.mode, S.BOSS)
+
+    def test_sim_pad_button_toggles_a_plant(self):
+        e = self.engine("A", "B")
+        e.on_sim_pad("A")            # not --sim: ignored
+        self.assertTrue(e.present("A"))
+        e.sim = True
+        e.on_sim_pad("A")
+        self.assertFalse(e.present("A"))
+        e.on_sim_pad("A")
+        self.assertTrue(e.present("A"))
+        e.on_sim_pad("Z")
+        self.assertEqual(e.present_plants(), ("A", "B"))
 
 
 if __name__ == "__main__":

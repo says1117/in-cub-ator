@@ -57,7 +57,7 @@ ESP32  <--MQTT--  broker  <--MQTT--  game server  <--WebSocket--  game screen
 | Topic | Direction | Payload | Meaning |
 | --- | --- | --- | --- |
 | `incube/soil/A`, `incube/soil/B` | ESP32 to server | a raw sensor number, e.g. `2310` | soil reading |
-| `incube/pad/A`, `incube/pad/B` | ESP32 to server | an NFC tag ID, or empty | which creature is on the pad |
+| `incube/pad/A`, `incube/pad/B` | ESP32 to server | an NFC tag ID, or empty when lifted | whether a plant is on the cube, and which figure it is |
 | `incube/status/esp32` | ESP32 to server | `online` or anything else | is the ESP32 alive |
 | `incube/cmd/pump/A`, `incube/cmd/pump/B` | server to ESP32 | milliseconds, e.g. `2000` | run this pump for this long |
 | `incube/debug/boss` | laptop to server | `A` or `B` | force a boss for that plant |
@@ -288,9 +288,20 @@ The fighters are the two plants themselves (`PLANT_FIGHTERS` in `server/config.p
 | A | Ember | an anthurium with red flowers | 30 | 8 | Inferno Bloom |
 | B | Zest | a striped lemon-lime dracaena | 34 | 7 | Sunburst |
 
-Each plant pad can also hold an NFC-tagged figure. A tag listed in `server/creatures.json`
-replaces that plant's name and numbers for the fight. A tag that is not in the file, or an
-empty pad, leaves the plant as it is.
+**A plant is only in the game while its pad reads a tag** (the NFC chip on its pot, `config.PLANTS_NEED_PADS`).
+Lift it and it is gone: it has no moisture meter, it cannot call a boss, it takes no part in a fight and
+it is never watered. Set it back down and it returns. A plant that is lifted while it is calling a boss
+(or fighting) sends the boss away with no reward; a lifted bench plant just leaves the fight. With no
+plant on the cube there is no boss at all, the demo button does nothing and the status panel is empty.
+The state message has `present` (`{"A": true, "B": false}`) and `meters.water` is `null` for a plant that
+is not there. On screen the plants follow the dragon only while present, and poof away and back
+(`render/petParade.js`). With `--sim` both plants start on the cube, and the screen shows "Lift Ember" and
+"Lift Zest" buttons that stand in for the pads. Set `PLANTS_NEED_PADS = False` for a cube whose pads
+are not wired up: both plants then always count.
+
+An NFC-tagged figure on a pad counts as a plant too. A tag listed in `server/creatures.json`
+replaces that plant's name and numbers for the fight. A tag that is not in the file leaves the
+plant as it is.
 
 | Figure | HP | Attack | Skill |
 | --- | --- | --- | --- |
@@ -669,8 +680,8 @@ are given the time as a number, which is why they can be tested quickly.
 - **Grow light.** The hardware has one, but the game has no sunlight meter and never switches it on.
 - **Firmware over MQTT.** The ESP32 does not publish to MQTT by itself yet;
   `serial_bridge.py` fills the gap for soil only. It does not pass on pad (NFC) readings,
-  so through the bridge the plants always fight as themselves unless a pad message is
-  published by hand.
+  so through the bridge no plant is ever "on the cube" unless a pad message is published by hand
+  (or `PLANTS_NEED_PADS` is turned off in `config.py`).
 - **Boss art.** Two bosses, the Drought Chomper and the Sporeling Trio, each used at every tier. The old "Desert Dragon" was only the Chomper with another name, so it is gone.
 - **Storage screen.** A placeholder.
 - **Vision / Jetson.** Not started.

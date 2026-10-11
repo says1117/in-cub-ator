@@ -56,6 +56,12 @@ CREATURES_FILE = "creatures.json"
 
 # The two plants are the fighters. The plant whose dry soil called the boss goes in first.
 # If it faints, the other plant steps in once, at full strength. The fight is lost when both are down.
+# A plant only counts while its pad reads a tag (the NFC chip on its pot). Lift it and it leaves the
+# game: no moisture meter, no boss for it, no pump for it. False treats both plants as always there
+# (for a cube whose pads are not wired up yet).
+PLANTS_NEED_PADS = True
+SIM_PAD_TAGS = {"A": "SIM-A", "B": "SIM-B"}   # the made-up tags of --sim, not in creatures.json so the plants fight as themselves
+
 # A known figure on a plant's pad (creatures.json) replaces that plant's numbers.
 PLANT_FIGHTERS = {
     "A": {"name": "Ember", "hp": 30, "atk": 8, "skill": "inferno_bloom"},
@@ -64,6 +70,7 @@ PLANT_FIGHTERS = {
 
 # The player picks each move. The client sends {"action": "move", "move": "attack"}.
 WS_ACTION_MOVE = "move"
+WS_ACTION_SIM_PAD = "sim_pad"   # only with --sim: lifts or sets down plant A or B, standing in for the NFC pad
 # If nobody picks a move in this time the game picks one, so a fight can never hang on stage.
 PLAYER_MOVE_TIMEOUT_SECONDS = 10.0
 

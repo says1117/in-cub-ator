@@ -420,7 +420,9 @@ export default class StorageScene extends Phaser.Scene {
     });
 
     back.on("pointerdown", () => {
-      window.location.assign("/");
+      const navigate = this.game.registry.get("navigate");
+      if (navigate) navigate("/");
+      else window.location.assign("/");
     });
   }
 

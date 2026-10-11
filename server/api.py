@@ -32,6 +32,8 @@ class Feed:
             return
         if action == C.WS_ACTION_DEMO_BOSS:
             self.queue.put_nowait(("ws/" + action, ""))
+        elif action == C.WS_ACTION_SIM_PAD:
+            self.queue.put_nowait(("ws/" + action, str(data.get("plant", ""))))
         elif action == C.WS_ACTION_MOVE:
             self.queue.put_nowait(("ws/" + action, str(data.get("move", ""))))
 

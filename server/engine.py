@@ -13,8 +13,12 @@ log = logging.getLogger("engine")
 
 
 class GameEngine:
-    def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None):
+    def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None,
+                 need_pads: Optional[bool] = None):
         self.game = S.Game()
+        # True: a plant is only in the game while its pad reads a tag (config.PLANTS_NEED_PADS)
+        self.need_pads = C.PLANTS_NEED_PADS if need_pads is None else need_pads
+        self.sim = False             # --sim: the screen may set plants down and lift them
         self.creatures = creatures or {}
         self.rng = rng or random.Random()
         self.soil_pct = {p: 100.0 for p in C.PLANTS}
@@ -51,7 +55,7 @@ class GameEngine:
     def on_soil_raw(self, plant: str, raw: int, now: float) -> list:
         self._heard_from_esp32(now)
         self.soil_pct[plant] = S.soil_pct(raw)
-        self._set(S.on_soil(self.game, plant, self.soil_pct[plant], now))
+        self._set(S.on_soil(self.game, plant, self.soil_pct[plant], now, self.present_plants()))
         return self.tick(now)
 
     def _heard_from_esp32(self, now: float):
@@ -61,8 +65,36 @@ class GameEngine:
             log.info("ESP32 is back")
             self._set(S.on_status(self.game, True))
 
+    def present(self, plant: str) -> bool:
+        """Is this plant on the cube? With pads in use, only while its tag is being read."""
+        return bool(self.pads[plant]) or not self.need_pads
+
+    def present_plants(self) -> tuple:
+        return tuple(p for p in C.PLANTS if self.present(p))
+
     def on_pad(self, plant: str, uid: str):
+        was = self.present(plant)
         self.pads[plant] = uid.strip()
+        if was and not self.present(plant):
+            self._plant_lifted(plant)
+
+    def on_sim_pad(self, plant: str):
+        """--sim only: the screen's button sets plant A or B down or lifts it, like the real pad."""
+        if self.sim and plant in C.PLANTS:
+            self.on_pad(plant, "" if self.pads[plant] else C.SIM_PAD_TAGS[plant])
+
+    def _plant_lifted(self, plant: str):
+        """A plant left the cube: a boss it called leaves too, and a lifted plant takes no part in a fight."""
+        log.info("plant %s lifted off the cube", plant)
+        self._set(S.on_lift(self.game, plant))
+        b = self.battle
+        if b is not None and self.game.mode == S.BATTLE:
+            if plant == b.plant:   # the plant in the ring was lifted: the fight is over
+                self._set(S.on_lift(self.game, self.game.boss_plant))
+            else:
+                self.battle = replace(b, bench=tuple(item for item in b.bench if item[0] != plant))
+        if self.game.mode not in (S.BATTLE, S.REWARD):
+            self.battle = None
 
     def on_esp_status(self, text: str, now: Optional[float] = None):
         online = text.strip() == "online"
@@ -85,14 +117,21 @@ class GameEngine:
                 self.battle = None
 
     def pick_demo_plant(self) -> str:
-        """The pad with a creature, or the lower water meter if both or neither has one."""
-        with_creature = [p for p in C.PLANTS if self.pads[p]]
-        pool = with_creature if len(with_creature) == 1 else list(C.PLANTS)
+        """The plant on the cube, or the lower water meter if both are there (or neither has a pad
+        reading, when pads are not in use). None when no plant is on the cube."""
+        here = list(self.present_plants())
+        if not here:
+            return None
+        with_creature = [p for p in here if self.pads[p]]
+        pool = with_creature if len(with_creature) == 1 else here
         return min(pool, key=lambda p: self.soil_pct[p])
 
     def on_demo_boss(self, now: float, plant: Optional[str] = None) -> list:
         """Demo button (WebSocket) or the optional laptop topic."""
         plant = plant or self.pick_demo_plant()
+        if plant is None or not self.present(plant):
+            log.info("demo boss ignored, no plant on the cube to call it")
+            return []
         before = self.game.mode
         tier = max(1, S.tier_for(self.soil_pct[plant]))
         self._set(S.on_demo(self.game, plant, now, tier))
@@ -153,7 +192,7 @@ class GameEngine:
     def _start_battle(self, now: float):
         # The plant that called the boss fights first. The others wait on the bench, driest first.
         first = self.game.boss_plant
-        bench = sorted((p for p in C.PLANTS if p != first), key=lambda p: self.soil_pct[p])
+        bench = sorted((p for p in self.present_plants() if p != first), key=lambda p: self.soil_pct[p])
         self.last_reward = None   # nothing has been won yet in this fight
         tier = self.game.tier or 1
         charge = C.SKILL_CHARGE_START if self.health >= C.HEALTH_WEARY_BELOW else C.SKILL_CHARGE_START_WEARY
@@ -191,8 +230,9 @@ class GameEngine:
         return "healthy"
 
     def moisture_tier(self) -> int:
-        """How dry the driest plant is: 0 chill, 1 dry, 2 very dry, 3 bone dry."""
-        return S.tier_for(min(self.soil_pct.values()))
+        """How dry the driest plant on the cube is: 0 chill, 1 dry, 2 very dry, 3 bone dry."""
+        here = self.present_plants()
+        return S.tier_for(min(self.soil_pct[p] for p in here)) if here else 0
 
     def _update_health(self, now: float):
         """Overall health fades while any plant is dry and nobody is fighting for it, faster the
@@ -200,8 +240,8 @@ class GameEngine:
         if self._last_tick is not None:
             dt = min(max(now - self._last_tick, 0.0), 1.0)
             tier = self.moisture_tier()
-            if self.game.mode in (S.BOSS, S.BATTLE, S.REWARD):
-                pass   # help is on the way: health holds while a boss is being fought
+            if self.game.mode in (S.BOSS, S.BATTLE, S.REWARD) or not self.present_plants():
+                pass   # help is on the way: health holds while a boss is being fought, and with no plant
             elif tier >= 1:
                 self.health -= C.HEALTH_DECAY_PER_SEC[tier] * dt
             else:
@@ -225,6 +265,9 @@ class GameEngine:
         if self.game.stale or self.last_seen is None:
             log.info("reward for %s blocked, ESP32 %s", plant,
                      "offline" if self.game.stale else "not heard from yet")
+            return []
+        if not self.present(plant):
+            log.info("reward for %s blocked, the plant is not on the cube", plant)
             return []
         pct = self.soil_pct[plant]
         cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo, tier=tier)
@@ -278,8 +321,10 @@ class GameEngine:
         lost = self.lost if (b and g.boss_plant is None) else None   # the last blow of a lost fight
         return {
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
+            "present": {p: self.present(p) for p in C.PLANTS},   # false: not on the cube, so no meter and no follower
+            "sim": self.sim,
             "meters": {
-                "water": {p: round(self.soil_pct[p], 1) for p in C.PLANTS},
+                "water": {p: round(self.soil_pct[p], 1) if self.present(p) else None for p in C.PLANTS},
                 "stale": g.stale,
             },
             "mode": g.mode,

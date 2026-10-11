@@ -64,7 +64,7 @@ if (import.meta.env.DEV) {
       manual: true, awaiting_move: true, move_seconds_left: 10,
     };
     game.registry.set("serverState", {
-      mode: "battle", creatures: { A: null, B: null }, meters: { water: { A: 20, B: 80 }, stale: false },
+      mode: "battle", present: { A: true, B: true }, creatures: { A: null, B: null }, meters: { water: { A: 20, B: 80 }, stale: false },
       fighters: { A: { name: "Ember", skill: "Inferno Bloom" }, B: { name: "Zest", skill: "Sunburst" } },
       health: 90, condition: "healthy", tier, reward: null, boss, battle,
     });
@@ -75,14 +75,17 @@ if (import.meta.env.DEV) {
 
 feedPlants(null);   // example plants until the game server answers
 
-// Navigate between URLs and scenes
+// Navigate between URLs and scenes. The plant screens (Storage and its detail pages) sit on top of
+// the forest, so going anywhere else closes whichever of them is open.
+const PLANT_SCENES = ["StorageScene", "CastIronScene", "MonsteraScene"];
 function navigate(path) {
   const sceneName = routes[path];
 
   if (!sceneName) return;
 
   window.history.pushState({}, "", path);
-
+  for (const key of PLANT_SCENES) if (key !== sceneName) game.scene.stop(key);
+  if (sceneName === "AdventureScene" && game.scene.isActive("AdventureScene")) return;   // already there
   game.scene.start(sceneName);
 }
 
@@ -96,7 +99,23 @@ game.events.once(Phaser.Core.Events.READY, () => {
 
 // Handle browser Back / Forward buttons
 window.addEventListener("popstate", () => {
-  game.scene.start(getSceneFromURL());
+  const sceneName = getSceneFromURL();
+  for (const key of PLANT_SCENES) if (key !== sceneName) game.scene.stop(key);
+  game.scene.start(sceneName);
+});
+
+// While a plant screen is open the forest's own meters and buttons step aside (they would hide its
+// header and Back button), and a boss arriving closes it so the fight is never hidden behind it.
+let plantScreenOpen = false;
+game.events.on(Phaser.Core.Events.POST_STEP, () => {
+  const open = PLANT_SCENES.some((key) => game.scene.isActive(key));
+  if (open && game.scene.isActive("BossScene")) {
+    for (const key of PLANT_SCENES) game.scene.stop(key);
+    return;
+  }
+  if (open === plantScreenOpen) return;
+  plantScreenOpen = open;
+  document.getElementById("hud")?.classList.toggle("in-storage", open);
 });
 
 // Server connection: status bar, boss alert, battle bars and the demo button overlay the game.
@@ -104,6 +123,8 @@ window.addEventListener("popstate", () => {
 let server;
 const hud = mountStatusBar(document.getElementById("app"), {
   onDemoBoss: () => server && server.sendDemoBoss(),
+  onStorage: () => navigate("/storage"),
+  onSimPad: (plant) => server && server.sendSimPad(plant),
 });
 server = connectWsSource(
   (state) => {

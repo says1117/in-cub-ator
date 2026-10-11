@@ -23,6 +23,8 @@ def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
         return engine.on_player_move(payload, now)
     elif topic == "ws/" + C.WS_ACTION_DEMO_BOSS:
         return engine.on_demo_boss(now)
+    elif topic == "ws/" + C.WS_ACTION_SIM_PAD:
+        engine.on_sim_pad(payload)
     elif topic == C.TOPIC_DEBUG_BOSS:
         return engine.on_debug_boss(payload, now)
     else:
@@ -48,6 +50,9 @@ async def main():
     if "--sim" in sys.argv:
         # TEMPORARY: made-up moisture for both plants instead of real sensors
         sim = {p: MoistureSim(start=random.uniform(*C.SIM_START_PCT[p])) for p in C.PLANTS}
+        engine.sim = True
+        for p in C.PLANTS:
+            engine.pads[p] = C.SIM_PAD_TAGS[p]   # both plants start on the cube; the screen can lift them
         C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS
         C.REWARD_MIN_GAP_SECONDS = C.SIM_COOLDOWN_SECONDS
         log.info("SIMULATED moisture is on, cooldown %.0fs", C.COOLDOWN_SECONDS)

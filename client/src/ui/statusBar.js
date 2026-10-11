@@ -1,6 +1,6 @@
 // client/src/ui/statusBar.js: What is written over the forest. Owner: Role 3 (client, art, demo).
 // A DOM overlay on top of the game canvas: each plant's water, the cube's health, the boss
-// alert, the demo button and the sound switch. It only shows the server's game state.
+// alert, the Storage and demo buttons and the sound switch. It only shows the server's game state.
 // The battle screen has its own (ui/battleHud.js), so most of this hides during a fight.
 import { audio } from "../audio.js";
 
@@ -35,6 +35,12 @@ const css = `
 #hud .lost{position:absolute;top:42%;left:50%;transform:translateX(-50%);padding:1em 1.4em;text-align:center;line-height:1.7;
   border-color:#ff8f6b;display:none}
 #hud .lost b{display:block;color:#ff8f6b;font-size:1.5em}
+#hud.in-storage .bar,#hud.in-storage .conn,#hud.in-storage .tip,#hud.in-storage .banner,#hud.in-storage .lost{display:none}
+#hud.in-storage .tools{display:none}
+#hud #simA,#hud #simB{display:none}
+#hud.sim #simA,#hud.sim #simB{display:block}
+#hud.empty .bar{display:none}
+#hud.in-battle #storageBtn,#hud.in-battle #simA,#hud.in-battle #simB{display:none}
 #hud.in-battle .bar,#hud.in-battle .tools #demoBtn,#hud.in-battle .conn,#hud.in-battle .tip,#hud.in-battle .banner{display:none}
 #hud.in-battle .tools{top:9%;bottom:auto;right:auto;left:50%;transform:translateX(-50%)}
 #hud.in-battle .tools button{padding:.35em .6em;opacity:.75}
@@ -45,7 +51,7 @@ const meterRow = (label, id, mark = false) => `
     <div class="track"><div class="fill" id="${id}"></div>${mark ? '<div class="mark"></div>' : ""}</div>
     <span class="num" id="${id}Num"></span></div>`;
 
-export function mountStatusBar(parent, { onDemoBoss }) {
+export function mountStatusBar(parent, { onDemoBoss, onStorage, onSimPad }) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
@@ -60,6 +66,9 @@ export function mountStatusBar(parent, { onDemoBoss }) {
     </div>
     <div class="banner" id="banner">BOSS ALERT</div>
     <div class="tools">
+      <button id="simA" title="Test only: lift plant A off the cube or set it down"></button>
+      <button id="simB" title="Test only: lift plant B off the cube or set it down"></button>
+      <button id="storageBtn" title="See your plants">Storage</button>
       <button id="demoBtn" title="Call a boss now, whatever the soil says">Demo boss</button>
       <button id="muteBtn" title="Sound on or off (M)"></button>
     </div>
@@ -86,6 +95,8 @@ export function mountStatusBar(parent, { onDemoBoss }) {
 
   const $ = (id) => hud.querySelector("#" + id);
   $("demoBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onDemoBoss(); };
+  for (const plant of ["A", "B"]) $("sim" + plant).onclick = (event) => { event.currentTarget.blur(); onSimPad(plant); };
+  $("storageBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onStorage(); };
   const showMute = (muted) => { $("muteBtn").textContent = muted ? "Sound off" : "Sound on"; };
   showMute(audio.isMuted());
   audio.onMute(showMute);
@@ -111,11 +122,17 @@ export function mountStatusBar(parent, { onDemoBoss }) {
     render(s) {
       fit();
       const dry = (pct) => (pct < 25 ? "#f2545b" : pct < 50 ? "#f7d04a" : "#4ab8ff");
+      // A plant that is not on the cube (its pad reads no tag) has no meter. With none there, no panel.
+      const here = { A: true, B: true, ...(s.present || {}) };
+      const anyHere = here.A || here.B;
+      hud.classList.toggle("empty", !anyHere);
+      hud.classList.toggle("sim", Boolean(s.sim));
       for (const plant of ["A", "B"]) {
-        const pct = s.meters.water[plant];
-        meter("w" + plant, pct, dry(pct));
         const name = s.fighters && s.fighters[plant] ? s.fighters[plant].name : `Plant ${plant}`;
         $("w" + plant + "Name").textContent = name;
+        $("w" + plant + "Name").parentElement.style.display = here[plant] ? "" : "none";
+        if (here[plant]) meter("w" + plant, s.meters.water[plant], dry(s.meters.water[plant]));
+        $("sim" + plant).textContent = `${here[plant] ? "Lift" : "Set down"} ${name}`;
       }
       const h = s.health ?? 100;
       meter("health", h, h > 60 ? "#5fe36c" : h > 30 ? "#f7d04a" : "#f2545b");
@@ -129,11 +146,12 @@ export function mountStatusBar(parent, { onDemoBoss }) {
       banner.textContent = s.boss ? `Boss alert: ${s.boss.name}` : "Boss alert";
       banner.style.display = s.mode === "boss" ? "block" : "none";
 
-      const thirsty = ["A", "B"].filter((p) => s.meters.water[p] < 50).map((p) => (s.fighters && s.fighters[p] ? s.fighters[p].name : p));
-      $("tip").textContent = s.mode === "cooldown" || s.mode === "reward" ? "The boss is gone for now. The plants rest."
+      const thirsty = ["A", "B"].filter((p) => here[p] && s.meters.water[p] < 50).map((p) => (s.fighters && s.fighters[p] ? s.fighters[p].name : p));
+      $("tip").textContent = !anyHere ? "No plant on the cube. Set one down and it follows you."
+        : s.mode === "cooldown" || s.mode === "reward" ? "The boss is gone for now. The plants rest."
         : thirsty.length ? `${thirsty.join(" and ")} ${thirsty.length > 1 ? "are" : "is"} thirsty. A boss is on its way...`
         : "Dry soil calls a boss. Win the fight and the real plant is watered.";
-      $("demoBtn").disabled = !connected || !["walking", "cooldown"].includes(s.mode);
+      $("demoBtn").disabled = !connected || !anyHere || !["walking", "cooldown"].includes(s.mode);
     },
   };
 }

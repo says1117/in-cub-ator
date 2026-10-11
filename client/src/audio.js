@@ -383,6 +383,17 @@ const SOUNDS = {
     voice({ type: "triangle", f: 360, to: 150, slide: 0.25, dur: 0.3, vol: 0.1, vib: { rate: 9, cents: 40 }, verb: 0.2 });
   },
 
+  // ---- a plant leaves the cube or is set back on it
+  poofOut: () => {                                              // a puff of air and a falling "pop"
+    noise({ filter: { type: "bandpass", f: 2400, to: 700, q: 0.8, time: 0.22 }, dur: 0.26, vol: 0.14, attack: 0.01 });
+    voice({ type: "sine", f: 760, to: 220, slide: 0.12, dur: 0.18, vol: 0.12, attack: 0.002, verb: 0.3 });
+  },
+  poofIn: () => {                                               // the same in reverse, ending in a bright chime
+    noise({ filter: { type: "bandpass", f: 700, to: 2600, q: 0.8, time: 0.18 }, dur: 0.22, vol: 0.12, attack: 0.1 });
+    voice({ type: "sine", f: 300, to: 900, slide: 0.12, dur: 0.16, vol: 0.1, attack: 0.002, verb: 0.3 });
+    bell(88, 0.14, { vol: 0.09, dur: 0.6, verb: 0.4 });
+  },
+
   // ---- the team
   heal: () => {                                                 // a harp, rising
     run([69, 73, 76, 81, 85, 88], 0.065, (n, at) => pluck(n, at, { dur: 0.9, vol: 0.12, verb: 0.6 }));

@@ -48,6 +48,15 @@ PUMP_MS_BY_TIER = {1: 2000, 2: 2000, 3: 2000}  # 2 s per win: under 1 s did not 
 # The cap on one pump run (PUMP_MAX_MS) and the wet-soil rule still hold. Set a number of seconds to bring the wait back.
 # Live play still has the 10 minute boss cooldown, and the cube rests each pump 30 s after a run.
 REWARD_MIN_GAP_SECONDS = 0.0
+# Team watering: a won fight waters every pot that has a plant on the cube, the boss's (dry) pot
+# first. False: only the boss's pot. The pumps run one after the other, this many seconds apart,
+# so a weak 5 V supply (like a computer's USB port) only ever powers one pump at a time.
+TEAM_WATERING = True
+# The next pump starts only after the previous one's commanded run plus this margin, so two pumps
+# never run at once (worked out from the real pump time, not a fixed spacing).
+TEAM_WATER_MARGIN_SECONDS = 0.5
+# A pot is only watered if its own soil sensor reported within this many seconds.
+SOIL_FRESH_SECONDS = 10.0
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket
 WS_ACTION_DEMO_BOSS = "demo_boss"

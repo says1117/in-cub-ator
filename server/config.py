@@ -25,9 +25,9 @@ SOIL_DRY_READINGS_N = 5
 
 # Timings (seconds)
 BOSS_INTRO_SECONDS = 5.2  # long enough for the boss arrival animation on the client
-BATTLE_TURN_SECONDS = 1.2
+BATTLE_TURN_SECONDS = 2.6  # long enough for the client to play both moves of a turn
 SWAP_EXTRA_SECONDS = 1.6  # extra pause after a plant faints, while the next one comes in on the client
-REWARD_DISPLAY_SECONDS = 4.0
+REWARD_DISPLAY_SECONDS = 6.0  # the last blow plays out, then the victory panel and the pump bar
 COOLDOWN_SECONDS = 60.0
 BOSS_BREATHER_SECONDS = 20.0  # after any fight ends, no plant can call a boss for this long
 ESP32_STALE_SECONDS = 30.0
@@ -58,8 +58,8 @@ CREATURES_FILE = "creatures.json"
 # If it faints, the other plant steps in once, at full strength. The fight is lost when both are down.
 # A known figure on a plant's pad (creatures.json) replaces that plant's numbers.
 PLANT_FIGHTERS = {
-    "A": {"name": "Ember", "hp": 30, "atk": 8, "skill": "thorn_burst"},
-    "B": {"name": "Zest", "hp": 34, "atk": 7, "skill": "photosynthesis"},
+    "A": {"name": "Ember", "hp": 30, "atk": 8, "skill": "inferno_bloom"},
+    "B": {"name": "Zest", "hp": 34, "atk": 7, "skill": "sunburst"},
 }
 
 # The player picks each move. The client sends {"action": "move", "move": "attack"}.
@@ -71,6 +71,11 @@ PLAYER_MOVE_TIMEOUT_SECONDS = 10.0
 # SKILL_COOLDOWN_TURNS turns before it can be used again.
 SKILL_COOLDOWN_TURNS = 4
 SKILLS = {
+    # Ember's own: a pillar of fire. A guaranteed hit, harder than a plain attack.
+    "inferno_bloom": {"name": "Inferno Bloom", "damage_factor": 1.25},
+    # Zest's own: heal 8 and a small guaranteed hit as well.
+    "sunburst": {"name": "Sunburst", "heal": 8, "damage_factor": 0.5},
+    # The three below are the skills a tagged figure can bring (creatures.json).
     # a guaranteed hit for the creature's full attack. The boss can still hit back this turn.
     "thorn_burst": {"name": "Thorn Burst", "damage_factor": 1.0},
     # heal 8. An attacking boss still hits.

@@ -3,8 +3,15 @@
 // first) and sends the names and numbers; this file only says how each one looks and moves.
 //
 // To give a plant a new move, see the notes at the top of render/plantRig.js (how it moves its body)
-// and render/battleFx.js (what flies across the screen), then name both in `moves` below.
+// and render/battleFx.js (what flies across the screen), then name both in `moves` or `skills` below.
 import { EMBER_RIG, ZEST_RIG } from "./plantRigs.js";
+
+// The skills a tagged figure can bring (server/creatures.json). Any plant can end up with one.
+const FIGURE_SKILLS = {
+  "Thorn Burst": { body: "strike", fx: "thorns", icon: "thorn", blurb: "SURE HIT" },
+  "Photosynthesis": { body: "channel", fx: "sunlight", icon: "leaf", ms: 1100, blurb: "HEAL 8" },
+  "Bark Shield": { body: "guard", fx: "bark", icon: "bark", ms: 900, blurb: "BLOCK + HIT BACK" },
+};
 
 export const PLANTS = {
   A: {
@@ -13,24 +20,26 @@ export const PLANTS = {
     name: "Ember",              // only used until the server sends a name
     rig: EMBER_RIG,
     lid: 0x86a92a,              // eyelid colour, for blinks and expressions
-    glow: 0xff7a5c,             // its colour in effects
+    glow: 0xff7a5c,             // its colour in effects and on the battle screen
     // Named arm poses: how far each piece turns (radians) when the pose is fully on.
     gestures: {
       punch: { leafL: 0.5, fist: 0.95, handT: 0.25 },
       shield: { leafL: 0.35, fist: 0.5, handT: -0.55, handL: 0.5, handR: -0.5, leafT: -0.2 },
     },
-    // What it does for each move the server reports. body: an action in render/plantRig.js.
-    // fx: an effect in render/battleFx.js. Skills are looked up by the skill's name.
+    // What it does for each move the server reports.
+    //   name   what the move is called on the battle screen
+    //   body   an action in render/plantRig.js      ms: a different length for that action
+    //   fx     an effect in render/battleFx.js      icon: a picture in ui/battleHud.js
+    //   reach  "boss" to run all the way to the boss for the blow
     moves: {
-      attack: { body: "strike", fx: "punch" },
-      guard: { body: "guard", fx: "shield" },
-      special: { body: "cast", fx: "petals" },
-      skill: { body: "cast", fx: "thorns" },
+      attack: { name: "Vine Haymaker", body: "strike", fx: "haymaker", icon: "fist", ms: 760, reach: "boss" },
+      guard: { name: "Petal Aegis", body: "guard", fx: "aegis", icon: "heart", ms: 900 },
+      special: { name: "Flamingo Flare", body: "cast", fx: "flare", icon: "flare", ms: 900 },
     },
+    // Skills are looked up by the name the server sends. blurb: one line on the button.
     skills: {
-      "Thorn Burst": { body: "strike", fx: "thorns" },
-      "Photosynthesis": { body: "cast", fx: "sunlight" },
-      "Bark Shield": { body: "guard", fx: "bark" },
+      "Inferno Bloom": { body: "channel", fx: "inferno", icon: "bloom", ms: 1500, blurb: "SURE HIT x1.25" },
+      ...FIGURE_SKILLS,
     },
   },
   B: {
@@ -45,15 +54,13 @@ export const PLANTS = {
       shield: { fist: 0.45, handT: -0.5, handL: 0.45, handR: -0.4, leafL: 0.25 },
     },
     moves: {
-      attack: { body: "strike", fx: "punch" },
-      guard: { body: "guard", fx: "shield" },
-      special: { body: "cast", fx: "petals" },
-      skill: { body: "cast", fx: "sunlight" },
+      attack: { name: "Blade Rush", body: "rush", fx: "bladeRush", icon: "blade", reach: "boss" },
+      guard: { name: "Stripe Wall", body: "guard", fx: "stripeWall", icon: "wall", ms: 900 },
+      special: { name: "Citrus Volt", body: "cast", fx: "citrusVolt", icon: "bolt", ms: 900 },
     },
     skills: {
-      "Thorn Burst": { body: "strike", fx: "thorns" },
-      "Photosynthesis": { body: "cast", fx: "sunlight" },
-      "Bark Shield": { body: "guard", fx: "bark" },
+      "Sunburst": { body: "channel", fx: "sunburst", icon: "sun", ms: 1500, blurb: "HEAL 8 + HIT" },
+      ...FIGURE_SKILLS,
     },
   },
 };
@@ -72,8 +79,10 @@ export function otherPlant(id) {
 export const plantPartKey = (plant, part, size) => `${plant.key}-${part}-${size}`;
 
 // What a plant does for a move. `skillName` is the skill's name from the server, when the move is a skill.
+// The answer always has a name to show.
 export function plantMove(plant, move, skillName) {
-  if (move === "skill" && plant.skills[skillName]) return plant.skills[skillName];
+  if (skillName && plant.skills[skillName]) return { name: skillName, ...plant.skills[skillName] };
+  if (skillName) return { name: skillName, body: "cast", fx: "", icon: "star", blurb: "SURE HIT" };
   return plant.moves[move] || plant.moves.attack;
 }
 

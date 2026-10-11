@@ -3,6 +3,9 @@ import AdventureScene from "./scenes/AdventureScene.js";
 import BossScene from "./scenes/BossScene.js";
 import StorageScene from "./scenes/StorageScene.js";
 import "./style.css";
+import "@fontsource/silkscreen/400.css";
+import "@fontsource/silkscreen/700.css";
+import "@fontsource/press-start-2p/400.css";
 import { connectWsSource } from "./state/wsSource.js";
 import { mountStatusBar } from "./ui/statusBar.js";
 
@@ -33,6 +36,14 @@ const config = {
 
   scene: [AdventureScene, StorageScene, BossScene]
 };
+
+// The pixel fonts must be ready before any scene writes with them, or the first words come out
+// in a fallback font. A slow or missing font never holds the game up for long.
+const fonts = ['8px "Silkscreen"', 'bold 8px "Silkscreen"', '8px "Press Start 2P"'];
+await Promise.race([
+  Promise.all(fonts.map((font) => document.fonts.load(font))),
+  new Promise((resolve) => setTimeout(resolve, 1500)),
+]).catch(() => {});
 
 const game = new Phaser.Game(config);
 if (import.meta.env.DEV) window.__game = game;   // dev only: lets you poke at the game from the browser console

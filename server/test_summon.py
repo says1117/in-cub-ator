@@ -162,20 +162,24 @@ class BattleWithSummonedPlantsTests(unittest.TestCase):
         self.assertIsNone(snap["fighters"]["B"])
 
 
-def pump_trace(e, minutes=40):
+def pump_trace(e, minutes=40, detail=False):
     """Runs a long story (pot A dries, gets watered, dries again; pot B dries later) and returns
-    every command as (time, topic, payload)."""
+    every command as (time, topic, payload). With detail, each entry also has what the engine knew
+    when it sent it: the reward record, the pot's soil percent and whether the cube was offline."""
     trace, t = [], 0.0
-    def soil(pad, raw):
-        for c in e.on_soil_raw(pad, raw, t):
-            trace.append((round(t, 1), c.topic, c.payload))
+    def record(cmds):
+        for c in cmds:
+            entry = (round(t, 1), c.topic, c.payload)
+            if detail:
+                pot = (e.last_reward or {}).get("plant")
+                entry += (dict(e.last_reward or {}), e.soil_pct.get(pot), e.game.stale)
+            trace.append(entry)
     for step in range(int(minutes * 60 / 0.5)):
         t = step * 0.5
         if step % 4 == 0:  # a soil reading every 2 s, like the firmware
-            soil("A", C.SOIL_RAW_DRY if (t // 300) % 2 == 0 else C.SOIL_RAW_WET)
-            soil("B", C.SOIL_RAW_DRY if t > 900 else C.SOIL_RAW_WET)
-        for c in e.tick(t):
-            trace.append((round(t, 1), c.topic, c.payload))
+            record(e.on_soil_raw("A", C.SOIL_RAW_DRY if (t // 300) % 2 == 0 else C.SOIL_RAW_WET, t))
+            record(e.on_soil_raw("B", C.SOIL_RAW_DRY if t > 900 else C.SOIL_RAW_WET, t))
+        record(e.tick(t))
     return trace
 
 
@@ -183,13 +187,38 @@ class PumpRegressionTests(unittest.TestCase):
     """The plant database must not change when, where or how long a pump runs."""
 
     def test_identical_pump_commands_with_and_without_the_database(self):
-        old = GameEngine(rng=random.Random(7))
-        new = engine(seed=7, manual=False)
-        new.on_pad("A", EMBER, 0.0)   # Ember and Zest have the same numbers as the old pad defaults
-        new.on_pad("B", ZEST, 0.0)
-        old_trace, new_trace = pump_trace(old), pump_trace(new)
+        # With level growth switched off, plants never get stronger, so the fights play out exactly
+        # as before. Any difference would mean the database changed the watering path itself.
+        from unittest import mock
+        with mock.patch.object(C, "HP_PER_LEVEL", 0), mock.patch.object(C, "ATK_LEVELS_PER_POINT", 10 ** 6):
+            old = GameEngine(rng=random.Random(7))
+            new = engine(seed=7, manual=False)
+            new.on_pad("A", EMBER, 0.0)   # Ember and Zest have the same numbers as the old pad defaults
+            new.on_pad("B", ZEST, 0.0)
+            old_trace, new_trace = pump_trace(old), pump_trace(new)
         self.assertGreater(len(old_trace), 1)  # the story really waters more than once
         self.assertEqual(new_trace, old_trace)
+
+    def test_with_levels_every_pump_command_still_follows_the_rules(self):
+        # Stronger plants win sooner, so the timing may move, but each command must match the fight
+        # that earned it: that fight's pot, the exact length for its boss tier, dry soil, cube online,
+        # and the reward gap for that pot.
+        new = engine(seed=7, manual=False)
+        new.on_pad("A", EMBER, 0.0)
+        new.on_pad("B", ZEST, 0.0)
+        trace = pump_trace(new, detail=True)
+        self.assertGreater(len(trace), 1)
+        last = {}
+        for t, topic, payload, reward, soil_pct, stale in trace:
+            self.assertEqual(topic, C.TOPIC_CMD_PUMP.format(plant=reward["plant"]))
+            expected = min(C.PUMP_MS_BY_TIER.get(reward["tier"], C.PUMP_MS_PER_WIN), C.PUMP_MAX_MS)
+            self.assertEqual(int(payload), expected)
+            self.assertGreater(int(payload), 0)
+            self.assertLess(soil_pct, C.SOIL_WET_THRESHOLD_PCT)  # never waters a wet pot (no demo here)
+            self.assertFalse(stale)
+            if topic in last:
+                self.assertGreaterEqual(t - last[topic], C.REWARD_MIN_GAP_SECONDS)
+            last[topic] = t
 
     def test_a_cancelled_battle_never_reaches_the_reward(self):
         e = engine()
@@ -251,24 +280,25 @@ class WaitingBossTests(unittest.TestCase):
 
 class MoreLiftTests(unittest.TestCase):
     def test_lifts_during_reward_and_cooldown_change_nothing(self):
+        from unittest import mock
+        weak = {1: ("Weak", 1, 0), 2: ("Weak", 1, 0), 3: ("Weak", 1, 0)}  # the plants always win
         for stage in (S.REWARD, S.COOLDOWN):
-            e = engine(manual=False)
-            e.on_pad("A", EMBER, 0.0)
-            e.on_pad("B", ZEST, 0.0)
-            e.boss_won = None
-            t = to_battle(e, "A")
-            for _ in range(4000):
-                if e.game.mode == stage:
-                    break
-                t += 0.5
-                e.tick(t)
-            if e.game.mode != stage:
-                continue  # this seed lost the fight, so there is no reward stage to test
-            reward = e.last_reward
-            e.on_pad("A", "", t)
-            e.on_pad("B", "", t)
-            self.assertEqual(e.game.mode, stage, stage)
-            self.assertEqual(e.last_reward, reward, stage)
+            with mock.patch.object(C, "BOSS_TIERS", weak):
+                e = engine(manual=False)
+                e.on_pad("A", EMBER, 0.0)
+                e.on_pad("B", ZEST, 0.0)
+                t = to_battle(e, "A")
+                for _ in range(4000):
+                    if e.game.mode == stage:
+                        break
+                    t += 0.5
+                    e.tick(t)
+                self.assertEqual(e.game.mode, stage)
+                reward = e.last_reward
+                e.on_pad("A", "", t)
+                e.on_pad("B", "", t)
+                self.assertEqual(e.game.mode, stage, stage)
+                self.assertEqual(e.last_reward, reward, stage)
 
     def test_swapping_tags_between_pads_in_either_order(self):
         for first, second in (("A", "B"), ("B", "A")):

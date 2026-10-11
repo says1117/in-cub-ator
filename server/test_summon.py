@@ -171,7 +171,7 @@ def pump_trace(e, minutes=40, detail=False):
         for c in cmds:
             entry = (round(t, 1), c.topic, c.payload)
             if detail:
-                pot = (e.last_reward or {}).get("plant")
+                pot = c.topic.rsplit("/", 1)[-1]   # the pot this command waters
                 entry += (dict(e.last_reward or {}), e.soil_pct.get(pot), e.game.stale)
             trace.append(entry)
     for step in range(int(minutes * 60 / 0.5)):
@@ -210,7 +210,9 @@ class PumpRegressionTests(unittest.TestCase):
         self.assertGreater(len(trace), 1)
         last = {}
         for t, topic, payload, reward, soil_pct, stale in trace:
-            self.assertEqual(topic, C.TOPIC_CMD_PUMP.format(plant=reward["plant"]))
+            # Team watering: each command goes to one of the pots that fight's win listed.
+            team_pots = [w["plant"] for w in reward.get("team", [{"plant": reward["plant"]}])]
+            self.assertIn(topic, [C.TOPIC_CMD_PUMP.format(plant=p) for p in team_pots])
             expected = min(C.PUMP_MS_BY_TIER.get(reward["tier"], C.PUMP_MS_PER_WIN), C.PUMP_MAX_MS)
             self.assertEqual(int(payload), expected)
             self.assertGreater(int(payload), 0)

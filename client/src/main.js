@@ -2,18 +2,23 @@ import Phaser from "phaser";
 import AdventureScene from "./scenes/AdventureScene.js";
 import BossScene from "./scenes/BossScene.js";
 import StorageScene from "./scenes/StorageScene.js";
+import CastIronScene from "./scenes/CastIronScene.js";
+import MonsteraScene from "./scenes/MonsteraScene.js";
 import "./style.css";
 import "@fontsource/silkscreen/400.css";
 import "@fontsource/silkscreen/700.css";
 import "@fontsource/press-start-2p/400.css";
 import { connectWsSource } from "./state/wsSource.js";
+import { feedPlants } from "./state/plantFeed.js";
 import { mountStatusBar } from "./ui/statusBar.js";
 
 const routes = {
   "/": "AdventureScene",
   "/adventure": "AdventureScene",
   "/boss": "BossScene",
-  "/storage": "StorageScene"
+  "/storage": "StorageScene",
+  "/cast_iron": "CastIronScene",
+  "/monstera": "MonsteraScene"
 };
 
 function getSceneFromURL() {
@@ -34,7 +39,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [AdventureScene, StorageScene, BossScene]
+  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, BossScene]
 };
 
 // The pixel fonts must be ready before any scene writes with them, or the first words come out
@@ -67,6 +72,8 @@ if (import.meta.env.DEV) {
     document.getElementById("hud")?.style.setProperty("display", "none");
   };
 }
+
+feedPlants(null);   // example plants until the game server answers
 
 // Navigate between URLs and scenes
 function navigate(path) {
@@ -101,6 +108,7 @@ const hud = mountStatusBar(document.getElementById("app"), {
 server = connectWsSource(
   (state) => {
     game.registry.set("serverState", state);
+    feedPlants(state);
     hud.render(state);
   },
   (connected) => hud.setConnected(connected)

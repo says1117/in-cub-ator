@@ -1,3 +1,6 @@
+import { initializeReadingEffects, refreshReadingEffects } from "../services/plantReadingEffects.js";
+import { initializePlantGrowth, refreshPlantGrowth } from "../services/plantGrowth.js";
+import { initializeWatering, waterPlant, refreshWatering, playCareSound } from "../services/plantCare.js";
 import Phaser from "phaser";
 
 import {
@@ -45,6 +48,7 @@ export default class CastIronScene extends Phaser.Scene {
     this.H = height;
 
     this.plant = this.findPlant();
+    initializeReadingEffects(this);
 
     this.cameras.main.setBackgroundColor("#3b2419");
 
@@ -54,6 +58,7 @@ export default class CastIronScene extends Phaser.Scene {
     this.drawActions();
     this.drawStats();
     this.drawAbout();
+    initializeWatering(this);
 
     this.refreshStats();
 
@@ -61,6 +66,7 @@ export default class CastIronScene extends Phaser.Scene {
     this.unsubscribe = subscribe(() => {
       this.plant = this.findPlant();
       this.refreshStats();
+      refreshReadingEffects(this);
     });
 
     this.scale.on("resize", this.onResize, this);
@@ -257,9 +263,8 @@ export default class CastIronScene extends Phaser.Scene {
     });
 
     hit.on("pointerdown", () => {
-      if (this.scene.manager.keys.StorageScene) {
-        this.scene.start("StorageScene");
-      }
+      this.registry.get("audio")?.sfx("ui_select");
+      this.registry.get("navigate")("/storage");
     });
   }
 
@@ -298,7 +303,7 @@ export default class CastIronScene extends Phaser.Scene {
 
     const target = Math.min(
       W * 0.47,
-      H * 0.47,
+      H * 0.38,
       410
     );
 
@@ -307,10 +312,12 @@ export default class CastIronScene extends Phaser.Scene {
       target
     );
 
+    initializePlantGrowth(this);
+
     // Floating plant animation
     this.tweens.add({
       targets: this.plantSprite,
-      y: centerY - 6,
+      y: this.plantSprite.y - 6,
       duration: 2300,
       yoyo: true,
       repeat: -1,
@@ -352,7 +359,7 @@ export default class CastIronScene extends Phaser.Scene {
 
     const actions = [
       {
-        name: "WATER",
+        name: "WATER +10%",
         icon: "💧",
         x: W * 0.17,
         y: H * 0.27,
@@ -462,6 +469,7 @@ export default class CastIronScene extends Phaser.Scene {
         useHandCursor: true
       });
 
+      if (action.type === "water") this.waterButton = hit;
       hit.on("pointerover", () => {
         ring.setAlpha(0.75);
       });
@@ -477,11 +485,13 @@ export default class CastIronScene extends Phaser.Scene {
   }
 
   applyAction(action) {
+    if (action.type === "water") { waterPlant(this); return; }
     if (!this.plant) {
       console.warn("Plant not found.");
       return;
     }
 
+    playCareSound(this, action.type);
     // Request backend care action.
     // Do not directly modify sensor readings.
     this.game.events.emit("plant:care-request", {
@@ -497,8 +507,7 @@ export default class CastIronScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: this.plantSprite,
-      scaleX: this.plantSprite.scaleX * 1.035,
-      scaleY: this.plantSprite.scaleY * 1.035,
+      alpha: 0.85,
       duration: 170,
       yoyo: true
     });
@@ -681,6 +690,8 @@ export default class CastIronScene extends Phaser.Scene {
   }
 
   refreshStats() {
+    refreshWatering(this);
+    refreshPlantGrowth(this);
     if (!this.statWidgets) return;
 
     for (const [key, widget] of Object.entries(

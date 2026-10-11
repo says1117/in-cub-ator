@@ -8,7 +8,7 @@ let socket = null;
 let reconnectTimer = null;
 let stopped = false;
 
-export function connectPlantSocket() {
+export function connectPlantSocket(onConnection = () => {}) {
   // Avoid duplicate connections
   if (
     socket &&
@@ -28,6 +28,7 @@ export function connectPlantSocket() {
   socket = new WebSocket(url.toString());
 
   socket.onopen = () => {
+    onConnection(true);
     console.log("Connected to Plant Care WebSocket");
   };
 
@@ -48,6 +49,7 @@ export function connectPlantSocket() {
   };
 
   socket.onclose = () => {
+    onConnection(false);
     socket = null;
 
     if (!stopped) {
@@ -55,7 +57,7 @@ export function connectPlantSocket() {
 
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connectPlantSocket();
+        connectPlantSocket(onConnection);
       }, 2000);
     }
   };

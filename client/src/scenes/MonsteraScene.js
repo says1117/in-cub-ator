@@ -1,3 +1,6 @@
+import { initializeReadingEffects, refreshReadingEffects } from "../services/plantReadingEffects.js";
+import { initializePlantGrowth, refreshPlantGrowth } from "../services/plantGrowth.js";
+import { initializeWatering, waterPlant, refreshWatering, playCareSound } from "../services/plantCare.js";
 import Phaser from "phaser";
 import { getAllPlants, subscribe } from "../state/plantStore.js";
 
@@ -27,6 +30,7 @@ export default class MonsteraScene extends Phaser.Scene {
     this.W = this.scale.width;
     this.H = this.scale.height;
     this.plant = this.findPlant();
+    initializeReadingEffects(this);
     this.cameras.main.setBackgroundColor("#3b2419");
     this.drawBackground();
     this.drawHeader();
@@ -34,11 +38,13 @@ export default class MonsteraScene extends Phaser.Scene {
     this.drawActions();
     this.drawStats();
     this.drawAbout();
+    initializeWatering(this);
     this.refreshStats();
 
     this.unsubscribe = subscribe(() => {
       this.plant = this.findPlant();
       this.refreshStats();
+      refreshReadingEffects(this);
     });
     this.scale.on("resize", this.onResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -106,8 +112,8 @@ export default class MonsteraScene extends Phaser.Scene {
     hit.on("pointerover", () => arrow.setColor("#ffffff"));
     hit.on("pointerout", () => arrow.setColor("#ffe0a3"));
     hit.on("pointerdown", () => {
-      if (this.scene.manager.keys.StorageScene) this.scene.start("StorageScene");
-      else console.warn("StorageScene has not been registered.");
+      this.registry.get("audio")?.sfx("ui_select");
+      this.registry.get("navigate")("/storage");
     });
   }
 
@@ -118,14 +124,15 @@ export default class MonsteraScene extends Phaser.Scene {
     glow.fillStyle(0xb57a37, 0.12).fillEllipse(W / 2, centerY, W * 0.43, H * 0.47);
     const shadow = this.add.graphics();
     shadow.fillStyle(0x1b110c, 0.55).fillEllipse(W / 2, H * 0.625, W * 0.26, 20);
-    const target = Math.min(W * 0.47, H * 0.47, 410);
+    const target = Math.min(W * 0.47, H * 0.38, 410);
     if (this.textures.exists("MonsteraPlant")) {
       this.plantSprite = this.add.image(W / 2, centerY, "MonsteraPlant");
       this.plantSprite.setDisplaySize(target, target);
     } else {
       this.plantSprite = this.label(W / 2, centerY, "🌿", 75);
     }
-    this.tweens.add({ targets: this.plantSprite, y: centerY - 6, duration: 2300,
+    initializePlantGrowth(this);
+    this.tweens.add({ targets: this.plantSprite, y: this.plantSprite.y - 6, duration: 2300,
       yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
     for (let i = 0; i < 6; i++) {
       const x = W / 2 + (i % 2 ? 1 : -1) * (target * (0.22 + (i % 3) * 0.13));
@@ -139,7 +146,7 @@ export default class MonsteraScene extends Phaser.Scene {
   drawActions() {
     const { W, H } = this;
     const actions = [
-      { name: "WATER", icon: "💧", x: W * 0.17, y: H * 0.27, type: "water", color: 0x4fc7fa },
+      { name: "WATER +10%", icon: "💧", x: W * 0.17, y: H * 0.27, type: "water", color: 0x4fc7fa },
       { name: "BRIGHTEN", icon: "☀", x: W * 0.83, y: H * 0.27, type: "light", color: 0xffc74d },
       { name: "ADD CO₂", icon: "CO₂", x: W * 0.17, y: H * 0.52, type: "co2", color: 0x9ce7a0 },
       { name: "FERTILIZE", icon: "✿", x: W * 0.83, y: H * 0.52, type: "fertilize", color: 0x94d56e }
@@ -159,6 +166,7 @@ export default class MonsteraScene extends Phaser.Scene {
         Math.max(10, Math.min(15, radius * 0.29)), "#3b2315", { strokeThickness: 0 });
       const hit = this.add.zone(action.x, action.y, radius * 2.2, radius * 2.4)
         .setInteractive({ useHandCursor: true });
+      if (action.type === "water") this.waterButton = hit;
       hit.on("pointerover", () => ring.setAlpha(0.75));
       hit.on("pointerout", () => ring.setAlpha(1));
       hit.on("pointerdown", () => this.applyAction(action));
@@ -166,10 +174,12 @@ export default class MonsteraScene extends Phaser.Scene {
   }
 
   applyAction(action) {
+    if (action.type === "water") { waterPlant(this); return; }
     if (!this.plant) {
       console.warn("Cannot request care: plant not found in store.");
       return;
     }
+    playCareSound(this, action.type);
     // Backend must validate requests and enforce safe physical limits.
     this.game.events.emit("plant:care-request", {
       plantId: this.plant.plantId,
@@ -178,8 +188,7 @@ export default class MonsteraScene extends Phaser.Scene {
     });
     this.particleBurst(action.icon);
     this.tweens.add({ targets: this.plantSprite,
-      scaleX: this.plantSprite.scaleX * 1.035,
-      scaleY: this.plantSprite.scaleY * 1.035,
+      alpha: 0.85,
       duration: 170, yoyo: true });
   }
 
@@ -232,6 +241,8 @@ export default class MonsteraScene extends Phaser.Scene {
   }
 
   refreshStats() {
+    refreshWatering(this);
+    refreshPlantGrowth(this);
     for (const [key, widget] of Object.entries(this.statWidgets)) {
       const value = this.plant?.[key];
       const valid = typeof value === "number" && Number.isFinite(value);

@@ -547,7 +547,7 @@ export default class StorageScene extends Phaser.Scene {
     );
 
     const image = IMAGE_BY_SPECIES[
-      species.toLowerCase()
+      species.trim().toLowerCase()
     ];
 
     const message = this.getMessage(plant);
@@ -575,15 +575,11 @@ export default class StorageScene extends Phaser.Scene {
           plant.plantId
         );
 
-        const target = image === "cast-iron-plant"
-          ? "CastIronScene"
-          : "MonsteraScene";
+        const path = image === "cast-iron-plant"
+          ? "/cast_iron"
+          : "/monstera";
 
-        if (this.scene.manager.keys[target]) {
-          this.scene.start(target, {
-            plantId: plant.plantId
-          });
-        }
+        this.registry.get("navigate")(path);
       });
     } else {
       sprite = this.track(

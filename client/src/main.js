@@ -4,6 +4,7 @@ import BossScene from "./scenes/BossScene.js";
 import StorageScene from "./scenes/StorageScene.js";
 import CastIronScene from "./scenes/CastIronScene.js";
 import MonsteraScene from "./scenes/MonsteraScene.js";
+import FootageScene from "./scenes/FootageScene.js";
 import "./style.css";
 import "@fontsource/silkscreen/400.css";
 import "@fontsource/silkscreen/700.css";
@@ -20,7 +21,8 @@ const routes = {
   "/boss": "BossScene",
   "/storage": "StorageScene",
   "/cast_iron": "CastIronScene",
-  "/monstera": "MonsteraScene"
+  "/monstera": "MonsteraScene",
+  "/footage": "FootageScene"
 };
 
 function getSceneFromURL() {
@@ -41,7 +43,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, BossScene]
+  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, FootageScene, BossScene]
 };
 
 // The pixel fonts must be ready before any scene writes with them, or the first words come out
@@ -79,7 +81,7 @@ feedPlants(null);   // example plants until the game server answers
 
 // Navigate between URLs and scenes. The plant screens (Storage and its detail pages) sit on top of
 // the forest, so going anywhere else closes whichever of them is open.
-const PLANT_SCENES = ["StorageScene", "CastIronScene", "MonsteraScene"];
+const PLANT_SCENES = ["StorageScene", "CastIronScene", "MonsteraScene", "FootageScene"];
 function navigate(path) {
   const sceneName = routes[path];
 

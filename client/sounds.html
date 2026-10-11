@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sound audition</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #0c1126; color: #f4f7ff; font: 14px ui-monospace, Menlo, monospace; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p { color: #8f9bc4; margin: 0 0 18px; }
+    h2 { font-size: 13px; color: #ffd867; margin: 22px 0 8px; text-transform: uppercase; }
+    button { background: #131a36; color: #f4f7ff; border: 2px solid #3a4788; padding: 8px 12px; margin: 0 8px 8px 0; font: inherit; cursor: pointer; }
+    button:hover { border-color: #fff; }
+    button.on { border-color: #ffd867; color: #ffd867; }
+  </style>
+</head>
+<body>
+  <h1>Sound audition</h1>
+  <p>Click anything to hear it. Songs play until you stop them. This page is for the dev server only.</p>
+  <div id="app"></div>
+  <script type="module">
+    import { audio } from "/src/audio.js";
+    const groups = {
+      "The screen": ["tick", "pick", "no", "call", "unmute"],
+      "The boss's wind-up": ["tellSure", "tellLikely", "tellFlip", "heavy", "bluff"],
+      "Ember's moves": ["move_haymaker", "move_aegis", "move_flare", "move_inferno"],
+      "Zest's moves": ["move_bladeRush", "move_stripeWall", "move_citrusVolt", "move_sunburst"],
+      "Tagged figures' skills": ["move_thorns", "move_sunlight", "move_bark"],
+      "The boss's moves": ["boss_bite", "boss_ray", "boss_quake"],
+      "Blows": ["hit", "crit", "hurt", "graze", "block", "clash", "miss"],
+      "The team": ["heal", "charged", "faint", "swap"],
+      "The boss arrives": ["alarm", "bound", "treeFall", "land", "roar", "cut", "battleStart", "enrage"],
+      "The end": ["boom", "victory", "defeat", "water"],
+    };
+    const app = document.getElementById("app");
+    const add = (title, items, run) => {
+      const h = document.createElement("h2"); h.textContent = title; app.appendChild(h);
+      for (const name of items) { const b = document.createElement("button"); b.textContent = name; b.onclick = () => run(name, b); app.appendChild(b); }
+    };
+    add("Songs", ["forest", "battle", "battle (enraged)", "silence"], (name, b) => {
+      audio.unlock();
+      document.querySelectorAll("button.on").forEach((x) => x.classList.remove("on"));
+      if (name === "silence") { audio.music(null); return; }
+      audio.setRage(name.includes("enraged"));
+      audio.music(name.split(" ")[0]); b.classList.add("on");
+    });
+    for (const [title, items] of Object.entries(groups)) add(title, items, (name) => { audio.unlock(); audio.play(name); });
+    window.audio = audio;
+  </script>
+</body>
+</html>

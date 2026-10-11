@@ -6,6 +6,7 @@ import { preloadBossArt } from "../data/bosses.js";
 import { preloadPlantArt } from "../data/plants.js";
 import { createPetParade } from "../render/petParade.js";
 import { createCastShadow, outlineOfPicture } from "../render/castShadow.js";
+import { audio } from "../audio.js";
 
 export default class AdventureScene extends Phaser.Scene {
   constructor() {
@@ -22,6 +23,7 @@ export default class AdventureScene extends Phaser.Scene {
   }
 
   create() {
+    audio.music("forest");
     this.walking = true;
     this.speed = 85;
 
@@ -182,24 +184,6 @@ export default class AdventureScene extends Phaser.Scene {
     this.footL = makeFoot(0, splitX + seamOverlap);
     this.footR = makeFoot(splitX - seamOverlap, frameW - (splitX - seamOverlap));
 
-    // UI
-
-    this.add.text(20, 13, "PLANT CARE RPG", {
-      fontFamily: "monospace",
-      fontSize: "22px",
-      color: "#fff5df",
-      stroke: "#593a31",
-      strokeThickness: 4
-    }).setDepth(21);
-
-    this.statusText = this.add.text(
-      570, 19, "EXPLORING...", {
-        fontFamily: "monospace",
-        fontSize: "27px",
-        color: "#ffe4a0"
-      }
-    ).setDepth(21);
-
     // Fireflies, drifting petals and a soft vignette
     addForestAmbience(this);
 
@@ -251,6 +235,7 @@ export default class AdventureScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.flash(110, 255, 255, 255);
+    audio.play("cut");
     this.time.delayedCall(170, () => cam.flash(110, 255, 255, 255));
     this.time.delayedCall(340, () => {
       cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, go);
@@ -1886,6 +1871,7 @@ export default class AdventureScene extends Phaser.Scene {
       const was = this.lastServerMode;
       this.lastServerMode = mode;
       if (mode === "boss" && was !== "boss") {
+        audio.play("alarm");
         this.entrance.start(state);
       } else if (mode !== "battle" && this.entrance.isActive() && !this.cutting) {
         // the boss left before the fight started (the soil got wet, or the sensor dropped out)

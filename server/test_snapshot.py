@@ -30,13 +30,14 @@ def as_sent(e):
 
 
 class SchemaTests(unittest.TestCase):
-    def test_old_engine_battle_log_is_unchanged(self):
-        e = GameEngine(rng=random.Random(1))
+    def test_old_engine_battle_log_has_no_database_fields(self):
+        e = GameEngine(rng=random.Random(1), need_pads=False)
         e.manual = True
         e.on_demo_boss(0.0, "A")
         e.tick(INTRO_DONE)
         e.on_player_move("attack", INTRO_DONE + 1.0)
-        self.assertEqual(set(e.battle.last_move), {"creature", "boss", "hit"})
+        for key in ("move_id", "actor_pad", "actor_plant_id"):
+            self.assertNotIn(key, e.battle.last_move)
 
     def test_old_engine_says_schema_1_and_has_no_new_fields(self):
         snap = as_sent(GameEngine())
@@ -100,11 +101,15 @@ class BattleSchemaTests(unittest.TestCase):
         moves = battle["moves"]
         self.assertEqual([m["move_id"] for m in moves], ["ember-vine-haymaker", "ember-petal-aegis", "ember-flamingo-flare", "inferno-bloom"])
         self.assertEqual(moves[0]["animation"], {"body": "strike", "fx": "haymaker"})
-        self.assertTrue(all(m["ready"] for m in moves))
+        self.assertTrue(all(m["ready"] for m in moves if m["category"] != "skill"))
+        skill = [m for m in moves if m["category"] == "skill"][0]
+        self.assertEqual(skill["ready"], B.skill_ready(e.battle))
 
     def test_skill_button_shows_not_ready_while_recharging(self):
         e, t = self.into_battle()
+        e.battle = replace(e.battle, charge=C.SKILL_CHARGE_NEED)
         e.on_player_move("inferno-bloom", t)
+        self.assertEqual(e.battle.last_move.get("move_id"), "inferno-bloom")  # the skill was used
         skill = [m for m in as_sent(e)["battle"]["moves"] if m["category"] == "skill"][0]
         self.assertFalse(skill["ready"])
 

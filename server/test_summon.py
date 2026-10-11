@@ -191,7 +191,7 @@ class PumpRegressionTests(unittest.TestCase):
         # as before. Any difference would mean the database changed the watering path itself.
         from unittest import mock
         with mock.patch.object(C, "HP_PER_LEVEL", 0), mock.patch.object(C, "ATK_LEVELS_PER_POINT", 10 ** 6):
-            old = GameEngine(rng=random.Random(7))
+            old = GameEngine(rng=random.Random(7), need_pads=False)
             new = engine(seed=7, manual=False)
             new.on_pad("A", EMBER, 0.0)   # Ember and Zest have the same numbers as the old pad defaults
             new.on_pad("B", ZEST, 0.0)
@@ -240,6 +240,7 @@ class PumpRegressionTests(unittest.TestCase):
                 mock.patch.object(plant_db.PlantDB, "load", side_effect=ValueError("bad plants.json")):
             e = main.make_engine()
         self.assertIsNone(e.plant_db)
+        e.on_pad("A", EMBER, 0.0)   # the old engine needs a tag on the pad too
         to_battle(e)
         self.assertIsNotNone(e.battle)  # still plays (and waters) the old way
 
@@ -338,14 +339,14 @@ class MoreLiftTests(unittest.TestCase):
         e.on_pad("A", EMBER, 0.0)
         e.on_pad("B", ZEST, 0.0)
         t = to_battle(e, "A")
-        e.battle = Bt.replace(e.battle, skill_ready_in=3)
+        e.battle = Bt.replace(e.battle, charge=0)
         e.on_pad("A", "", t)
-        self.assertEqual(e.battle.skill_ready_in, 0)
+        self.assertEqual(e.battle.charge, C.SKILL_CHARGE_NEED)
 
 
 class LegacyStillWorksTests(unittest.TestCase):
-    def test_without_the_database_an_empty_pad_still_fights(self):
-        e = GameEngine(rng=random.Random(1))
+    def test_without_the_database_or_pads_a_plant_still_fights(self):
+        e = GameEngine(rng=random.Random(1), need_pads=False)
         e.manual = True
         to_battle(e)
         self.assertIsNotNone(e.battle)

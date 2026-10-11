@@ -1885,10 +1885,7 @@ function addFootprints(scene) {
   scene.events.once("shutdown", () => scene.events.off("update", onUpdate));
 }
 
-export function addForestAmbience(scene) {
-  const rand = Phaser.Math.FloatBetween;
-  dressDecorations(scene);
-
+function ensureGlow(scene) {
   // a soft dot of light, reused for every firefly and mote
   if (!scene.textures.exists("efGlow")) {
     const { canvas, ctx } = makeCanvas(64, 64);
@@ -1900,10 +1897,20 @@ export function addForestAmbience(scene) {
     ctx.fillRect(0, 0, 64, 64);
     setTexture(scene.textures, "efGlow", canvas);
   }
+}
 
+export function addForestAmbience(scene) {
+  dressDecorations(scene);
+  ensureGlow(scene);
   placeHeroOnPath(scene);
   addFootprints(scene);
+  addAtmosphere(scene);
+}
 
+// Fireflies, wind, swaying trees, falling petals, light shafts, mist and a dark rim. The forest
+// walk and the battle screen both use it.
+function addAtmosphere(scene, living = true) {
+  const rand = Phaser.Math.FloatBetween;
   // fireflies: most behind the dragon, a few in front
   const colors = [0xffe98a, 0xfff3b8, 0xffd76a, 0x9ff4ff, 0xd9b8ff];
   for (let i = 0; i < 38; i++) {
@@ -1945,10 +1952,12 @@ export function addForestAmbience(scene) {
   }
 
   // wind, swaying trees and strands, falling petals, reeds and pond glints
-  try {
-    bringForestToLife(scene);
-  } catch (error) {
-    console.warn("enchanted forest: the moving parts failed, showing the still scene", error);
+  if (living) {
+    try {
+      bringForestToLife(scene);
+    } catch (error) {
+      console.warn("enchanted forest: the moving parts failed, showing the still scene", error);
+    }
   }
 
   // light shafts falling through the trees, in front of the lilac trees and behind the hedge
@@ -2001,4 +2010,93 @@ export function addForestAmbience(scene) {
     setTexture(scene.textures, "efVignette", canvas);
   }
   scene.add.image(400, 225, "efVignette").setDepth(19);
+}
+
+
+// ================================================================ the same forest, for the battle screen
+//
+// The forest the dragon walks through, standing still behind the fight: the same sky, hanging
+// wisteria, far and near trees, hedge and path, with its own swaying trees, drifting petals and
+// fireflies. It only ever adds new pictures made from the textures the walk already painted (and
+// paints them itself if the battle is the first screen opened), so it never disturbs the walk.
+// Everything is put behind the scene's `root` container (give that a depth of 100).
+export function addBattleForest(scene) {
+  const T = scene.textures;
+  if (!T.exists("autumnSky") || !T.exists("efTree2")) paintEnchantedForest(scene);
+  ensureGlow(scene);
+  if (!T.exists("efStrand_bright_0_0")) makeStrandTextures(T);
+  if (!T.exists("efReed0")) makeReedTextures(T);
+  if (!T.exists("efPetal")) {
+    const { canvas, ctx } = makeCanvas(10, 6);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.ellipse(5, 3, 4.6, 2.4, 0, 0, TAU);
+    ctx.fill();
+    setTexture(T, "efPetal", canvas);
+  }
+
+  const life = { wind: new Wind(8181), trees: [], blades: [], glints: [], t: 0 };
+  const layers = [];
+  const add = (obj) => { layers.push(obj); return obj; };
+
+  add(scene.add.image(400, 225, "autumnSky")).setDepth(-10);
+
+  // the hanging wisteria along the top
+  const drapeTypes = ["cloud1", "cloud2", "cloud3"];
+  for (let i = 0; i < 7; i++) {
+    const drape = scene.add.image(i * 160 + 35, 65 + (i % 3) * 30, drapeTypes[i % 3]);
+    drape.setScale(0.8 + (i % 3) * 0.15).setAlpha(0.9).setDepth(-8);
+    buildDrape(scene, life, drape, i);
+  }
+
+  add(scene.add.tileSprite(400, 205, 800, 260, "farMountains")).setDepth(1);
+  const mid = add(scene.add.tileSprite(400, 245, 800, 240, "nearMountains")).setDepth(2);
+  add(scene.add.tileSprite(400, 285, 800, 190, "farForest")).setDepth(3);
+  add(scene.add.tileSprite(400, 305, 800, 160, "nearForest")).setDepth(4);
+  scene.ground = add(scene.add.tileSprite(400, 385, 800, 130, "ground")).setDepth(5);
+  scene.nearMountains = mid;
+
+  // the lilac trees in the middle distance, if the walk has already made them
+  if (T.exists("efMid0_base")) {
+    for (let i = 0; i < 6; i++) {
+      const spec = midTreeSpec(900 + i * 17, i);
+      const bx = i * 200 + (((i * 53) % 44) - 22) + 90;
+      const x = mod(bx + 260, 1200) - 260;
+      if (x < -120 || x > 920) continue;
+      plantTree(scene, life, `efMid${i}`, spec, () => x, 389, 1, i % 3 === 1, 2.01);
+    }
+  }
+
+  // the big wisteria trees along the path, and what grows round their roots
+  const decorSpecs = [101, 211, 307].map((seed, i) => {
+    const spec = decorTreeSpec(seed);
+    if (!T.exists(`efDecor${i}_base`)) buildTreeTextures(T, `efDecor${i}`, spec);
+    return spec;
+  });
+  [[38, 340, 1.5, false], [740, 342, 1.55, true], [392, 316, 1.05, false]].forEach(([x, y, scale, flip], i) => {
+    plantTree(scene, life, `efDecor${i % 3}`, decorSpecs[i % 3], () => x, y, scale, flip, 6);
+  });
+  const groundcover = [
+    ["bush", 120, 340, 1.0], ["efFlower2", 205, 336, 0.85], ["efCrystal", 470, 332, 0.9], ["rock", 628, 338, 0.9],
+    ["efMushrooms2", 700, 336, 0.85], ["efFern", 78, 338, 0.85], ["efBoulder", 330, 340, 0.9], ["flower", 560, 340, 0.85],
+    ["efRune2", 440, 336, 0.9], ["efCrystal2", 785, 336, 0.85], ["grass", 270, 342, 0.85],
+  ];
+  for (const [key, x, y, scale] of groundcover) {
+    if (T.exists(key)) add(scene.add.image(x, y, key).setOrigin(0.5, 1).setDepth(6).setScale(scale));
+  }
+  addGroundLife(scene, life);
+  const petals = new Petals(scene, life.wind, 80);
+  addAtmosphere(scene, false);
+
+  const onUpdate = (time, delta) => {
+    const dt = Math.min(delta / 1000, 0.05);
+    life.t += dt;
+    life.wind.update(life.t);
+    updateTrees(life, life.t, dt);
+    updateGroundLife(scene, life, life.t);
+    petals.update(life.t, dt, false, 0);
+  };
+  scene.events.on("update", onUpdate);
+  scene.events.once("shutdown", () => scene.events.off("update", onUpdate));
+  return life;
 }

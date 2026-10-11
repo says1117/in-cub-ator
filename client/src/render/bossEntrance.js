@@ -17,6 +17,7 @@
 //
 // onStep(step, state) is called as it goes, so others can react (the plants in render/petParade.js do):
 // "spotted", "impact", "faceoff", "roar", and "reset" when everything has been put back.
+import { audio } from "../audio.js";
 import Phaser from "phaser";
 import { bossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "./bossRig.js";
@@ -194,6 +195,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     tween({ targets: boss, scaleY: boss.scaleY * 0.7, duration: 110, yoyo: true });
     after(230, () => bound(fullScale, FAR, MID, 500, 190, () => {
       scene.cameras.main.shake(140, 0.003);
+      audio.play("bound");
       for (let i = 0; i < 6; i++) {
         const puff = keep(scene.add.image(MID.x + Phaser.Math.Between(-22, 22), MID.y - 2, "efGlow"));
         puff.setDepth(4.6).setTint(0xb9a8e0).setScale(0.12).setAlpha(0.6);
@@ -325,6 +327,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
       ease: "Cubic.easeIn",
       onComplete: () => {
         scene.cameras.main.shake(220, 0.008);
+        audio.play("treeFall");
         tween({ targets: tree.broken, angle: flat - dir * 0.07, duration: 110, yoyo: true, ease: "Quad.easeOut" });
         const reach = (tree.spec.height - stump) * tree.scale;
         for (let i = 0; i < 16; i++) {
@@ -476,6 +479,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     after(320, () => {
       tween({ targets: screen, alpha: 0, duration: 180 });
       cam.shake(520, 0.02);
+      audio.play("land");
       onStep("impact");
       wreckTerrain();
       // a quick push-in, as if the landing rocked the camera
@@ -562,7 +566,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     tween({ targets: bottom, y: 427, duration: 260, ease: "Cubic.easeOut" });
 
     // the boss rears up and roars
-    const art = bossArt((state.boss && state.boss.tier) || 1);
+    const art = bossArt(state.boss);
     let mouth = () => ({ x: LAND_X - 62, y: LAND.y - 56 });
     let roarDelay = 0;
     if (hasBossRig(scene, art)) {
@@ -605,6 +609,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
       const dread = keep(scene.add.rectangle(400, 225, 800, 450, 0x2a0410, 0).setDepth(18.5));
       tween({ targets: dread, fillAlpha: 0.34, duration: 160, yoyo: true, hold: 420 });
       scene.cameras.main.shake(roarDelay ? 680 : 300, roarDelay ? 0.011 : 0.006);
+      audio.play("roar");
     });
 
     // the dragon braces: a small hop toward it
@@ -637,8 +642,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
 
   function start(state) {
     if (active) return;
-    const tier = (state && state.boss && state.boss.tier) || 1;
-    const art = bossArt(tier);
+    const art = bossArt(state && state.boss);
     if (!scene.textures.exists(art.key)) {
       // no picture to show: skip straight to the cut
       active = true;

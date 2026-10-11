@@ -5,14 +5,24 @@ import { SERVER_WS_URL, RECONNECT_MS } from "../config.js";
 // Reconnects on its own. Returns { sendDemoBoss, isConnected }.
 export function connectWsSource(onState, onConnection = () => {}) {
   let socket = null;
+  let retry = null;
 
   function open() {
-    socket = new WebSocket(SERVER_WS_URL);
-    socket.onopen = () => onConnection(true);
-    socket.onmessage = (event) => onState(JSON.parse(event.data));
-    socket.onclose = () => {
+    const mine = new WebSocket(SERVER_WS_URL);
+    socket = mine;
+    // An old socket can still fire after a new one has replaced it: only the current one counts.
+    mine.onopen = () => { if (socket === mine) onConnection(true); };
+    mine.onmessage = (event) => {
+      if (socket !== mine) return;
+      let state;
+      try { state = JSON.parse(event.data); } catch { return; }   // a broken message is skipped
+      onState(state);
+    };
+    mine.onclose = () => {
+      if (socket !== mine) return;
       onConnection(false);
-      setTimeout(open, RECONNECT_MS);
+      clearTimeout(retry);
+      retry = setTimeout(open, RECONNECT_MS);
     };
   }
   open();
@@ -21,6 +31,12 @@ export function connectWsSource(onState, onConnection = () => {}) {
     sendDemoBoss() {
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ action: "demo_boss" }));
+      }
+    },
+    // Test only (the server's --sim): lift plant "A" or "B" off the cube, or set it down again.
+    sendSimPad(plant) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "sim_pad", plant }));
       }
     },
     // move is one of: attack, guard, special, skill

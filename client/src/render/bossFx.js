@@ -182,6 +182,179 @@ export const BOSS_FX = {
   },
 };
 
+// ------------------------------------------------------------------ the Sporeling Trio's moves
+// Three mushrooms, so every move is made of three: a three-bite combo, three lobbed spore bombs, and
+// three stamps that send a web of glowing threads under the plant before mushrooms burst up.
+const SPORE_COLORS = [0xff9ad0, 0xb890ff, 0xffffff, 0xe0508f];
+
+// One jaw of a round, blunt-toothed mouth. y is the inner edge, where it meets the other jaw; dir is
+// 1 for the upper jaw (its body is above y, its teeth hang down) and -1 for the lower.
+function lip(g, x, y, width, dir, color, alpha) {
+  const h = width * 0.3, left = x - width / 2;
+  const bodyTop = dir > 0 ? y - h : y;
+  g.fillStyle(0x2a1030, alpha); g.fillRoundedRect(left - 6, bodyTop - 6, width + 12, h + 12, h * 0.5);
+  g.fillStyle(color, alpha); g.fillRoundedRect(left, bodyTop, width, h, h * 0.45);
+  g.fillStyle(0xffffff, alpha * 0.3); g.fillRoundedRect(left + width * 0.08, bodyTop + (dir > 0 ? h * 0.12 : h * 0.55), width * 0.4, h * 0.22, 6);
+  const tooth = width * 0.1;
+  g.fillStyle(0x2a1030, alpha);
+  for (let i = 0; i < 6; i++) g.fillRect(left + width * 0.1 + i * width * 0.145 - 2, dir > 0 ? y - 4 : y - tooth * 1.1 - 2, tooth + 4, tooth * 1.1 + 6);
+  g.fillStyle(0xfff6ec, alpha);
+  for (let i = 0; i < 6; i++) g.fillRect(left + width * 0.1 + i * width * 0.145, dir > 0 ? y - 2 : y - tooth * 1.1, tooth, tooth * 1.1);
+}
+
+// A mushroom shooting up out of the ground. rise: 0 hidden, 1 fully grown.
+function shroom(g, x, groundY, tall, rise, color, alpha) {
+  if (rise <= 0) return;
+  const h = tall * rise, w = tall * 0.2 * Math.min(1, rise * 1.6);
+  g.fillStyle(0x2a1030, alpha); g.fillRoundedRect(x - w / 2 - 4, groundY - h - 2, w + 8, h + 10, 8);
+  g.fillStyle(0xfff0dc, alpha); g.fillRoundedRect(x - w / 2, groundY - h, w, h + 6, 6);
+  const cw = tall * 0.62 * Math.min(1, rise * 1.3), ch = tall * 0.36 * Math.min(1, rise * 1.3);
+  g.fillStyle(0x2a1030, alpha); g.fillEllipse(x, groundY - h, cw + 10, ch + 10);
+  g.fillStyle(color, alpha); g.fillEllipse(x, groundY - h, cw, ch);
+  g.fillStyle(0xffffff, alpha * 0.8);
+  g.fillCircle(x - cw * 0.2, groundY - h - ch * 0.12, cw * 0.07);
+  g.fillCircle(x + cw * 0.15, groundY - h - ch * 0.22, cw * 0.05);
+  g.fillCircle(x + cw * 0.28, groundY - h - ch * 0.02, cw * 0.06);
+}
+
+BOSS_FX.gnash = function gnash(ctx) {
+  // SPORE GNASH: all three snap at the plant, one after another, left to right
+  const { kit, palette } = ctx;
+  ctx.act("gnash");
+  const mouths = ctx.mouths();
+  const closes = [300, 430, 560];       // when each one's jaws shut: the rig's own dives land about here
+  const where = ctx.lands ? ctx.target : ctx.blocked ? { x: ctx.target.x + 150, y: ctx.target.y - 20 } : ctx.meet || between(ctx.boss, ctx.target, 0.5);
+  const spots = [-70, 0, 70].map((dx, i) => ({ x: where.x + dx * (ctx.lands ? 1 : 0.5), y: where.y + (i === 1 ? -36 : 8) }));
+  mouths.forEach((m, i) => {
+    const t = closes[i];
+    // a puff of spores leaves each mouth as it winds up
+    kit.at(t - 150, () => kit.burst(m.x, m.y, { count: 8, colors: SPORE_COLORS, shape: "dia", speed: [80, 260], angle: Math.PI, spread: 1.5, size: [6, 13], life: [300, 600], gravity: -40, add: true }));
+    const size = [0.7, 0.85, 1.15][i] * (ctx.lands ? 1 : 0.75);
+    const at = spots[i];
+    kit.draw(t + 230, (g, k, ms) => {
+      const appear = kit.ease.out(Math.min(1, ms / 90));
+      const close = ms < t - 140 ? 0 : kit.ease.in(Math.min(1, (ms - (t - 140)) / 140));
+      const after = ms > t ? (ms - t) / 230 : 0;
+      const gap = kit.lerp(150, 6, close) * size + after * 24;
+      const alpha = appear * (1 - after);
+      lip(g, at.x, at.y - gap, 190 * size, 1, 0xd878a8, alpha);
+      lip(g, at.x, at.y + gap, 180 * size, -1, 0xc0609a, alpha);
+    }, { delay: Math.max(0, t - 250) });
+    kit.at(t, () => {
+      if (ctx.lands) {
+        const last = i === 2;
+        kit.impact(at.x, at.y, { power: last ? 1.3 : 0.6, color: palette.main, color2: palette.hot, shape: "petal" });
+        kit.burst(at.x, at.y, { count: last ? 22 : 9, colors: SPORE_COLORS, shape: "dia", speed: [120, 520], size: [8, 20], life: [500, 1100], gravity: -80, add: true });
+        if (last) kit.flash(palette.main, 0.28, 140);
+      } else {
+        kit.ring(at.x, at.y, { from: 20, to: 110, color: 0xffffff, thick: 5, ms: 220 });
+        kit.burst(at.x, at.y, { count: 6, colors: SPORE_COLORS, shape: "dia", speed: [100, 300], size: [6, 12], life: [300, 600], gravity: -40 });
+        if (i === 2) kit.shake(90, 0.004);
+      }
+    });
+  });
+  return closes[2] + 40;
+};
+
+BOSS_FX.volley = function volley(ctx) {
+  // SPORE CANNON: they breathe in, heave, and lob three spore bombs high over the field. They
+  // burst into a cloud that hangs where the plant stands.
+  const { kit, palette } = ctx;
+  ctx.act("volley");
+  const mouths = ctx.mouths();
+  const fire = 320, flight = 300;
+  mouths.forEach((m, i) => {
+    kit.at(30 + i * 40, () => kit.gather(m.x, m.y, { count: 14, ms: fire - 120, from: [70, 150], colors: SPORE_COLORS, size: [3, 6], add: true }));
+  });
+  const aims = ctx.lands ? [-45, 0, 45] : [-60, 10, 80];
+  const end = (i) => {
+    if (ctx.lands) return { x: ctx.target.x + aims[i], y: ctx.target.y - 20 + Math.abs(aims[i]) * 0.2 };
+    if (ctx.blocked) return { x: ctx.target.x + 150 + aims[i] * 0.5, y: ctx.target.y - 20 };
+    if (ctx.meet) return { x: ctx.meet.x + aims[i], y: ctx.meet.y };
+    return { x: ctx.target.x - 120 + aims[i], y: ctx.targetGround.y - 10 };
+  };
+  mouths.forEach((m, i) => {
+    const start = fire + i * 70;
+    const to = end(i);
+    kit.at(start, () => {
+      kit.burst(m.x, m.y, { count: 8, colors: SPORE_COLORS, shape: "dia", speed: [160, 420], angle: Math.atan2(to.y - m.y, to.x - m.x), spread: 1.2, size: [6, 12], life: [200, 400], add: true });
+      kit.ring(m.x, m.y, { from: 10, to: 90, color: palette.hot, thick: 6, ms: 220, add: true });
+    });
+    // the bomb: a glowing ball on a high arc, shedding spores
+    kit.draw(flight, (g, k, ms) => {
+      const x = kit.lerp(m.x, to.x, k), y = kit.lerp(m.y, to.y, k) - Math.sin(Math.PI * k) * 190;
+      const r = 20 + 6 * Math.sin(ms * 0.05);
+      for (const [rr, color, a] of [[r * 1.9, palette.main, 0.25], [r * 1.3, palette.hot, 0.6], [r * 0.7, palette.core, 1]]) { g.fillStyle(color, a); g.fillCircle(x, y, rr); }
+      if (Math.floor(ms / 28) !== Math.floor((ms - 16) / 28)) kit.burst(x, y, { count: 2, colors: SPORE_COLORS, shape: "dia", speed: [20, 120], size: [5, 11], life: [300, 600], gravity: 60, add: true });
+    }, { add: true, delay: start });
+    kit.at(start + flight, () => {
+      if (ctx.lands || ctx.blocked) {
+        kit.impact(to.x, to.y, { power: ctx.lands ? (i === 1 ? 1.2 : 0.7) : 0.6, color: palette.main, color2: palette.hot, shape: "petal" });
+      } else {
+        kit.ring(to.x, to.y, { from: 20, to: 130, squash: 0.4, color: palette.hot, thick: 6, ms: 300, layer: "back" });
+      }
+      // the cloud it leaves: big soft puffs that rise slowly and linger
+      kit.burst(to.x, to.y, { count: 8, colors: [0xb890ff, 0xff9ad0, 0xe6d0ff], speed: [30, 150], size: [26, 52], life: [1100, 1900], gravity: -35, radius: 36, alpha: 0.5, fade: 1.2, drag: 0.93 });
+      kit.burst(to.x, to.y, { count: 14, colors: SPORE_COLORS, shape: "dia", speed: [60, 420], size: [6, 14], life: [700, 1500], gravity: -70, add: true });
+      if (i === 1 && ctx.lands) kit.flash(palette.main, 0.3, 160);
+      kit.shake(100, 0.006);
+    });
+  });
+  return fire + flight + 20;
+};
+
+BOSS_FX.mycelium = function mycelium(ctx) {
+  // MYCELIUM QUAKE: they stamp one after another and glowing threads race through the ground
+  // under the plant, then a ring of mushrooms bursts up. Used to counter, it only raises a row.
+  const { kit, palette } = ctx;
+  const g0 = ctx.bossGround;
+  ctx.act("mycelium");
+  const caps = [0.1, 0.5, 0.9].map((s) => ({ x: g0.x - 220 + s * 400, y: g0.y + 6 }));
+  const stamps = [190, 320, 450];
+  if (!ctx.lands) {
+    // a row of mushrooms springs up in front of the Trio: up, hold, down
+    const row = [0, 1, 2, 3, 4].map((i) => ({ x: g0.x - 300 + i * 42, tall: 150 + (i % 2) * 40, color: [0xd878a8, 0x8f6bff][i % 2], wait: i * 35 }));
+    kit.draw(760, (g, k, ms) => {
+      const down = kit.ease.in((k - 0.72) / 0.28);
+      for (const m of row) shroom(g, m.x, g0.y + 8, m.tall, kit.ease.back((ms - 180 - m.wait) / 150) * (1 - down), m.color, 1);
+    });
+    caps.forEach((c, i) => kit.at(stamps[i], () => { kit.ring(c.x, c.y, { from: 20, to: 150, squash: 0.3, color: palette.hot, thick: 5, ms: 260, layer: "back" }); kit.shake(80, 0.004); }));
+    return 220;
+  }
+  const t0 = ctx.targetGround;
+  const strike = 560;
+  caps.forEach((c, i) => {
+    kit.at(stamps[i], () => {
+      kit.shake(120, 0.008);
+      kit.ring(c.x, c.y, { from: 30, to: 210, squash: 0.3, color: palette.hot, thick: 8, ms: 320, layer: "back", add: true });
+      kit.burst(c.x, c.y, { count: 8, colors: SPORE_COLORS, shape: "dia", speed: [80, 300], angle: -Math.PI / 2, spread: 2.4, size: [8, 16], life: [400, 800], gravity: 200, add: true });
+      kit.crack({ x: c.x, y: c.y }, { x: t0.x + (i - 1) * 40, y: t0.y + (i - 1) * 12 }, { ms: 800, race: 0.5, color: palette.main, core: 0xffffff });
+    });
+    // the thread glows on its way: spores trail along the ground
+    for (let n = 1; n <= 4; n++) {
+      kit.at(stamps[i] + n * 50, () => {
+        const p = between(c, { x: t0.x + (i - 1) * 40, y: t0.y }, n / 5);
+        kit.burst(p.x, p.y, { count: 4, colors: SPORE_COLORS, shape: "dia", speed: [30, 140], angle: -Math.PI / 2, spread: 1.8, size: [5, 11], life: [300, 650], gravity: -20, add: true });
+      });
+    }
+  });
+  kit.at(strike - 60, () => kit.glow(t0.x, t0.y, { from: 40, to: 230, squash: 0.3, color: palette.hot, alpha: 0.7, ms: 240, layer: "back" }));
+  const ring = [-3, -2, -1, 0, 1, 2, 3].map((i) => ({ x: t0.x + i * 46 + kit.rand(-8, 8), tall: 230 - Math.abs(i) * 30 + kit.rand(-14, 14), color: [0xd878a8, 0x8f6bff, 0xff9ad0][Math.abs(i) % 3], wait: Math.abs(i) * 30 }));
+  kit.at(strike, () => {
+    kit.draw(900, (g, k, ms) => {
+      const down = kit.ease.in((k - 0.7) / 0.3);
+      for (const m of ring) shroom(g, m.x, t0.y + 8, m.tall, kit.ease.back((ms - m.wait) / 140) * (1 - down), m.color, 1);
+    });
+    kit.impact(t0.x, t0.y - 110, { power: 1.35, color: palette.hot, color2: 0xffffff, shape: "petal" });
+    kit.flash(palette.main, 0.32, 150);
+    kit.ring(t0.x, t0.y, { from: 40, to: 420, squash: 0.3, color: 0xffffff, thick: 10, ms: 460, layer: "back" });
+    kit.burst(t0.x, t0.y - 40, { count: 30, colors: SPORE_COLORS, shape: "dia", speed: [200, 700], angle: -Math.PI / 2, spread: 2.4, size: [8, 20], life: [500, 1100], gravity: 120, add: true });
+    kit.burst(t0.x, t0.y - 30, { count: 10, colors: [0xb890ff, 0xff9ad0, 0xe6d0ff], speed: [40, 200], size: [30, 60], life: [900, 1600], gravity: -50, radius: 120, squash: 0.3, alpha: 0.5, fade: 1.2 });
+    kit.shake(320, 0.012);
+  });
+  return strike;
+};
+
 // Runs a named boss effect and returns when its blow arrives, in ms from now.
 export function playBossFx(name, ctx) {
   const effect = BOSS_FX[name];

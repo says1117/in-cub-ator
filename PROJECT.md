@@ -57,7 +57,7 @@ ESP32  <--MQTT--  broker  <--MQTT--  game server  <--WebSocket--  game screen
 | Topic | Direction | Payload | Meaning |
 | --- | --- | --- | --- |
 | `incube/soil/A`, `incube/soil/B` | ESP32 to server | a raw sensor number, e.g. `2310` | soil reading |
-| `incube/pad/A`, `incube/pad/B` | ESP32 to server | an NFC tag ID, or empty | which creature is on the pad |
+| `incube/pad/A`, `incube/pad/B` | ESP32 to server | an NFC tag ID, or empty when lifted | whether a plant is on the cube, and which figure it is |
 | `incube/status/esp32` | ESP32 to server | `online` or anything else | is the ESP32 alive |
 | `incube/cmd/pump/A`, `incube/cmd/pump/B` | server to ESP32 | milliseconds, e.g. `2000` | run this pump for this long |
 | `incube/debug/boss` | laptop to server | `A` or `B` | force a boss for that plant |
@@ -85,14 +85,18 @@ It checks five times a second. The screen sends two kinds of message back:
   "health": 72.4,
   "condition": "healthy",
   "tier": 1,
-  "boss": {"plant": "A", "name": "Drought Chomper", "tier": 1, "hp": 20, "max_hp": 28,
+  "boss": {"plant": "A", "name": "Drought Chomper", "kind": "chomper", "tier": 1, "hp": 30, "max_hp": 38,
            "type": "drought", "source": "soil"},
   "battle": {"turn": 2, "plant": "A",
              "team": {"A": {"name": "Ember", "hp": 23, "max_hp": 30, "state": "fighting"},
                       "B": {"name": "Zest", "hp": 34, "max_hp": 34, "state": "ready"}},
              "creature": "Ember", "creature_hp": 23, "creature_max_hp": 30,
-             "boss_hp": 20, "last_move": {"creature": "attack", "boss": "special", "hit": "creature"},
-             "skill": {"name": "Inferno Bloom", "ready": true, "ready_in": 0, "recharge": 4},
+             "boss_hp": 30,
+             "last_move": {"creature": "attack", "boss": "special", "shown": "special", "bluffed": false,
+                           "heavy": false, "hit": "creature", "damage": 8, "took": 0},
+             "intent": {"move": "attack", "grade": "likely", "chance": 0.75, "bluff": "special", "heavy": false},
+             "enraged": false, "enrage_hp": 19, "hints": true,
+             "skill": {"name": "Inferno Bloom", "ready": true, "charge": 2, "need": 2},
              "manual": true, "awaiting_move": true, "move_seconds_left": 8},
   "reward": {"type": "water", "plant": "A", "size": 2000, "tier": 1}
 }
@@ -102,9 +106,21 @@ It checks five times a second. The screen sends two kinds of message back:
 - `battle.plant` is the plant fighting right now. `battle.team` lists both plants: `fighting`,
   `ready` (waiting on the bench) or `down` (fainted). `creature`, `creature_hp` and `skill`
   always describe the one that is fighting.
+- `battle.intent` is the boss's **tell** for the coming turn: the move it shows, how sure
+  that is (`grade` is `sure`, `likely` or `flip`, and `chance` is the number), the move it
+  will use instead if this is a bluff, and whether it is a heavy hit. The move it will
+  really use never leaves the server.
+- `battle.last_move` says what happened last turn: both moves, the move the boss had shown,
+  whether that was a bluff, who was hit (`creature`, `boss`, `both`, `tie` or `none`), the
+  damage dealt and the damage taken. The turn the boss drops to half health it also carries
+  `"enraged": true`.
+- `battle.hints` is true on tier 1: the move cards may say outright how they do against the tell.
 - When a plant faints and the other steps in, that turn's `last_move` also carries
   `"swap": {"out": "A", "in": "B", "name": "Zest"}`.
-- `reward` is the **last** reward given. It stays in the state after the fight.
+- After a **lost** fight, `boss` and `battle` stay in the message for 6 seconds (the mode is
+  already `cooldown`) so the screen can play the last blow.
+- `reward` is the reward for the fight just won, or `null` if no pump command was sent. It
+  is cleared when the next fight starts.
 - `boss.source` is `soil` for a real dry-soil boss and `demo` for the demo button.
 - `reward.size` is pump time in milliseconds.
 
@@ -152,17 +168,20 @@ The sensor gives a raw number. The server turns it into a percentage: 0% is bone
 100% is wet. The two calibration numbers are `SOIL_RAW_DRY` (3000) and `SOIL_RAW_WET`
 (1200). They are placeholders until the real sensors are measured.
 
-| Moisture | Tier | Boss | Boss HP | Boss attack | Water on a win |
-| --- | --- | --- | --- | --- | --- |
-| 50% and above | 0 | none | | | |
-| under 50% | 1 | Drought Chomper | 28 | 7 | 2.0 s |
-| under 25% | 2 | Parched Brute | 31 | 7 | 2.5 s |
-| 1% or lower | 3 | Desert Dragon | 34 | 8 | 3.0 s |
+| Moisture | Tier | Boss HP | Boss attack | Water on a win |
+| --- | --- | --- | --- | --- |
+| 50% and above | 0 | no boss | | |
+| under 50% | 1 | 38 | 9 | 2.0 s |
+| under 25% | 2 | 44 | 11 | 2.5 s |
+| 1% or lower | 3 | 48 | 13 | 3.0 s |
+
+**Which boss comes is a separate roll.** Each time a boss is called, the game picks one of two
+at random, **50% each**, whatever the soil says: the **Drought Chomper** or the **Sporeling Trio**
+(`BOSS_KINDS` in `server/config.py`). The tier only sets how strong it is. The pick is kept for
+the whole fight and sent to the screen as `boss.kind`.
 
 A drier plant gets a harder boss and a bigger drink. Every tier is meant to stay winnable,
-because winning is the only way the plant gets watered. With both plants on the team and
-random moves, tier 1 is won almost every time, tier 2 about 97% of the time and tier 3
-about 75%. On tier 3 the first plant is knocked out in about three fights out of four.
+because winning is the only way the plant gets watered. Section 6 has the win rates.
 
 If both plants are dry at once, the **drier one** calls the boss and fights first.
 
@@ -179,46 +198,86 @@ Health is one number from 0 to 100 for the whole cube. It is separate from moist
 shows how long the plant has been neglected.
 
 - While any plant is dry, health drops: 1% per second at tier 1, 2.5% at tier 2, 5% at tier 3.
+- Health holds still while a boss is arriving, being fought, or has just been beaten.
 - While every plant is fine, health climbs back at 3% per second.
 - Winning a fight adds 25 straight away.
 
 | Health | Condition shown | Effect |
 | --- | --- | --- |
-| 60 and above | healthy | none |
-| under 60 | weary | none |
-| under 30 | wilting | none |
-| 0 | wilted | both plants' attack is cut to 80% |
+| 60 and above | healthy | a fight starts with the skill half charged |
+| under 60 | weary | a fight starts with the skill empty |
+| under 30 | wilting | the same |
+| 0 | wilted | the same, and both plants' attack is cut to 80% |
 
 A wilted plant can still fight and still win, and a win waters it. There is always a way back.
 
 ## 6. The battle
 
-One sentence: **each turn you and the boss both pick attack, guard or special; attack beats
-special, special beats guard, guard beats attack; whoever wins the turn hits for their
-attack number; a tie does nothing.**
+One sentence: **the boss shows the move it is winding up and how sure that is; beat it to
+hit and charge your skill, or copy it to stay safe when it may be a bluff.**
 
 ```
    attack  --beats-->  special  --beats-->  guard  --beats-->  attack
 ```
 
-- The boss always picks at random.
-- The dragon does not fight. It sends in a plant. The plant has HP and an attack number, and
-  so does the boss.
-- **The thirsty plant goes first**: the one whose dry soil called the boss.
-- **If it faints, the other plant steps in**, once, at full HP and with its own skill ready.
+Each turn you and the boss both use attack, guard or special.
+
+- **You win the turn:** you hit for your attack number, and your skill gains one charge.
+- **You lose the turn:** the boss hits you for its attack number.
+- **A tie:** the two moves clash and your plant is grazed for half a boss hit, rounded down.
+
+**The tell.** Before you pick, the boss shows a move and a grade:
+
+| Grade | Chance the shown move is real | If it is not |
+| --- | --- | --- |
+| SURE | 100% | |
+| LIKELY | 75% | it uses the bluff move, which is shown too |
+| COIN FLIP | 50% | the same |
+
+The bluff move is always the one that beats the obvious answer: it shows attack, you guard,
+it uses special. A bluff that lands hits 1.5 times as hard. So against a coin flip, copying
+the shown move is the safe play: a graze if it was real, a hit for you if it was the bluff.
+
+**What makes the three tiers different** (either boss can be any tier)
+
+| Tier | Calm tells | Enraged tells | Its own trick |
+| --- | --- | --- | --- |
+| 1 mild | always SURE | 70% LIKELY, 30% COIN FLIP | the move cards say WINS, CLASH or LOSES |
+| 2 dry | always LIKELY | half LIKELY, half COIN FLIP | every third turn is a HEAVY wind-up: SURE, and it hits double |
+| 3 bone dry | half LIKELY, half COIN FLIP | 25% LIKELY, 75% COIN FLIP | heavy wind-ups too, and once enraged they can be bluffs |
+
+- **Enraged:** at half health the boss roars. From the next turn it hits harder (+2, +2, +3)
+  and its tells get shakier, as in the table.
+- **It notices a repeated move:** use the same plain move twice running and the boss will
+  probably show the move that beats it (50%, 75%, 90% by tier).
+- No single boss hit takes more than 24, so one mistake never ends a fight.
+
+**The team**
+
+- The dragon does not fight. It sends in a plant. **The thirsty plant goes first**: the one
+  whose dry soil called the boss.
+- **If it faints, the other plant steps in**, once, at full HP and with its skill charged.
   The boss keeps whatever HP it had left. The fight is lost only when both plants are down.
 - Whichever plant lands the last hit, the water goes to the plant that called the boss.
 - Your fourth button is the fighting plant's **skill** (next section).
 
+**How winnable it is** (measured by `BalanceTests`, thousands of fights each)
+
+| Player | Tier 1 | Tier 2 | Tier 3 |
+| --- | --- | --- | --- |
+| Answers every tell (this is also what the game plays by itself) | 97% | 97% | 81% |
+| Random buttons | 66% | 35% | 25% |
+| One key held down, or always copying the boss | under 50% | under 20% | under 20% |
+
 **Timing**
 
-- You have **10 seconds** to pick. If you do not, the game picks for you: the skill if it
-  is ready, otherwise a random move. A fight can never hang.
-- After each turn there is a 2.6 second pause before the next move is accepted, so the
-  screen has time to play both moves. A turn where a plant faints adds 1.6 seconds, for
-  the other plant to come in.
+- You have **10 seconds** to pick. If you do not, the game picks for you: it answers the
+  tell, and uses a charged skill unless the boss shows an attack. A fight can never hang.
+- After each turn there is a 4.8 second pause before the next move is accepted, so the
+  screen has time to play both moves. A turn where a plant faints adds 1.6 seconds, and the
+  turn the boss becomes enraged adds 1.
 - If **no game screen is connected**, the server plays the whole fight by itself, one turn
-  every 2.6 seconds. The plant still gets watered if it wins.
+  every 4.8 seconds. The plant still gets watered if it wins.
 
 ## 7. The two plants and their skills
 
@@ -229,9 +288,20 @@ The fighters are the two plants themselves (`PLANT_FIGHTERS` in `server/config.p
 | A | Ember | an anthurium with red flowers | 30 | 8 | Inferno Bloom |
 | B | Zest | a striped lemon-lime dracaena | 34 | 7 | Sunburst |
 
-Each plant pad can also hold an NFC-tagged figure. A tag listed in `server/creatures.json`
-replaces that plant's name and numbers for the fight. A tag that is not in the file, or an
-empty pad, leaves the plant as it is.
+**A plant is only in the game while its pad reads a tag** (the NFC chip on its pot, `config.PLANTS_NEED_PADS`).
+Lift it and it is gone: it has no moisture meter, it cannot call a boss, it takes no part in a fight and
+it is never watered. Set it back down and it returns. A plant that is lifted while it is calling a boss
+(or fighting) sends the boss away with no reward; a lifted bench plant just leaves the fight. With no
+plant on the cube there is no boss at all, the demo button does nothing and the status panel is empty.
+The state message has `present` (`{"A": true, "B": false}`) and `meters.water` is `null` for a plant that
+is not there. On screen the plants follow the dragon only while present, and poof away and back
+(`render/petParade.js`). With `--sim` both plants start on the cube, and the screen shows "Lift Ember" and
+"Lift Zest" buttons that stand in for the pads. Set `PLANTS_NEED_PADS = False` for a cube whose pads
+are not wired up: both plants then always count.
+
+An NFC-tagged figure on a pad counts as a plant too. A tag listed in `server/creatures.json`
+replaces that plant's name and numbers for the fight. A tag that is not in the file leaves the
+plant as it is.
 
 | Figure | HP | Attack | Skill |
 | --- | --- | --- | --- |
@@ -239,13 +309,15 @@ empty pad, leaves the plant as it is.
 | Mossling | 36 | 6 | Photosynthesis |
 | Barkhorn | 32 | 7 | Bark Shield |
 
-A skill **always works**, whatever the boss picked. After you use it, it needs **4 turns**
-to recharge. Pressing skill while it is recharging counts as a plain attack.
+A skill **always works**, whatever the boss does. It needs **2 charges**, and every turn won
+with a plain move adds one. A fight starts with 1 charge (0 if health is under 60). The plant
+that steps in from the bench arrives fully charged. Using the skill empties it. Pressing
+skill before it is charged counts as a plain attack.
 
 | Skill | What it does | Can the boss still hit you that turn? |
 | --- | --- | --- |
-| Inferno Bloom (Ember) | hits for 1.25 times your attack | yes, if the boss picked attack |
-| Sunburst (Zest) | heals 8 HP and hits for half your attack | yes, if the boss picked attack |
+| Inferno Bloom (Ember) | hits for 1.75 times your attack (14) | yes, if the boss picked attack |
+| Sunburst (Zest) | heals 8 HP and hits for 0.75 times your attack (5) | yes, if the boss picked attack |
 | Thorn Burst | hits for your full attack | yes, if the boss picked attack |
 | Photosynthesis | heals 8 HP (never above your maximum) | yes, if the boss picked attack |
 | Bark Shield | blocks everything and bounces back half your attack | no |
@@ -260,19 +332,29 @@ The rules only know attack, guard, special and skill. Each fighter does them its
 | Zest | Blade Rush: darts in and cuts three times | Stripe Wall: striped blades stab up as a fence; if it holds they launch | Citrus Volt: a ball of lightning jumps to the boss | Sunburst: a small sun heals Zest, then spears the boss |
 | Boss | a pair of huge jaws snaps shut | it slams the ground: a crack races over and roots spike up | a ball of heat builds in its mouth, then a beam | none |
 
-The three boss tiers share these moves under their own names and colours (`BOSS_MOVES` and
-`BOSS_PALETTES` in `client/src/data/bosses.js`): red heat for the Chomper, sand and gold
-for the Brute, cold violet fire for the Dragon.
+Both bosses use these three moves under their own names and colours (`BOSS_MOVES` and
+`BOSS_PALETTES` in `client/src/data/bosses.js`): red heat for the Chomper (Chomp, Scorch Ray,
+Thorn Quake) and pink spores for the Sporeling Trio (Spore Gnash, Spore Cannon, Mycelium Quake).
 
-Both sides always show their move, even the one that lost the turn. The plant goes first
-and the boss answers. If the plant's guard is what won, the boss strikes first and breaks
-on the shield. A tie has both go at once and meet in the middle.
+The **Sporeling Trio** is three sad mushrooms on one patch of ground, a flat picture
+(`client/public/assets/bosses/sporelings.png`) with no moving pieces. Where the Chomper opens
+its mouth to roar, the Trio rears up and shakes. Its attacks come from the left-hand mushroom's
+mouth (`mouth` in `bosses.js`).
+
+Both sides always show their move, even the one that lost the turn, and the turn is told
+line by line. "EMBER USED VINE HAYMAKER!" types out, a beat passes, the move plays, and a
+word says how it went (DIRECT HIT!, BOOM!, CRITICAL HIT!, KNOCKOUT!, IT FAILED!). After a
+pause the boss gets its line, its move and its word (OUCH!, CRUNCH!, HEAVY HIT!, NO
+EFFECT!, and BLUFF! when the tell was a lie). If the plant's guard is what won, the boss
+strikes first and breaks on the shield (BLOCKED!). A tie has both go at once and meet in
+the middle (CLASH!). CRITICAL HIT is a label for a hit of 9 or more, not a rule.
 
 **Adding a skill or a move later** takes three small steps, and the first is the only one
 that changes the rules:
 
 1. The rule: add the skill to `SKILLS` in `server/config.py` and give it to a plant in
    `PLANT_FIGHTERS`. `battle.py` already understands `damage_factor`, `heal` and `block`.
+   The tagged figures' skills keep their old strength and were not rebalanced for the tells.
 2. The body: how the plant moves is an "action" in `client/src/render/plantRig.js` (strike,
    rush, guard, cast, channel, hurt, hop, cheer and so on). An action is one small function that turns a few
    dials (lift, lean, stretch, arms open, a named arm pose). The notes at the top of that
@@ -303,7 +385,8 @@ firmware's. Losing sends nothing.
 The readings are marked **stale** when either:
 
 - the ESP32 publishes anything other than `online` on its status topic, or
-- no soil reading has arrived for **30 seconds**.
+- no soil reading has arrived for **30 seconds**. Only soil readings count: a repeated
+  `online` message cannot hide sensors that have stopped.
 
 When that happens:
 
@@ -313,9 +396,12 @@ When that happens:
 
 The moment any soil reading arrives again, the readings count as fresh.
 
+Before the ESP32 has been heard from at all (a server just started with no hardware), the
+game is fully playable but **no pump command is sent**, even for a won demo fight.
+
 ## 10. The demo button
 
-The red **DEMO BOSS** button on the game screen summons a boss without waiting for dry
+The **DEMO BOSS** button on the game screen summons a boss without waiting for dry
 soil. It is for showing the project on stage.
 
 - It picks the plant that has a creature on its pad. If both or neither has one, it picks
@@ -337,8 +423,65 @@ The screen is a Phaser 4 game, 800 by 450, drawn in code with a few picture file
 | `BossScene` | `/boss` | The battle screen, in the style of a monster-battle game: the fighting plant at the front left, the boss at the back right, the dragon and the other plant waiting behind. |
 | `StorageScene` | `/storage` | A placeholder plant list. Not wired to anything. |
 
-**On top of the game** sits a small panel (`ui/statusBar.js`): water bars for A and B, the
-health bar, the condition, a "BOSS ALERT" banner, the connection status and the demo button.
+**On top of the forest** sits an overlay in the same pixel style as the battle screen
+(`ui/statusBar.js`): a water bar for each plant with a mark at the 50% line, the vigor
+(health) bar, a note when the cube is weary or offline, a "BOSS ALERT" banner, a line that
+says what is going on, the connection status, the demo button and the sound switch. If the
+game server cannot be reached it says so in the middle of the screen.
+
+**Sound** (`audio.js`) is made in code: there are no sound files. Voices are built from
+detuned stacks, FM bells, filter sweeps, distortion and noise, with a shared reverb, a drum
+kit and a gentle limiter. Two songs play (below) and every event has a sound of its own. The
+M key or the SOUND button turns it all off. A browser only allows sound after the first key
+press or click; for a kiosk start Chromium with `--autoplay-policy=no-user-gesture-required`.
+On the dev server, `/sounds.html` lists every sound and both songs to click and hear.
+
+How each event sounds, what else was considered, and why this one won. The choice is fixed:
+the same event always gets the same sound.
+
+| Event | What is happening | Considered | Chosen |
+| --- | --- | --- | --- |
+| Forest walk | calm, nothing to do but watch | a loop of wind only; a slow solo piano; a pad with a plucked arpeggio and a tune | **Forest song**: D major, 72 bpm, warm pad, harp arpeggio, a flute tune, birds, wind. It has a story over 8 bars and never fights the alarm. |
+| Boss alert | dry soil called a boss | a plain beep; a rising horn; a two-tone siren | **Siren and low swell**: four siren pulses, then a deep swell, so it feels like something is coming |
+| Boss far off | it bounds once, far away | silence; a distant drum | **Small thump** with dust |
+| Tree breaks | it knocks a tree down | a single crash | **Crack, creak, crash** in three parts |
+| Boss lands | big impact, the ground jumps | a short boom; a boom with a falling sine; a layered impact | **Layered impact**: sub-bass drop, noise crash, rumble, and the music ducks |
+| Boss roars | it roars at the dragon | a growl sample (not allowed); noise only; a distorted saw with a flutter, plus voice-like noise bands | **Distorted saw growl** with two moving noise bands |
+| Cut to fight | two flashes, then the fight screen | a whoosh; a hit and a riser | **Two sharp hits then a riser** |
+| Fight starts | the battle screen opens | straight into the song; a drum hit; a sting then the song | **Sting** (kick, cymbal, minor chord, toms), then the **Battle song** fades in half a second later |
+| Battle song | the whole fight | four-on-the-floor dance; slow dark ambient; driving rock with a hook | **Battle song**: A minor, 138 bpm, kick and snare, pumping saw bass, fast arpeggio, a lead hook. It builds over 8 bars and rolls into the loop. |
+| Boss wind-up shown | the tell appears | one beep for all; a different sound per grade | **A different sound per grade**: SURE a clear fifth, LIKELY a minor third left hanging, COIN FLIP a spinning coin. You can hear how sure it is. |
+| Heavy wind-up | a double-damage hit is coming | a drum roll; a low warning tone; a heartbeat with a rising growl | **Heartbeat and a rising growl** |
+| Pick a move | you choose a card | a click; a blip; a two-note bell | **Two-note bell**; a dull buzz if the skill is not ready |
+| Line typing out | "EMBER USED ..." types in | silence; a typewriter; a quiet tick | **Quiet tick** in three pitches, so it does not drone |
+| Ember attack, Haymaker | a burning fist | a plain whoosh; whoosh plus flame | **Wind-up whoosh and a flame roar** |
+| Ember guard, Aegis | a wheel of petals | a clang; a chime; a shimmering bell chord | **Shimmering bell chord** |
+| Ember special, Flare | burning petals corkscrew | a laser; a rising saw; a rising saw with crackle | **Rising saw with a wobble and crackle** |
+| Ember skill, Inferno Bloom | a long charge, then a pillar of fire | a boom; a riser then a boom; riser, boom, and sparkles | **Riser, eruption, sparkle shower** |
+| Zest attack, Blade Rush | three quick cuts | one slash; three slashes | **Three metallic slashes**, left to right |
+| Zest guard, Stripe Wall | blades stab up as a fence | one thud; a stab per blade | **Four rising plucked stabs** |
+| Zest special, Citrus Volt | a ball of lightning | white noise; a buzz; random zaps with a hum | **Random zaps over a buzzing hum** |
+| Zest skill, Sunburst | a small sun, heals | a harp; a warm chord; a swelling chord then sparkles | **Swelling major chord, then sparkles** |
+| Boss bite | huge jaws | a growl; a snap; a growl, then a snap and a thud | **Growl, then the jaws shut** with a thud, in time with the picture |
+| Boss ray | a beam, aimed first | a laser; a charge hum then a beam | **Rising charge, then a roaring beam** |
+| Boss quake | roots spike up | a rumble; rumble, crack, snaps | **Rumble, crack, then roots snapping up** |
+| Plant lands a hit | damage to the boss | a thud; a thud and a slap; a layered punch | **Layered punch** (noise, sub thump, a crack), slightly different each time |
+| Big hit, or the last blow | 9 damage or more, or a knockout | the same, louder; a bigger layered hit | **Bigger layered hit** with a bell shimmer; the music ducks |
+| Plant is hurt | damage to the plant | the same as a hit; a thud and a short cry | **Thud and a short falling cry** |
+| Tie graze | a small hit in a clash | silence; a small thud | **Small thud** |
+| Block | a guard holds | a thump; a clang | **Metal clang** with a ring |
+| Clash | two moves meet | the block sound; a blast | **Clang plus a blast** |
+| Whiff, no effect | a move does nothing | silence; a flat drop; air and a small drop | **Air and a small drop** |
+| Bluff | the tell was a lie | a laugh (not allowed); a buzzer; falling plucks and a sneer | **Falling plucks and a sneer** |
+| Heal | plant recovers | a chime; a harp run with sparkle | **Harp run with sparkle** |
+| Skill ready | the skill is charged | a ding; a rising arpeggio | **Rising arpeggio and a bell** |
+| Plant faints | knocked out | a thud; a falling slide and a thud | **Falling slide and a thud** |
+| Next plant steps in | "GO!" | a horn; a whoosh and two bounds | **Whoosh, two bounds and a rising bell** |
+| Boss enraged | it loses its temper | a louder roar; roar, riser, hit, toms | **Roar, riser, hit and toms**; the Battle song speeds up to 160 bpm with a doubled lead, a double-time hat and a busier kick |
+| Boss defeated | it comes apart | an explosion; an explosion and sparkles | **Deep boom, crash and a shower of bells** |
+| Victory | you win | a jingle; a fanfare | **Brass fanfare** in C, timpani, cymbal and bells |
+| Defeat | you lose | a buzzer; a slow falling phrase | **Slow falling phrase** in A minor |
+| Watering | the real pump runs | a loop of water; a motor and a stream | **Motor hum, a stream, bubbles, then drips**, as long as the real pump |
 
 **The two plants in the forest**
 
@@ -362,9 +505,16 @@ health bar, the condition, a "BOSS ALERT" banner, the connection status and the 
   in from the bench, growing as it comes forward.
 - The screen: the fighting plant's plate is top left (its face, HP, the soil it is fighting
   for, and the plant on the bench under it), the boss's plate is top right, and the four
-  move cards run along the bottom. Each card says what the move beats and loses to. The
-  skill card shows how many turns until it is ready. Health bars only drop when the blow
-  lands, and a banner calls out each move by name. Keys 1 to 4 pick a card.
+  move cards form a block of two by two at the bottom right, a little see-through so the
+  field shows behind them. A small plate at the bottom left holds the log line. Each card says what the move beats and loses to. The
+  skill card shows its charges. Health bars only drop when the blow lands, and a line
+  calls out each move by name. Keys 1 to 4 pick a card.
+- **The wind-up panel** sits under the boss's plate and points at it: the move it is
+  winding up, its type, the grade (SURE, LIKELY 75%, COIN FLIP 50%), the bluff move if there
+  is one, and a HEAVY warning. It appears when the last turn has finished playing.
+- A mark on the boss's health bar shows where it will become enraged.
+- The forest behind the fight is painted once, flattened into one picture and kept, so the
+  screen stays smooth on a small computer.
 
 **How the screen follows the server**
 
@@ -408,8 +558,8 @@ and the tree is standing again.
 
 ## 13. The Drought Chomper
 
-The boss is a thorny plant with three hanging flower heads. One picture is used for all
-three tiers for now; higher tiers are drawn a little taller.
+The boss is a thorny plant with three hanging flower heads. It is one of the two bosses (the
+other is the Sporeling Trio, section 7). A drier tier draws it a little taller.
 
 It is not one flat picture. It was cut into eight layers so each can move on its own
 (`client/src/render/bossRig.js`, with the layer positions in `client/src/data/chomperRig.js`):
@@ -483,7 +633,7 @@ It reads the soil lines the ESP32 prints and passes them to the broker.
 | --- | --- |
 | `config.py` | every number: thresholds, timings, pump caps, boss stats, the two plants, skills |
 | `state_machine.py` | the five modes and what moves the game between them |
-| `battle.py` | the turn rules, skills, and the second plant stepping in |
+| `battle.py` | the turn rules, the boss's tells, skills, and the second plant stepping in |
 | `rewards.py` | turns a win into a capped pump command, or nothing |
 | `engine.py` | joins the pieces: health, stale checks, the state message |
 | `main.py` | starts everything and routes messages |
@@ -515,7 +665,8 @@ are given the time as a number, which is why they can be tested quickly.
 | `render/battleFx.js` | what each plant move looks like |
 | `render/bossFx.js` | what each boss move looks like |
 | `ui/battleHud.js` | everything written on the battle screen: plates, bars, move cards, banners, numbers |
-| `ui/statusBar.js` | the meters and demo button on top of the game |
+| `ui/statusBar.js` | the meters, demo button and sound switch on top of the forest |
+| `audio.js` | every sound effect and both tunes, made in code |
 | `state/wsSource.js` | the connection to the server |
 
 ## 16. What is placeholder or not built yet
@@ -524,17 +675,15 @@ are given the time as a number, which is why they can be tested quickly.
   sensors are measured wet and dry.
 - **Pump cap.** `PUMP_MAX_MS` is a cautious guess. It must be set at or below the
   firmware's real cap.
-- **Battle numbers.** The HP, attack and skill values are placeholders.
+- **Battle numbers.** Balanced by simulation only (bot against bot). They need real people
+  playing on the Jetson before the demo.
 - **Grow light.** The hardware has one, but the game has no sunlight meter and never switches it on.
 - **Firmware over MQTT.** The ESP32 does not publish to MQTT by itself yet;
   `serial_bridge.py` fills the gap for soil only. It does not pass on pad (NFC) readings,
-  so through the bridge the plants always fight as themselves unless a pad message is
-  published by hand.
-- **Boss art.** All three tiers share the Drought Chomper picture.
+  so through the bridge no plant is ever "on the cube" unless a pad message is published by hand
+  (or `PLANTS_NEED_PADS` is turned off in `config.py`).
+- **Boss art.** Two bosses, the Drought Chomper and the Sporeling Trio, each used at every tier. The old "Desert Dragon" was only the Chomper with another name, so it is gone.
 - **Storage screen.** A placeholder.
 - **Vision / Jetson.** Not started.
-- **Empty files.** `render/battle.js`, `render/boss.js`, `render/walk.js`,
-  `render/effects.js`, `state/mockSource.js`, `audio.js` and `assets.js` are stubs with
-  nothing in them.
 - **Plant art.** Each plant has one picture, seen from the front, in the forest and in the
   battle alike. There is no back view.

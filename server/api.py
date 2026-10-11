@@ -19,6 +19,8 @@ class Feed:
             await ws.send(json.dumps(self.engine.snapshot()))
             async for message in ws:
                 self._on_client_message(message)
+        except websockets.ConnectionClosed:
+            pass   # a screen that was closed or lost its network: nothing to report
         finally:
             self.clients.discard(ws)
 
@@ -30,6 +32,8 @@ class Feed:
             return
         if action == C.WS_ACTION_DEMO_BOSS:
             self.queue.put_nowait(("ws/" + action, ""))
+        elif action == C.WS_ACTION_SIM_PAD:
+            self.queue.put_nowait(("ws/" + action, str(data.get("plant", ""))))
         elif action == C.WS_ACTION_MOVE:
             self.queue.put_nowait(("ws/" + action, str(data.get("move", ""))))
 

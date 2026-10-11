@@ -29,17 +29,18 @@ class MoveTests(unittest.TestCase):
         self.assertEqual(old.boss_hp, new.boss_hp)
 
     def test_more_power_hits_harder(self):
-        b = B.resolve_turn(B.start(self.plant(power=150)), "attack", "special")
-        self.assertEqual(B.BOSS_STATS.hp - b.boss_hp, 12)  # 8 attack x 150%
+        start = B.start(self.plant(power=150))
+        b = B.resolve_turn(start, "attack", "special")
+        self.assertEqual(start.boss_hp - b.boss_hp, 12)  # 8 attack x 150%
 
     def test_the_log_names_the_move(self):
         b = B.resolve_turn(B.start(self.plant()), "special", "guard")
         self.assertEqual(b.last_move["move_id"], "p-flare")
-        b = B.resolve_turn(B.start(self.plant()), "skill", "guard")
+        b = B.resolve_turn(B.start(self.plant(), charge=C.SKILL_CHARGE_NEED), "skill", "guard")
         self.assertEqual(b.last_move["move_id"], "inferno-bloom")
 
     def test_a_skill_that_is_not_ready_logs_the_attack_move(self):
-        b = replace(B.start(self.plant()), skill_ready_in=2)
+        b = B.start(self.plant(), charge=0)  # not charged yet
         b = B.resolve_turn(b, "skill", "special")
         self.assertEqual(b.last_move["creature"], "attack")
         self.assertEqual(b.last_move["move_id"], "p-jab")
@@ -80,8 +81,10 @@ class Fixture(unittest.TestCase):
                     e.on_soil_raw("A", C.SOIL_RAW_DRY, t)
             e.manual = False
             started = False
-            for _ in range(4000):
+            for step in range(4000):
                 t += 0.5
+                if step % 4 == 0:  # keep the cube fresh: a long fight must not go stale
+                    e.on_soil_raw("B", C.SOIL_RAW_WET, t)
                 e.tick(t)
                 if e.battle is not None and not started:
                     started = True
@@ -194,7 +197,7 @@ class XpTests(Fixture):
         self.assertEqual(e.plant_db.xp["ember"], total)
 
     def test_without_the_database_nothing_changes(self):
-        e = GameEngine(rng=random.Random(1))
+        e = GameEngine(rng=random.Random(1), need_pads=False)
         self.fight(e, WEAK_BOSS)
         self.assertIsNone(e.last_xp)
 

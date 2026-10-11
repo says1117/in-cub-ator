@@ -14,6 +14,7 @@
 import Phaser from "phaser";
 import { PLANTS, PLANT_IDS } from "../data/plants.js";
 import { createPlantRig, hasPlantRig } from "../render/plantRig.js";
+import { audio } from "../audio.js";
 
 const FONT = '"Silkscreen", monospace';
 const BIG = '"Press Start 2P", monospace';
@@ -110,6 +111,7 @@ export function createBattleHud(scene, layers) {
   const over = scene.add.container(0, 0).setScale(layers.scale);
   layers.ui.add(root);
   layers.fx.add(over);
+  let announced = null;   // the line being told right now: see announce()
 
   const text = (parent, x, y, str, o = {}) => {
     const t = scene.add.text(x, y, str, {
@@ -204,6 +206,50 @@ export function createBattleHud(scene, layers) {
   text(root, 712, 57, "TIER", { color: DIM });
   const tierPips = gfx(root);
   const demoTag = text(root, 700, 57, "DEMO", { color: hex(GOLD), ox: 1 }).setVisible(false);
+  // where on its health bar the boss loses its temper, and the word for when it has
+  const rageMark = gfx(root);
+  const rageTag = text(root, 546, 57, "ENRAGED!", { color: "#ff6b5b", bold: true }).setVisible(false);
+  scene.tweens.add({ targets: rageTag, alpha: { from: 1, to: 0.35 }, duration: 380, yoyo: true, repeat: -1 });
+
+  // ---------------------------------------------------------------- the boss's wind-up (under its plate)
+  // What the boss is about to do and how sure that is. This is the thing the player reads.
+  const TELL = { x: 606, y: 74, w: 188, h: 50 };
+  const GRADES = {
+    sure: { label: "SURE", color: "#8dff9b" },
+    likely: { label: "LIKELY", color: "#ffd867" },
+    flip: { label: "COIN FLIP", color: "#ff8f6b" },
+  };
+  const tell = scene.add.container(TELL.x, TELL.y).setVisible(false);
+  root.add(tell);
+  const tellBack = gfx(tell);
+  const tellHead = text(tell, 8, 5, "", { color: DIM });
+  const tellGrade = text(tell, TELL.w - 8, 5, "", { ox: 1, bold: true });
+  const tellMove = text(tell, 8, 15, "", { size: 16, bold: true });
+  const tellKind = text(tell, 8, 37, "", { bold: true });
+  const tellAlt = text(tell, TELL.w - 8, 37, "", { ox: 1, color: "#c9d2f2" });
+  let tellKey = "";
+  function setTell(t, key) {
+    if (!t) { tell.setVisible(false); tellKey = ""; return; }
+    const type = TYPES[t.type] || TYPES.attack;
+    const grade = GRADES[t.grade] || GRADES.sure;
+    tellHead.setText(t.heavy ? "HEAVY WIND-UP! X2" : "WINDING UP").setColor(t.heavy ? "#ff8f6b" : DIM);
+    tellGrade.setText(t.grade === "sure" ? grade.label : `${grade.label} ${Math.round(t.chance * 100)}%`).setColor(grade.color);
+    tellMove.setText(t.name.toUpperCase()).setColor(hex(type.color));
+    tellKind.setText(type.label).setColor(hex(type.color));
+    tellAlt.setText(t.alt ? `OR ${t.alt.name.toUpperCase()} ${Math.round((1 - t.chance) * 100)}%` : "");
+    tellBack.clear();
+    plate(tellBack, 0, 0, TELL.w, TELL.h, { edge: t.heavy ? 0xff8f6b : type.color, fill: 0x0e1430, low: 0x080c1e });
+    tellBack.fillStyle(type.color, 1); tellBack.fillRect(1, 4, 3, TELL.h - 8);
+    tellBack.fillStyle(t.heavy ? 0xff8f6b : type.color, 1);
+    tellBack.fillTriangle(-7, 18, 0, 12, 0, 24);          // it points at the boss
+    tell.setVisible(true);
+    if (key !== tellKey) {                                 // a new wind-up pops in
+      tellKey = key;
+      tell.setScale(0.7).setAlpha(0);
+      scene.tweens.add({ targets: tell, scaleX: 1, scaleY: 1, alpha: 1, duration: 200, ease: "Back.easeOut" });
+      if (api.onTell) api.onTell(t);
+    }
+  }
 
   // ---------------------------------------------------------------- the turn and the clock (top middle)
   plate(back, 356, 6, 88, 17, { cut: 3 });
@@ -212,35 +258,34 @@ export function createBattleHud(scene, layers) {
   const clock = box(root, 356, 27, 88, 3, GOLD);
 
   // ---------------------------------------------------------------- the dock along the bottom
-  back.fillStyle(INK, 0.3); back.fillRect(0, 356, 800, 6);
-  back.fillStyle(0x090d1c, 0.92); back.fillRect(0, 362, 800, 88);
-  back.fillStyle(EDGE, 1); back.fillRect(0, 362, 800, 1);
-  plate(back, 6, 368, 182, 76, { shadow: false });
-  const log = text(root, 13, 373, "", { wrap: 168, spacing: 3 });
+  // no bar across the bottom any more: the field shows through. The log is a small plate on the
+  // left, and the four move cards float on the right, a little see-through.
+  plate(back, 6, 386, 290, 58, { shadow: false, alpha: 0.88 });
+  const log = text(root, 13, 391, "", { wrap: 276, spacing: 3 });
   // the rule of the game, always in view
   let ruleX = 13;
   for (const [word, color] of [["ATK", TYPES.attack.color], [">", null], ["SPC", TYPES.special.color], [">", null], ["GRD", TYPES.guard.color], [">", null], ["ATK", TYPES.attack.color]]) {
     const t = text(root, ruleX, 431, word, { color: color ? hex(color) : DIM, bold: Boolean(color) });
     ruleX += t.width + 3;
   }
-  text(root, 181, 431, "BEATS", { color: DIM, ox: 1 });
+  text(root, 289, 431, "BEATS", { color: DIM, ox: 1 });
 
   const cards = [];
-  const CARD = { w: 147, h: 76 };
+  const CARD = { w: 130, h: 72 };   // the four cards sit in a square on the right, two by two
   ["attack", "guard", "special", "skill"].forEach((key, index) => {
     const type = TYPES[key];
-    const home = { x: 194 + index * 151, y: 368 };
+    const home = { x: 532 + (index % 2) * 134, y: 298 + Math.floor(index / 2) * 76 };
     const card = scene.add.container(home.x, home.y);
     root.add(card);
     const g = gfx(card);
     const icon = gfx(card);
-    const title = text(card, 43, 8, "", { bold: true, wrap: 84, spacing: 1 });
+    const title = text(card, 43, 8, "", { bold: true, wrap: 70, spacing: 1 });
     const kind = text(card, 43, 30, type.label, { color: hex(type.color) });
     const line1 = text(card, 8, 48, "", { color: "#c9d2f2" });
     const line1b = text(card, 8, 48, "", { bold: true });
     const line2 = text(card, 8, 60, "", { color: "#6f7aa6" });
     const pips = gfx(card);
-    text(card, 136, 9, String(index + 1), { color: hex(type.color), ox: 0.5 });
+    text(card, CARD.w - 11, 9, String(index + 1), { color: hex(type.color), ox: 0.5 });
     const glow = box(card, 0, 0, CARD.w, CARD.h, type.color, 0).setBlendMode(Phaser.BlendModes.ADD);
     const zone = scene.add.zone(0, 0, CARD.w, CARD.h).setOrigin(0).setInteractive({ useHandCursor: true });
     card.add(zone);
@@ -248,12 +293,12 @@ export function createBattleHud(scene, layers) {
     const paint = () => {
       g.clear();
       const lit = entry.hover && entry.enabled;
-      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE });
+      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE, alpha: 0.66 });
       g.fillStyle(type.color, 1); g.fillRect(4, 1, CARD.w - 8, 2);
       g.fillStyle(shade(type.color, 0.32), 1); g.fillRect(7, 8, 30, 30);
       g.fillStyle(type.color, 1); g.fillRect(7, 8, 30, 1); g.fillRect(7, 37, 30, 1); g.fillRect(7, 8, 1, 30); g.fillRect(36, 8, 1, 30);
       g.fillStyle(EDGE, 0.7); g.fillRect(8, 44, CARD.w - 16, 1);
-      g.fillStyle(INK, 0.8); g.fillRect(130, 7, 12, 12);
+      g.fillStyle(INK, 0.8); g.fillRect(CARD.w - 17, 7, 12, 12);
     };
     entry.paint = paint;
     paint();
@@ -267,7 +312,7 @@ export function createBattleHud(scene, layers) {
   scene.tweens.add({ targets: skillCard.glow, fillAlpha: { from: 0, to: 0.16 }, duration: 700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
   // ---------------------------------------------------------------- what the cards say
-  function setCard(entry, move, enabled, chosen, skill) {
+  function setCard(entry, move, enabled, chosen, skill, hint) {
     entry.title.setText((move.name || entry.type.label).toUpperCase());
     if (entry.iconName !== move.icon) {
       entry.iconName = move.icon;
@@ -277,21 +322,29 @@ export function createBattleHud(scene, layers) {
     }
     entry.pips.clear();
     if (entry.key === "skill") {
-      const total = skill ? skill.total : 4;
-      const waiting = skill ? skill.ready_in : total;
+      const need = skill ? skill.need : 2;
+      const charge = skill ? Math.min(need, skill.charge) : 0;
+      const left = need - charge;
       entry.line1.setText(skill ? move.blurb || "ALWAYS WORKS" : "NO SKILL").setColor("#c9d2f2");
       entry.line1b.setText("");
-      entry.line2.setText(!skill ? "" : skill.ready ? "READY!" : `READY IN ${waiting}`).setColor(skill && skill.ready ? hex(GOLD) : "#6f7aa6");
-      for (let i = 0; i < total; i++) {
-        entry.pips.fillStyle(i < total - waiting ? GOLD : TRACK, 1);
-        entry.pips.fillRect(CARD.w - 10 - (total - i) * 9, 62, 7, 5);
+      let line = !skill ? "" : skill.ready ? "READY!" : `WIN ${left} TURN${left === 1 ? "" : "S"}`;
+      let color = skill && skill.ready ? hex(GOLD) : "#6f7aa6";
+      if (skill && skill.ready && hint) { line = hint === "attack" ? "IT HITS BACK" : "SAFE NOW!"; color = hint === "attack" ? "#ff8f6b" : "#8dff9b"; }
+      entry.line2.setText(line).setColor(color);
+      for (let i = 0; i < need; i++) {
+        entry.pips.fillStyle(i < charge ? GOLD : TRACK, 1);
+        entry.pips.fillRect(CARD.w - 8 - (need - i) * 13, 62, 11, 6);
       }
       entry.glow.setVisible(Boolean(skill && skill.ready && enabled));
     } else {
       const beats = TYPES[entry.type.beats], loses = TYPES[entry.type.loses];
       entry.line1.setText("BEATS ");
       entry.line1b.setText(beats.label).setColor(hex(beats.color)).setX(8 + entry.line1.width);
-      entry.line2.setText(`LOSES TO ${loses.label}`);
+      // on the first boss the card says outright how it does against the move being wound up
+      if (hint === entry.type.beats) entry.line2.setText("WINS THIS TURN").setColor("#8dff9b");
+      else if (hint === entry.type.loses) entry.line2.setText("LOSES THIS TURN").setColor("#ff8f6b");
+      else if (hint) entry.line2.setText("CLASH: SMALL HIT").setColor("#ffd867");
+      else entry.line2.setText(`LOSES TO ${loses.label}`).setColor("#6f7aa6");
       entry.glow.setVisible(false);
     }
     if (entry.enabled !== enabled || entry.chosen !== chosen) {
@@ -300,7 +353,7 @@ export function createBattleHud(scene, layers) {
       entry.paint();
       if (!enabled) scene.tweens.add({ targets: entry.card, y: entry.home.y, duration: 100 });
     }
-    entry.card.setAlpha(enabled || chosen ? 1 : 0.45);
+    entry.card.setAlpha(enabled || chosen ? 1 : 0.6);
   }
 
   let shownFighter = null;
@@ -308,13 +361,16 @@ export function createBattleHud(scene, layers) {
 
   const api = {
     onPick: null,
+    onTell: null,   // called when a new wind-up appears
     portraits,
 
     // view: {
     //   fighter: { id, name, hp, max, colour },   bench: { name, hp, max, state } or null
     //   boss: { name, hp, max, tier, demo, colour },   soil, vigor (percent or null),   turn
     //   moves: { attack, guard, special, skill } as data/plants.js gives them
-    //   skill: { ready, ready_in, total } or null
+    //   skill: { ready, charge, need } or null
+    //   tell: { name, type, grade, chance, alt: { name } or null, heavy } or null: the boss's wind-up
+    //   tellKey (changes when the wind-up does),   hints (true: the cards say how they do against it)
     //   canPick (true when a card may be clicked),   chosen (the move just sent, or null),   seconds (left to choose, or null)
     // }
     update(view) {
@@ -357,6 +413,13 @@ export function createBattleHud(scene, layers) {
         tierPips.fillPoints([{ x: 746 + i * 14, y: 57 }, { x: 751 + i * 14, y: 62 }, { x: 746 + i * 14, y: 67 }, { x: 741 + i * 14, y: 62 }], true);
       }
       demoTag.setVisible(Boolean(view.boss.demo));
+      rageTag.setVisible(Boolean(view.boss.enraged));
+      rageMark.clear();
+      if (view.boss.enrageAt && !view.boss.enraged) {
+        const x = 564 + Math.round(170 * view.boss.enrageAt);
+        rageMark.fillStyle(0xff6b5b, 1); rageMark.fillRect(x, 30, 1, 11); rageMark.fillTriangle(x - 3, 28, x + 4, 28, x + 0.5, 32);
+      }
+      setTell(view.tell, view.tellKey);
 
       turnText.setText(`TURN ${view.turn}`);
       const timed = view.canPick && view.seconds != null;
@@ -366,7 +429,7 @@ export function createBattleHud(scene, layers) {
       for (const entry of cards) {
         const move = view.moves[entry.key] || {};
         const usable = view.canPick && (entry.key !== "skill" || Boolean(view.skill && view.skill.ready));
-        setCard(entry, move, usable, view.chosen === entry.key, view.skill);
+        setCard(entry, move, usable, view.chosen === entry.key, view.skill, view.hints && view.tell ? view.tell.type : null);
       }
     },
 
@@ -389,6 +452,33 @@ export function createBattleHud(scene, layers) {
       c.x = away;
       scene.tweens.add({ targets: c, x: home, duration: 170, ease: "Back.easeOut" });
       scene.tweens.add({ targets: c, x: away, alpha: 0, delay: 1250, duration: 200, ease: "Quad.easeIn", onComplete: () => c.destroy() });
+    },
+
+    // The line that tells the fight like a story: "EMBER used VINE HAYMAKER!". It types itself
+    // out across the top of the field, holds, and goes. Only one is up at a time.
+    announce(who, move, color, hold = 1500) {
+      if (announced) announced.destroy();
+      const c = scene.add.container(400, 92);
+      announced = c;
+      over.add(c);
+      const g = gfx(c);
+      const name = text(c, 0, 0, who.toUpperCase(), { size: 16, bold: true, color: hex(color), oy: 0.5 });
+      const rest = text(c, 0, 0, ` USED ${move.toUpperCase()}!`, { size: 16, bold: true, oy: 0.5 });
+      const full = rest.text;
+      const w = name.width + rest.width + 36;
+      plate(g, -w / 2, -17, w, 34, { edge: color, fill: 0x0e1430, low: 0x080c1e });
+      g.fillStyle(color, 1); g.fillRect(-w / 2 + 1, -13, 4, 26); g.fillRect(w / 2 - 5, -13, 4, 26);
+      name.setX(-w / 2 + 18); rest.setX(name.x + name.width);
+      rest.setText("");
+      c.setScale(1, 0.1);
+      scene.tweens.add({ targets: c, scaleY: 1, duration: 110, ease: "Back.easeOut" });
+      scene.tweens.addCounter({ from: 0, to: full.length, duration: full.length * 22, delay: 90, onUpdate: (tw) => {
+        if (!c.active) return;
+        const shown = full.slice(0, Math.round(tw.getValue()));
+        if (shown.length !== rest.text.length && shown.length % 2 === 0) audio.play("tick");
+        rest.setText(shown);
+      } });
+      scene.tweens.add({ targets: c, alpha: 0, y: 84, delay: hold, duration: 180, onComplete: () => { if (announced === c) announced = null; c.destroy(); } });
     },
 
     // A word that pops in the middle of the field: CLASH!, BLOCKED! ...

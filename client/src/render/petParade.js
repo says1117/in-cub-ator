@@ -3,11 +3,15 @@
 // When a boss arrives they jump in fright, then the dragon calls the thirsty one forward to fight
 // while the other hides behind the dragon.
 //
+// A plant only follows while it is on the cube (the server's `present`, from its NFC pad). Lift it and
+// it poofs away; set it down and it poofs back to its place. One plant alone follows on its own.
+//
 // AdventureScene owns one of these and calls update() every frame. The boss arrival
 // (render/bossEntrance.js) tells it what is happening through onEntrance().
 import Phaser from "phaser";
 import { PLANTS, PLANT_IDS, otherPlant } from "../data/plants.js";
 import { createPlantRig, hasPlantRig } from "./plantRig.js";
+import { audio } from "../audio.js";
 
 const SIZE = 0.345;            // forest size: a share of the battle-screen picture
 const HOME = { A: -76, B: -144 };   // where each one hops, measured from the dragon
@@ -37,6 +41,7 @@ export function createPetParade(scene, groundY) {
     pets[id] = { id, rig, home: dragonX + HOME[id], offset: 0, hop: null, from: 0, sweatAt: 0 };
   }
   const list = () => Object.values(pets);
+  const active = () => list().filter((pet) => pet.here !== false);   // the ones that are on the cube
 
   const tween = (config) => { const t = scene.tweens.add(config); tweens.push(t); return t; };
   const after = (ms, fn) => { timers.push(scene.time.delayedCall(ms, fn)); };
@@ -48,7 +53,7 @@ export function createPetParade(scene, groundY) {
 
   // ---- the walk: they hop in turns ----
   function walk(time, dt, state) {
-    const all = list();
+    const all = active();
     if (!all.length) return;
     const airborne = all.some((pet) => pet.hop && time < pet.hop.end);
 
@@ -117,7 +122,7 @@ export function createPetParade(scene, groundY) {
   }
 
   function onEntrance(step, state) {
-    const all = list();
+    const all = active();
     if (!all.length) return;
 
     if (step === "spotted") {
@@ -139,15 +144,16 @@ export function createPetParade(scene, groundY) {
       });
     } else if (step === "faceoff") {
       // the dragon calls the thirsty plant forward; the other one hides behind the dragon
-      const id = state && state.boss && pets[state.boss.plant] ? state.boss.plant : all[0].id;
+      const id = state && state.boss && pets[state.boss.plant] && pets[state.boss.plant].here !== false ? state.boss.plant : all[0].id;
       called = pets[id];
       const other = pets[otherPlant(id)];
+      if (!called) return;
       const here = scene.player.x;
       callout(`GO, ${nameOf(id, state).toUpperCase()}!`, here + 6, groundY - 138);
       called.rig.setMood("fierce").setDepth(10.6);
       called.rig.emote("anger", 1200);
       hopTo(called, here + FRONT, 2);
-      if (other && other !== called) {
+      if (other && other !== called && other.here !== false) {
         other.rig.setMood("alarmed");
         hopTo(other, here + HIDE, 1);
       }
@@ -173,7 +179,7 @@ export function createPetParade(scene, groundY) {
       pet.offset = 0;
       pet.hop = null;
       pet.rig.stopActions();
-      pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setAlpha(1);
+      pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setAlpha(1).setScale(1).setVisible(pet.here !== false);
       pet.rig.setMood(isDry(pet.id, state) ? "thirsty" : "happy");
     }
     nextHopAt = scene.time.now + 250;
@@ -181,7 +187,7 @@ export function createPetParade(scene, groundY) {
 
   // The fight was won: they bounce and beam, one after the other.
   function celebrate() {
-    list().forEach((pet, i) => {
+    active().forEach((pet, i) => {
       after(i * 280, () => {
         pet.rig.setMood("proud");
         pet.rig.play("cheer");
@@ -191,7 +197,67 @@ export function createPetParade(scene, groundY) {
     });
   }
 
+  // ---- on and off the cube ----
+  // A burst of little clouds and a few sparks where the plant stands.
+  function puff(x, y) {
+    for (let i = 0; i < 9; i++) {
+      const angle = (i / 9) * Math.PI * 2 + Math.random() * 0.5;
+      const r = Phaser.Math.Between(5, 9);
+      const cloud = scene.add.circle(x, y - 18, r, i % 3 === 0 ? 0xd9c8ff : 0xf6f1ff, 0.9).setDepth(11);
+      made.push(cloud);
+      const far = Phaser.Math.Between(16, 30);
+      tween({
+        targets: cloud, x: x + Math.cos(angle) * far, y: y - 18 + Math.sin(angle) * far * 0.8 - 6,
+        scale: 2.1, alpha: 0, duration: Phaser.Math.Between(340, 520), ease: "Cubic.easeOut", onComplete: () => cloud.destroy(),
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      const spark = scene.add.star(x + Phaser.Math.Between(-14, 14), y - Phaser.Math.Between(10, 40), 4, 1.5, 4.5, 0xfff2a8).setDepth(11);
+      made.push(spark);
+      tween({ targets: spark, y: spark.y - Phaser.Math.Between(14, 30), alpha: 0, angle: 90, duration: Phaser.Math.Between(420, 640), delay: i * 30, onComplete: () => spark.destroy() });
+    }
+  }
+
+  function leave(pet) {
+    pet.here = false;
+    pet.hop = null;
+    audio.play("poofOut");
+    puff(pet.rig.x, groundY);
+    tween({
+      targets: pet.rig, alpha: 0, scaleX: 0.3, scaleY: 0.3, duration: 170, ease: "Cubic.easeIn",
+      onComplete: () => { if (pet.here === false) pet.rig.setVisible(false).setAlpha(1).setScale(1); },
+    });
+  }
+
+  function arrive(pet) {
+    pet.here = true;
+    pet.offset = 0;
+    pet.hop = null;
+    audio.play("poofIn");
+    pet.rig.setPosition(pet.home, groundY).setDepth(DEPTH[pet.id]).setVisible(true).setAlpha(0).setScale(0.3);
+    pet.rig.setMood("happy");
+    puff(pet.home, groundY);
+    tween({ targets: pet.rig, alpha: 1, scaleX: 1, scaleY: 1, duration: 260, delay: 90, ease: "Back.easeOut" });
+    nextHopAt = Math.max(nextHopAt, scene.time.now + 400);
+  }
+
+  // Follow the server's `present`. The first message only sets the starting state, with no poof.
+  function syncPresence(state) {
+    if (!state || !state.present) return;
+    for (const pet of list()) {
+      const want = state.present[pet.id] !== false;
+      if (pet.here === undefined) {
+        pet.here = want;
+        pet.rig.setVisible(want);
+      } else if (want !== pet.here) {
+        if (want) arrive(pet);
+        else leave(pet);
+      }
+    }
+  }
+
   function update(time, delta, walking, state) {
+    syncPresence(state);
     const dt = Math.min(delta / 1000, 0.05);
     if (walking && !standing) walk(time, dt, state);
     else if (walking && standing) reset(state);       // the walk has started again

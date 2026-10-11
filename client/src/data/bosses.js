@@ -1,44 +1,58 @@
 // client/src/data/bosses.js: Which picture each boss tier uses. Owner: Role 3 (client, art, demo).
-// The server decides the tier (1 mild, 2 dry, 3 bone dry). All three share the Drought Chomper until
-// more art arrives: drop the new file in client/public/assets/bosses/ and change its line here.
+// The server picks which boss comes (the Drought Chomper or the Sporeling Trio, equally likely) and,
+// from how dry the soil is, how strong it is (tier 1 mild, 2 dry, 3 bone dry). To add a boss, drop its
+// picture in client/public/assets/bosses/, add a line to each table below, and add the name to
+// BOSS_KINDS in server/config.py.
 // `height` is how tall the boss stands on the forest path (in game pixels); the width follows the picture.
 // `rig` is optional: a boss with one is drawn from moving pieces (render/bossRig.js) once it has landed.
 import { CHOMPER_RIG } from "./chomperRig.js";
+import { SPORELING_RIG } from "./sporelingsRig.js";
 
 const CHOMPER = { key: "boss-chomper", file: "/assets/bosses/chomper.png", rig: CHOMPER_RIG };
+// Three sad mushrooms on one patch of dark ground, cut into moving pieces (render/sporeRig.js).
+// mouth: where an attack comes out if the picture is shown flat, as an offset on the 1280 x 720 stage.
+const SPORELINGS = { key: "boss-sporelings", file: "/assets/bosses/sporelings.png", rig: SPORELING_RIG, mouth: { x: -75, y: -215 } };
 
+// One entry per kind of boss, which the server picks at random each time (config.BOSS_KINDS).
+// `height` is how tall it stands on the forest path at tier 1; a drier tier makes it taller.
 export const BOSS_ART = {
-  1: { ...CHOMPER, height: 176 },
-  2: { ...CHOMPER, height: 190 },
-  3: { ...CHOMPER, height: 204 },
+  chomper: { ...CHOMPER, height: 176 },
+  sporelings: { ...SPORELINGS, height: 150 },
 };
+const TIER_SCALE = { 1: 1, 2: 1.08, 3: 1.16 };
 
-// What each tier calls its three moves, and which effect in render/bossFx.js it is.
-// The server only says "attack", "guard" or "special"; this is how each tier's boss does it.
+// What each kind calls its three moves, and which effect in render/bossFx.js it is.
+// The server only says "attack", "guard" or "special"; this is how each boss does it.
 export const BOSS_MOVES = {
-  1: { attack: { name: "Chomp", fx: "bite" }, special: { name: "Scorch Ray", fx: "ray" }, guard: { name: "Thorn Quake", fx: "quake" } },
-  2: { attack: { name: "Brute Crunch", fx: "bite" }, special: { name: "Dust Cannon", fx: "ray" }, guard: { name: "Root Slam", fx: "quake" } },
-  3: { attack: { name: "Dragon Fang", fx: "bite" }, special: { name: "Desert Breath", fx: "ray" }, guard: { name: "Dune Breaker", fx: "quake" } },
+  chomper: { attack: { name: "Chomp", fx: "bite" }, special: { name: "Scorch Ray", fx: "ray" }, guard: { name: "Thorn Quake", fx: "quake" } },
+  sporelings: { attack: { name: "Spore Gnash", fx: "gnash" }, special: { name: "Spore Cannon", fx: "volley" }, guard: { name: "Mycelium Quake", fx: "mycelium" } },
 };
 
-// Each tier's colours in its effects and on the battle screen: red heat, sand and gold, cold dragon fire.
+// Each kind's colours in its effects and on the battle screen: red heat, pink spores.
 export const BOSS_PALETTES = {
-  1: { main: 0xff3d4d, hot: 0xff8a3d, core: 0xfff0d0, deep: 0x5a0f1c },
-  2: { main: 0xff9a2e, hot: 0xffd45e, core: 0xffffff, deep: 0x5a3410 },
-  3: { main: 0x9a5bff, hot: 0x5fd4ff, core: 0xffffff, deep: 0x2a1466 },
+  chomper: { main: 0xff3d4d, hot: 0xff8a3d, core: 0xfff0d0, deep: 0x5a0f1c },
+  sporelings: { main: 0xe0508f, hot: 0xff9ad0, core: 0xffffff, deep: 0x4a1450 },
 };
 
-export function bossMove(tier, move) {
-  const moves = BOSS_MOVES[tier] || BOSS_MOVES[1];
+// All of these take the boss as the server sends it ({ kind, tier, ... }), or just a kind name.
+const kindOf = (boss) => {
+  const kind = typeof boss === "string" ? boss : boss && boss.kind;
+  return BOSS_ART[kind] ? kind : "chomper";
+};
+
+export function bossMove(boss, move) {
+  const moves = BOSS_MOVES[kindOf(boss)];
   return moves[move] || moves.attack;
 }
 
-export function bossPalette(tier) {
-  return BOSS_PALETTES[tier] || BOSS_PALETTES[1];
+export function bossPalette(boss) {
+  return BOSS_PALETTES[kindOf(boss)];
 }
 
-export function bossArt(tier) {
-  return BOSS_ART[tier] || BOSS_ART[1];
+export function bossArt(boss) {
+  const art = BOSS_ART[kindOf(boss)];
+  const scale = (boss && typeof boss === "object" && TIER_SCALE[boss.tier]) || 1;
+  return { ...art, height: art.height * scale };
 }
 
 export const rigPartKey = (art, part) => `${art.key}-${part}`;

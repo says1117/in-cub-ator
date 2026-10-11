@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # firmware/tests/integration/phase4_check.sh: Guided Phase 4 test of the real ESP32 against a broker (Jetson or a laptop). Owner: Role 1 (firmware).
 # Checks status, soil, pads, then pump safety (with you watching), then the offline last will.
+# Pump runs are capped at 1 s by the firmware (config.h PUMP_MAX_RUN_MS).
 # Needs mosquitto_sub and mosquitto_pub (brew install mosquitto). Results are saved to a log file.
 #
 # Usage:   firmware/tests/integration/phase4_check.sh <broker address> [port]
@@ -153,16 +154,16 @@ else
     result FAIL "bad payload could not be sent, so it was not tested"
   fi
 
-  say "  Sending 2000 to pump A, then 2000 again 3 s later (the second must be refused: 30 s gap)."
-  say "  Watch: it should run ONCE for about 2 s, then stay off."
-  if pump A 2000; then
+  say "  Sending 800 to pump A, then 800 again 3 s later (the second must be refused: 30 s gap)."
+  say "  Watch: it should run ONCE for under 1 s, then stay off."
+  if pump A 800; then
     sleep 3
-    if ! pump A 2000; then
+    if ! pump A 800; then
       result FAIL "second command could not be sent, so the gap rule was not tested"
     fi
     sleep 3
-    if ask_yes "Did pump A run once for about 2 s and NOT start again?"; then
-      result PASS "2 s run, then too-soon command refused"
+    if ask_yes "Did pump A run once for under 1 s and NOT start again?"; then
+      result PASS "short run, then too-soon command refused"
     else
       result FAIL "run length or gap rule wrong (note what you saw)"
     fi
@@ -171,15 +172,15 @@ else
   fi
 
   wait_seconds 35 "for the 30 s gap to pass"
-  say "  Sending 60000 to pump A (asks for 60 s; the firmware must cap it to 3 s). Time it."
+  say "  Sending 60000 to pump A (asks for 60 s; the firmware must cap it to 1 s). Time it."
   if pump A 60000; then
-    if ask_yes "Did pump A run about 3 seconds and stop (not 60)?"; then result PASS "long command capped"; else result FAIL "long command NOT capped"; fi
+    if ask_yes "Did pump A run about 1 second and stop (not 60)?"; then result PASS "long command capped"; else result FAIL "long command NOT capped"; fi
   else
     result FAIL "command could not be sent"
   fi
 
   if ask_yes "Is pump B UNDER WATER with the grille covered, and do you want to test it?"; then
-    if pump B 2000 && ask_yes "Did pump B run about 2 seconds and stop?"; then result PASS "pump B runs 2 s"; else result FAIL "pump B did not run as expected"; fi
+    if pump B 800 && ask_yes "Did pump B run under 1 second and stop?"; then result PASS "pump B short run"; else result FAIL "pump B did not run as expected"; fi
   else
     result SKIP "pump B not tested"
   fi

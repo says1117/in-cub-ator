@@ -4,6 +4,7 @@ import BossScene from "./scenes/BossScene.js";
 import "./style.css";
 import { connectWsSource } from "./state/wsSource.js";
 import { mountStatusBar } from "./ui/statusBar.js";
+import { loadFont } from "./ui/font.js";
 
 // The forest is always the way in. If the page is opened during a fight, it cuts straight to
 // the battle screen by itself (AdventureScene.syncWithServer).
@@ -24,6 +25,7 @@ const config = {
   scene: [AdventureScene, BossScene]
 };
 
+await loadFont();
 const game = new Phaser.Game(config);
 window.__game = game;   // lets tests and the browser console look at the game
 

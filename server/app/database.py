@@ -18,7 +18,7 @@ SessionLocal = sessionmaker(
 )
 
 class Base(DeclarativeBase):
-    pass
+    pass;
 
 
 def get_db():

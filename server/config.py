@@ -6,6 +6,7 @@ MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 WS_HOST = "0.0.0.0"
 WS_PORT = 8765
+FOOTAGE_PORT = 8090   # live camera frames for the /footage page (footage.py)
 
 PLANTS = ("A", "B")
 

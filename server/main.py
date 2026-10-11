@@ -109,6 +109,13 @@ async def main():
             for p in C.PLANTS:
                 sim[p].step(1.0)
 
+    try:
+        import footage
+        footage.serve(C.WS_HOST, C.FOOTAGE_PORT)
+        log.info("footage on %s:%s", C.WS_HOST, C.FOOTAGE_PORT)
+    except Exception as err:  # noqa: BLE001 - the camera page is optional; the game runs without it
+        log.warning("footage page off: %s", err)
+
     async with feed.serve():
         log.info("ws on %s:%s, mqtt %s:%s", C.WS_HOST, C.WS_PORT, C.MQTT_HOST, C.MQTT_PORT)
         tasks = [ticker(), consumer()]

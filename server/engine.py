@@ -12,9 +12,15 @@ log = logging.getLogger("engine")
 
 
 class GameEngine:
-    def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None):
+    def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None,
+                 plant_db=None):
+        """plant_db (a plant_db.PlantDB) turns on NFC summoning: only plants whose tag is on a pad are
+        in the game. Without it the engine behaves as before (each pad always has a fighter)."""
         self.game = S.Game()
         self.creatures = creatures or {}
+        self.plant_db = plant_db
+        self.pad_plant = {p: None for p in C.PLANTS}     # pad -> plant_id summoned there (plant_db only)
+        self.pad_status = {p: "empty" for p in C.PLANTS}  # empty, known, unknown, invalid or moved
         self.rng = rng or random.Random()
         self.soil_pct = {p: 100.0 for p in C.PLANTS}
         self.pads = {p: "" for p in C.PLANTS}
@@ -51,8 +57,57 @@ class GameEngine:
             log.info("ESP32 is back")
             self._set(S.on_status(self.game, True))
 
-    def on_pad(self, plant: str, uid: str):
+    def on_pad(self, plant: str, uid: str, now: Optional[float] = None):
+        """A pad reported a tag (or "" when it was lifted). With the plant database, this summons
+        or unsummons the plant that owns the tag."""
         self.pads[plant] = uid.strip()
+        if self.plant_db is None:
+            return
+        import plant_db as P  # local import: the engine still works without the database module
+        before = self.pad_plant[plant]
+        normalized = P.normalize_uid(uid)
+        found = self.plant_db.lookup(uid) if normalized else None
+        if normalized == "":
+            status, plant_id = "empty", None
+        elif normalized is None:
+            status, plant_id = "invalid", None
+        elif found is None:
+            status, plant_id = "unknown", None
+        else:
+            status, plant_id = "known", found.plant_id
+        if plant_id is not None:
+            # A plant can only be in one place: the newest report wins (an old retained message
+            # from the other pad is out of date).
+            for other in C.PLANTS:
+                if other != plant and self.pad_plant[other] == plant_id:
+                    self.pad_plant[other] = None
+                    self.pad_status[other] = "moved"
+                    self._plant_left(other, now)
+        self.pad_plant[plant] = plant_id
+        self.pad_status[plant] = status
+        if before is not None and before != plant_id:
+            self._plant_left(plant, now)
+        if before != plant_id:
+            log.info("pad %s: %s", plant, f"{found.name} summoned" if plant_id else f"{status}, nobody summoned")
+
+    def summoned(self) -> list:
+        """(pad, plant_id) for every summoned plant, in pad order. Empty without the plant database."""
+        return [(p, self.pad_plant[p]) for p in C.PLANTS if self.pad_plant[p] is not None]
+
+    def can_fight(self) -> bool:
+        return self.plant_db is None or bool(self.summoned())
+
+    def _plant_left(self, pad: str, now: Optional[float]):
+        """The plant on this pad left mid-battle: take it out of the fight."""
+        if self.battle is None or self.game.mode != S.BATTLE:
+            return
+        b = B.withdraw(self.battle, pad)
+        if b is None:
+            log.info("every fighting plant was lifted: the boss waits for a plant")
+            self.battle = None
+            self._set(S.on_party_empty(self.game, now if now is not None else (self._last_tick or 0.0)))
+        else:
+            self.battle = b
 
     def on_esp_status(self, text: str, now: Optional[float] = None):
         online = text.strip() == "online"
@@ -74,7 +129,10 @@ class GameEngine:
 
     def pick_demo_plant(self) -> str:
         """The pad with a creature, or the lower water meter if both or neither has one."""
-        with_creature = [p for p in C.PLANTS if self.pads[p]]
+        if self.plant_db is not None:
+            with_creature = [p for p, _ in self.summoned()]
+        else:
+            with_creature = [p for p in C.PLANTS if self.pads[p]]
         pool = with_creature if len(with_creature) == 1 else list(C.PLANTS)
         return min(pool, key=lambda p: self.soil_pct[p])
 
@@ -106,10 +164,13 @@ class GameEngine:
         commands = []
         self._update_health(now)
         self._check_stale(now)
-        self._set(S.on_tick(self.game, now))
+        self._set(S.on_tick(self.game, now, can_fight=self.can_fight()))
 
         if self.game.mode == S.BATTLE and self.battle is None:
-            self._start_battle(now)
+            if self.can_fight():
+                self._start_battle(now)
+            else:
+                self._set(S.on_party_empty(self.game, now))
 
         if self.game.mode == S.BATTLE and self.battle is not None:
             if self.manual:
@@ -124,16 +185,44 @@ class GameEngine:
             self.battle = None
         return commands
 
-    def fighter(self, plant: str) -> B.Stats:
-        """A plant's fighting numbers: the known figure on its pad, else the plant's own."""
-        stats = self.creatures.get(self.pads.get(plant, ""), B.plant_fighter(plant))
+    def fighter(self, plant: str) -> Optional[B.Stats]:
+        """A pad's fighting numbers. With the plant database: the summoned plant at its level, or
+        None for an empty pad. Without it: the known figure on the pad, else the pad's own default."""
+        if self.plant_db is not None:
+            plant_id = self.pad_plant.get(plant)
+            if plant_id is None:
+                return None
+            stats = self.plant_stats(plant_id)
+        else:
+            stats = self.creatures.get(self.pads.get(plant, ""), B.plant_fighter(plant))
         if self.health <= 0:  # a wilted plant hits weaker
             stats = B.weakened(stats, C.WILTED_ATK_FACTOR)
         return stats
 
+    def plant_stats(self, plant_id: str) -> B.Stats:
+        """A database plant's fighting numbers at its current level, with its moves."""
+        import plant_db as P
+        plant = self.plant_db.plants[plant_id]
+        hp, atk = P.stats_at_level(plant, self.plant_db.level(plant_id))
+        moves = tuple((cat, m.move_id, m.power) for cat, m in sorted(self.plant_db.moves_of(plant).items()))
+        return B.Stats(name=plant.name, hp=hp, atk=atk, skill=plant.skill, plant_id=plant_id, moves=moves)
+
     def _start_battle(self, now: float):
         # The plant that called the boss fights first. The others wait on the bench, driest first.
+        # With the plant database only summoned plants fight; if the boss's own pad is empty, the
+        # first summoned plant (driest pot first) steps up. Watering still goes to the boss's pot.
         first = self.game.boss_plant
+        if self.plant_db is not None:
+            party = sorted((p for p, _ in self.summoned()), key=lambda p: self.soil_pct[p])
+            if first not in party:
+                first = party[0]
+            bench = [p for p in party if p != first]
+            self.battle = B.start(self.fighter(first), B.boss_for_tier(self.game.tier or 1),
+                                  plant=first, bench=[(p, self.fighter(p)) for p in bench])
+            self.next_turn_at = now + C.BATTLE_TURN_SECONDS
+            self.move_ready_at = now + 0.5
+            self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
+            return
         bench = sorted((p for p in C.PLANTS if p != first), key=lambda p: self.soil_pct[p])
         self.battle = B.start(self.fighter(first), B.boss_for_tier(self.game.tier or 1),
                               plant=first, bench=[(p, self.fighter(p)) for p in bench])
@@ -236,8 +325,9 @@ class GameEngine:
                 "stale": g.stale,
             },
             "mode": g.mode,
-            "fighters": {p: {"name": self.fighter(p).name,
-                             "skill": (B.skill_of(self.fighter(p)) or {}).get("name")} for p in C.PLANTS},
+            "fighters": {p: None if self.fighter(p) is None else
+                         {"name": self.fighter(p).name,
+                          "skill": (B.skill_of(self.fighter(p)) or {}).get("name")} for p in C.PLANTS},
             "health": round(self.health, 1),
             "condition": self.condition(),
             "tier": self.moisture_tier(),

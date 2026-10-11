@@ -29,7 +29,7 @@ static bool pinOn(int pin) { return mode[pin] == OUTPUT && level[pin] == LOW; }
 int main() {
   for (int i = 0; i < 40; i++) { level[i] = LOW; mode[i] = 0; registered[i] = false; }  // worst case: latch LOW at reset
 
-  CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_NOT_READY, "rejects before start");
+  CHECK(pump(RELAY_PUMP_A, "800") == SAFETY_NOT_READY, "rejects before start");
   relaysBegin(); safetyBegin();
   CHECK(!pinOn(RELAY_PUMP_A_PIN) && !pinOn(RELAY_PUMP_B_PIN) && !pinOn(RELAY_LIGHT_PIN), "all off after begin");
   CHECK(level[RELAY_PUMP_A_PIN] == HIGH, "pump A pin driven HIGH (off)");
@@ -41,39 +41,39 @@ int main() {
   for (const char *b : bad) CHECK(!safetyParsePositive(b, strlen(b), v), b);
   CHECK(!safetyParsePositive(nullptr, 3, v), "null payload");
   CHECK(pump(RELAY_PUMP_A, "abc") == SAFETY_BAD_PAYLOAD, "bad payload result");
-  CHECK(pump(RELAY_LIGHT, "2000") == SAFETY_NOT_READY, "light is not a pump");
+  CHECK(pump(RELAY_LIGHT, "800") == SAFETY_NOT_READY, "light is not a pump");
 
   fakeNow = 1000;
-  CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_STARTED, "pump A starts");
+  CHECK(pump(RELAY_PUMP_A, "800") == SAFETY_STARTED, "pump A starts");
   CHECK(pinOn(RELAY_PUMP_A_PIN), "pump A pin on");
-  CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_BUSY, "busy while running");
-  advance(1999); CHECK(pinOn(RELAY_PUMP_A_PIN), "still on at 1999 ms");
-  advance(1); CHECK(!pinOn(RELAY_PUMP_A_PIN), "off at 2000 ms");
+  CHECK(pump(RELAY_PUMP_A, "800") == SAFETY_BUSY, "busy while running");
+  advance(799); CHECK(pinOn(RELAY_PUMP_A_PIN), "still on at 799 ms");
+  advance(1); CHECK(!pinOn(RELAY_PUMP_A_PIN), "off at 800 ms");
   CHECK(pump(RELAY_PUMP_A, "1000") == SAFETY_TOO_SOON, "too soon right after");
   advance(PUMP_MIN_GAP_MS - 1); CHECK(pump(RELAY_PUMP_A, "1000") == SAFETY_TOO_SOON, "too soon 1 ms before gap");
   advance(1); CHECK(pump(RELAY_PUMP_A, "60000") == SAFETY_STARTED_CAPPED, "long request capped");
   advance(PUMP_MAX_RUN_MS - 1); CHECK(pinOn(RELAY_PUMP_A_PIN), "capped run still on before max");
   advance(1); CHECK(!pinOn(RELAY_PUMP_A_PIN), "capped run off at max");
 
-  CHECK(pump(RELAY_PUMP_B, "1500") == SAFETY_STARTED, "pump B independent of A gap");
-  advance(1500); CHECK(!pinOn(RELAY_PUMP_B_PIN), "pump B off");
+  CHECK(pump(RELAY_PUMP_B, "600") == SAFETY_STARTED, "pump B independent of A gap");
+  advance(600); CHECK(!pinOn(RELAY_PUMP_B_PIN), "pump B off");
 
   CHECK(light("45") == SAFETY_STARTED_CAPPED, "light capped to max minutes");
   advance(LIGHT_MAX_MINUTES * 60000UL - 1); CHECK(pinOn(RELAY_LIGHT_PIN), "light on before max");
   advance(1); CHECK(!pinOn(RELAY_LIGHT_PIN), "light off at max");
 
   advance(PUMP_MIN_GAP_MS);
-  CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_STARTED, "pump A again");
+  CHECK(pump(RELAY_PUMP_A, "800") == SAFETY_STARTED, "pump A again");
   advance(500); safetyAllOff();
   CHECK(!pinOn(RELAY_PUMP_A_PIN), "emergency stop");
-  CHECK(pump(RELAY_PUMP_A, "2000") == SAFETY_TOO_SOON, "gap counted after emergency stop");
+  CHECK(pump(RELAY_PUMP_A, "800") == SAFETY_TOO_SOON, "gap counted after emergency stop");
 
   relaysAllOff();  // external off while nothing runs: no crash
   // Near clock wraparound. unsigned long is 64-bit on the Mac, so wrap at its real limit.
   fakeNow = ULONG_MAX - 1000 - PUMP_MIN_GAP_MS;
   advance(PUMP_MIN_GAP_MS);
-  CHECK(pump(RELAY_PUMP_B, "2000") == SAFETY_STARTED, "start near wrap");
-  advance(1999); CHECK(pinOn(RELAY_PUMP_B_PIN), "on across wrap");
+  CHECK(pump(RELAY_PUMP_B, "800") == SAFETY_STARTED, "start near wrap");
+  advance(799); CHECK(pinOn(RELAY_PUMP_B_PIN), "on across wrap");
   advance(1); CHECK(!pinOn(RELAY_PUMP_B_PIN), "off on time across wrap");
 
   // Calling safetyBegin() again must not erase the gap history.
@@ -85,12 +85,12 @@ int main() {
 
   // Hard cutoff path: pin forced off outside loop, bookkeeping catches up in safetyLoop().
   advance(PUMP_MIN_GAP_MS);
-  CHECK(pump(RELAY_PUMP_B, "2000") == SAFETY_STARTED, "pump B for cutoff test");
+  CHECK(pump(RELAY_PUMP_B, "800") == SAFETY_STARTED, "pump B for cutoff test");
   relayHardOff(RELAY_PUMP_B);
   CHECK(!pinOn(RELAY_PUMP_B_PIN), "hard off drives pin off");
-  CHECK(pump(RELAY_PUMP_B, "2000") == SAFETY_BUSY, "still busy until loop records it");
-  advance(2000);
-  CHECK(pump(RELAY_PUMP_B, "2000") == SAFETY_TOO_SOON, "gap after hard off");
+  CHECK(pump(RELAY_PUMP_B, "800") == SAFETY_BUSY, "still busy until loop records it");
+  advance(800);
+  CHECK(pump(RELAY_PUMP_B, "800") == SAFETY_TOO_SOON, "gap after hard off");
   CHECK(!pinOn(RELAY_PUMP_B_PIN), "pin stays off");
 
   printf("%d passed, %d failed\n", passes, fails);

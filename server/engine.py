@@ -340,10 +340,72 @@ class GameEngine:
             "move_seconds_left": int(left + 0.999) if self.manual else None,
         }
 
+    # schema 2: plant database additions ---------------------------------
+    def _move_view(self, move_id: str, ready: bool = True) -> Optional[dict]:
+        m = self.plant_db.moves.get(move_id) if move_id else None
+        if m is None:
+            return None
+        return {"move_id": m.move_id, "name": m.name, "category": m.category, "type": m.type,
+                "power": m.power, "animation_key": m.animation_key, "animation": dict(m.animation),
+                "ready": ready}
+
+    def _plant_view(self, plant_id: str, pad: Optional[str]) -> dict:
+        import plant_db as P
+        plant = self.plant_db.plants[plant_id]
+        xp, level = self.plant_db.xp.get(plant_id, 0), self.plant_db.level(plant_id)
+        hp, atk = P.stats_at_level(plant, level)
+        return {
+            "plant_id": plant_id, "pad_id": pad, "name": plant.name, "species": plant.species,
+            "type": plant.type, "level": level, "xp": xp,
+            "xp_to_next": None if level >= C.MAX_LEVEL else P.xp_to_reach(level + 1),
+            "hp": hp, "atk": atk, "sprite_key": plant.sprite_key,
+            "animation_set_key": plant.animation_set_key,
+            "moves": [plant.moves[c] for c in C.MOVE_CATEGORIES],
+        }
+
+    def _schema2(self) -> dict:
+        return {
+            "pads": {p: {"uid": self.pads[p] or None, "plant_id": self.pad_plant[p], "status": self.pad_status[p]}
+                     for p in C.PLANTS},
+            "summoned_plants": [self._plant_view(pid, pad) for pad, pid in self.summoned()],
+            # unsaved: XP waiting to be written. persistent: false when there is no usable save file,
+            # so XP lasts only until the server restarts.
+            "progress": {"last_xp": self.last_xp, "unsaved": self.plant_db.unsaved,
+                         "persistent": self.plant_db.store is not None},
+        }
+
+    def _battle_schema2(self, b) -> dict:
+        """Battle additions: who is fighting, their move buttons, and who made the last move."""
+        roster = {b.plant: b.creature}
+        roster.update({p: s for p, s in b.bench})
+        roster.update({p: s for p, s in b.fallen})
+        # roster only holds plants still in the fight; last_action below comes from the turn log
+        moves = []
+        for cat in C.MOVE_CATEGORIES:
+            move_id, _ = B.move_of(b.creature, cat)
+            view = self._move_view(move_id, ready=(cat != B.SKILL or b.skill_ready_in == 0))
+            if view is not None:
+                moves.append(view)
+        last = None
+        lm = b.last_move or {}
+        if lm.get("actor_plant_id"):  # only a played turn has an actor (a lift before turn 1 does not)
+            m = self.plant_db.moves.get(lm.get("move_id", ""))
+            last = {"actor_pad": lm["actor_pad"], "actor_plant_id": lm["actor_plant_id"],
+                    "move_id": m.move_id if m else None, "animation_key": m.animation_key if m else None,
+                    "animation": dict(m.animation) if m else None}
+        return {
+            "battle_id": b.battle_id,
+            "active_plant_id": b.creature.plant_id or None,
+            "team_plants": {p: {"plant_id": s.plant_id or None, "level": self.plant_db.level(s.plant_id)
+                                if s.plant_id else None} for p, s in roster.items()},
+            "moves": moves,
+            "last_action": last,
+        }
+
     def snapshot(self) -> dict:
         g, b = self.game, self.battle
         boss_stats = b.boss if b else B.boss_for_tier(g.tier or 1)
-        return {
+        snap = {
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
             "meters": {
                 "water": {p: round(self.soil_pct[p], 1) for p in C.PLANTS},
@@ -368,3 +430,9 @@ class GameEngine:
             "battle": None if b is None else self._battle_snapshot(b),
             "reward": self.last_reward,
         }
+        snap["schema_version"] = 1 if self.plant_db is None else 2
+        if self.plant_db is not None:
+            snap.update(self._schema2())
+            if b is not None:
+                snap["battle"].update(self._battle_schema2(b))
+        return snap

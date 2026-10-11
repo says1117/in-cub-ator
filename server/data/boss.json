@@ -1,3 +1,7 @@
 {
-  "_comment": "server/data/boss.json: Boss definition. Owner: Role 2 (server)."
+  "name": "Drought Golem",
+  "hp": 60,
+  "attack": 4,
+  "reward_xp": 40,
+  "round_seconds": 1.2
 }

@@ -51,3 +51,8 @@ build/
 # Large demo media (share through a drive instead)
 demo/backup-video/*
 !demo/backup-video/.gitkeep
+
+# Server runtime files
+server/.venv/
+server/deploy/server.env
+server/data/progress.json

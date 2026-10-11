@@ -1,3 +1,5 @@
 {
-  "_comment": "server/data/creatures.json: Tag UID to creature stats. Owner: Role 2 (server)."
+  "_comment": "Tag UID (upper-case hex, no separators) to creature stats. Unknown tags use 'default' so any NFC tag works.",
+  "default": {"name": "Sprout", "hp": 30, "attack": 6, "color": "#6ccf5a"},
+  "uids": {}
 }

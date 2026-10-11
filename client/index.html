@@ -1,1 +1,20 @@
-<!-- client/index.html: Client page that hosts the game canvas. Owner: Role 3 (client, art, demo). -->
+<!doctype html>
+<!-- client/index.html: Page shell for the game canvas. Owner: Role 3 (client, art, demo). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>In-cube-ator</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10131a; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { image-rendering: pixelated; width: min(100vw, 177.7vh); height: auto; aspect-ratio: 16/9; }
+  #hint { position: fixed; bottom: 6px; left: 8px; color: #8a93a6; font: 12px monospace; }
+</style>
+</head>
+<body>
+<canvas id="game" width="640" height="360"></canvas>
+<div id="hint">Click once for sound. Keys: 1 / 2 = summon boss on pot A / B, M = toggle mock data</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

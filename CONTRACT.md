@@ -15,4 +15,35 @@
 
 ## Game state message
 
-TODO: not defined in the firmware CLAUDE.md. Role 2 and Role 3 to agree on the WebSocket game state shape and record it here.
+The server pushes this JSON over the WebSocket `ws://<jetson>:8000/ws` once on connect and every 0.5 s.
+`GET /api/state` returns the same object. `POST /api/debug/boss/A` (or `B`) summons a boss.
+
+```json
+{
+  "t": 123.4,
+  "esp32": "online",
+  "sunlight": 62.5,
+  "light_on": false,
+  "pots": {
+    "A": {
+      "creature": {"uid": "04A1B2C3", "name": "Sprout", "level": 2, "xp": 30,
+                   "hp": 30, "max_hp": 36, "attack": 8, "color": "#6ccf5a"},
+      "soil_raw": 2100,
+      "water": 0.55,
+      "dry": false,
+      "phase": "ok",
+      "boss": null,
+      "last_hit": {"by": "boss", "dmg": 4}
+    },
+    "B": {"...": "same shape"}
+  },
+  "events": [{"t": 99.0, "pot": "A", "kind": "win", "text": "Sprout beat the boss!"}]
+}
+```
+
+- `esp32`: `online`, `offline` or `unknown` (nothing heard yet).
+- `sunlight`: 0 to 100 from the camera, or `null` when vision is off.
+- `creature`: `null` when no tag is on the pad. `xp` is progress inside the current level (0 to 99).
+- `water`: 0.0 (dry) to 1.0 (wet) from calibration, `null` when the soil reading is missing or stale.
+- `phase`: `ok` (creature walks), `boss` (fight; `boss` is `{"name","hp","max_hp"}`), `watering` (pump just ran, waiting for the soil to wet).
+- Creatures never faint (HP stays at 1 or more), so every fight ends in a win and the pump runs.

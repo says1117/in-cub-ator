@@ -1,6 +1,7 @@
 """Tests for NFC summoning with the plant database. Run: python -m unittest test_summon -v  (from the server folder)"""
 import random
 import unittest
+from unittest import mock
 
 import config as C
 import plant_db as P
@@ -199,6 +200,7 @@ class PumpRegressionTests(unittest.TestCase):
         self.assertGreater(len(old_trace), 1)  # the story really waters more than once
         self.assertEqual(new_trace, old_trace)
 
+    @mock.patch.object(C, "WATER_WET_SOIL", False)  # the wet-soil protection, switched on
     def test_with_levels_every_pump_command_still_follows_the_rules(self):
         # Stronger plants win sooner, so the timing may move, but each command must match the fight
         # that earned it: that fight's pot, the exact length for its boss tier, dry soil, cube online,

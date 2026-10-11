@@ -52,6 +52,10 @@ REWARD_MIN_GAP_SECONDS = 0.0
 # first. False: only the boss's pot. The pumps run one after the other, this many seconds apart,
 # so a weak 5 V supply (like a computer's USB port) only ever powers one pump at a time.
 TEAM_WATERING = True
+# Demo mode: True waters a won fight's pots even when their soil already reads wet (so every win
+# visibly waters both plants). False brings back the protection: a wet pot is skipped (a demo-button
+# win could always water wet soil). Caps, one-pump-at-a-time, online and freshness checks still apply.
+WATER_WET_SOIL = True
 # The next pump starts only after the previous one's commanded run plus this margin, so two pumps
 # never run at once (worked out from the real pump time, not a fixed spacing).
 TEAM_WATER_MARGIN_SECONDS = 0.5

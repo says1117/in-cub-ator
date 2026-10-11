@@ -121,6 +121,7 @@ class RewardTests(unittest.TestCase):
         self.assertEqual(cmd.topic, "incube/cmd/pump/A")
         self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
 
+    @mock.patch.object(C, "WATER_WET_SOIL", False)  # the wet-soil protection, switched on
     def test_wet_soil_gets_nothing(self):
         self.assertIsNone(R.water_reward("A", C.SOIL_WET_THRESHOLD_PCT, 1000.0, float("-inf")))
 

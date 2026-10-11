@@ -113,6 +113,7 @@ class TeamWaterTests(unittest.TestCase):
             if topic in (PUMP_A, PUMP_B):
                 self.assertLessEqual(int(payload), C.PUMP_MAX_MS)
 
+    @mock.patch.object(C, "WATER_WET_SOIL", False)  # the wet-soil protection, switched on
     def test_a_wet_partner_pot_is_not_watered(self):
         out = win_soil_fight(engine(), wet_b=True, minutes=1)
         topics = [o[1] for o in out]
@@ -140,6 +141,7 @@ class TeamWaterTests(unittest.TestCase):
         win_soil_fight(e, minutes=1)
         self.assertEqual([c.topic for c in sent], [PUMP_A])
 
+    @mock.patch.object(C, "WATER_WET_SOIL", False)  # the wet-soil protection, switched on
     def test_soil_that_got_wet_before_its_turn_is_skipped(self):
         e = engine()
         sent = []
@@ -156,6 +158,17 @@ class TeamWaterTests(unittest.TestCase):
         e._send_pending_water = watch
         win_soil_fight(e, minutes=1, state=state)
         self.assertEqual([c.topic for c in sent], [PUMP_A])
+
+    def test_demo_mode_waters_a_wet_partner_pot(self):
+        self.assertTrue(C.WATER_WET_SOIL)  # the demo setting
+        out = win_soil_fight(engine(), wet_b=True)
+        self.assertEqual([o[1] for o in out if o[1] in (PUMP_A, PUMP_B)][:2], [PUMP_A, PUMP_B])
+
+    def test_demo_mode_still_runs_one_pump_at_a_time_and_caps_it(self):
+        out = win_soil_fight(engine(), wet_b=True)
+        a, b = [o for o in out if o[1] in (PUMP_A, PUMP_B)][:2]
+        self.assertGreaterEqual(b[0] - a[0], int(a[2]) / 1000.0 - 0.11)
+        self.assertLessEqual(max(int(a[2]), int(b[2])), C.PUMP_MAX_MS)
 
     def test_switched_off_only_the_boss_pot_is_watered(self):
         with mock.patch.object(C, "TEAM_WATERING", False):

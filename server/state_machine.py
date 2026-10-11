@@ -21,7 +21,6 @@ class Game:
     cooldown_until: dict = None
     stale: bool = False
     tier: int = 0        # strength of the active boss, set when it spawns
-    last_tier: int = 0   # strength of the last boss, a harder one may skip the cooldown
     last_pct: dict = None  # latest moisture of each plant, so the drier plant can be picked
     quiet_until: float = 0.0  # after a fight, no soil boss for any plant before this time
 
@@ -55,7 +54,7 @@ def _summon(g: Game, plant: str, now: float, source: str, tier: int = 1) -> Game
     streaks = dict(g.dry_streak)
     streaks[plant] = 0
     return replace(
-        g, mode=BOSS, boss_plant=plant, source=source, tier=tier, last_tier=tier,
+        g, mode=BOSS, boss_plant=plant, source=source, tier=tier,
         mode_until=now + C.BOSS_INTRO_SECONDS, dry_streak=streaks,
     )
 
@@ -72,16 +71,14 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     g = replace(g, dry_streak=streaks, last_pct=seen)
 
     if g.mode in (WALKING, COOLDOWN):
-        if all(tier_for(v) == 0 for v in seen.values()):
-            g = replace(g, last_tier=0)  # every plant is fine, the next dip starts fresh
         if now < g.quiet_until:
             return g  # a fight has only just ended: a breather before anyone calls a boss
-        # Any dry plant may call a boss. A harder tier than the last boss may skip the cooldown.
+        # Any dry plant whose own cooldown is over may call a boss.
         ready = [
             p for p in C.PLANTS
             if tier_for(seen[p]) >= 1
             and streaks[p] >= C.SOIL_DRY_READINGS_N
-            and (now >= g.cooldown_until[p] or tier_for(seen[p]) > g.last_tier)
+            and now >= g.cooldown_until[p]
         ]
         if ready:
             drier = min(ready, key=lambda p: seen[p])  # the thirstier plant goes first
@@ -129,8 +126,11 @@ def on_demo(g: Game, plant: str, now: float, tier: int = 1) -> Game:
 
 
 def on_status(g: Game, online: bool) -> Game:
-    """Offline: mark readings stale and drop any active boss or battle, back to the walk."""
+    """Offline: mark readings stale, forget the dry streaks (a boss needs N fresh dry readings
+    after the link comes back) and drop any active boss or battle, back to the walk."""
     g = replace(g, stale=not online)
-    if not online and g.mode in (BOSS, BATTLE):
-        g = _to_walking(g)
+    if not online:
+        g = replace(g, dry_streak={p: 0 for p in C.PLANTS})
+        if g.mode in (BOSS, BATTLE):
+            g = _to_walking(g)
     return g

@@ -37,6 +37,7 @@ class LoopbackBus:
         self.loop = loop
         self.queue = queue
 
-    def publish(self, topic: str, payload, qos: int = 0):
+    def publish(self, topic: str, payload, qos: int = 0, retain: bool = False):
+        """Delivered on the next loop turn. Returns None: a loopback publish cannot fail."""
         self.loop.call_soon(self.queue.put_nowait, (topic, str(payload)))
         return None

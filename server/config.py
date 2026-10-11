@@ -25,8 +25,10 @@ SOIL_DRY_READINGS_N = 5
 
 # Timings (seconds)
 BOSS_INTRO_SECONDS = 5.2  # long enough for the boss arrival animation on the client
-BATTLE_TURN_SECONDS = 1.2
-SWAP_EXTRA_SECONDS = 1.6  # extra pause after a plant faints, while the next one comes in on the client
+BATTLE_TURN_SECONDS = 1.8  # move lockout after each turn, while the client shows what happened
+SWAP_EXTRA_SECONDS = 1.2  # extra pause after a plant faints, while the next one comes in on the client
+UNLEASH_EXTRA_SECONDS_PER_BLOOM = 0.3  # extra pause after a skill that spent blooms, per bloom
+RESULT_HOLD_SECONDS = 4.0  # the finished fight stays in the state message this long after ANY end
 REWARD_DISPLAY_SECONDS = 4.0
 COOLDOWN_SECONDS = 60.0
 BOSS_BREATHER_SECONDS = 20.0  # after any fight ends, no plant can call a boss for this long
@@ -39,7 +41,15 @@ ESP32_STALE_SECONDS = 30.0
 PUMP_MAX_MS = 3000
 PUMP_MS_PER_WIN = 2000
 PUMP_MS_BY_TIER = {1: 2000, 2: 2500, 3: 3000}
-REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
+REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS   # per plant: no two pumps closer than this
+# Rolling budget per plant: all pump time in the last hour, plus the new command, stays within this.
+PUMP_BUDGET_MS_PER_HOUR = 12000
+PUMP_BUDGET_WINDOW_SECONDS = 3600.0
+# A beaten demo boss on wet soil gives only a sip (gap, budget and cap still apply).
+DEMO_SIP_MS = 500
+# Every pump command is logged here (wall clock) so the gap and the budget survive a restart.
+# Git-ignored. A corrupt file counts as one full pump per plant just now.
+PUMP_LOG_FILE = "var/pump_log.json"
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket
 WS_ACTION_DEMO_BOSS = "demo_boss"
@@ -47,8 +57,6 @@ SOURCE_SOIL = "soil"
 SOURCE_DEMO = "demo"
 
 # Battle (placeholder rules until the original game's numbers are confirmed)
-BOSS_HP = 28
-BOSS_ATK = 7
 DEFAULT_CREATURE_HP = 30
 DEFAULT_CREATURE_ATK = 8
 DEFAULT_CREATURE_SKILL = "thorn_burst"
@@ -65,7 +73,21 @@ PLANT_FIGHTERS = {
 # The player picks each move. The client sends {"action": "move", "move": "attack"}.
 WS_ACTION_MOVE = "move"
 # If nobody picks a move in this time the game picks one, so a fight can never hang on stage.
-PLAYER_MOVE_TIMEOUT_SECONDS = 10.0
+PLAYER_MOVE_TIMEOUT_SECONDS = 8.0
+# After one timed-out turn the game is "idle" and plays itself a turn every AUTO_TURN_SECONDS until
+# anyone presses a move. Headless (no screen connected) fights use the same pace.
+AUTO_TURN_SECONDS = 2.6
+AUTOPILOT_READ_CHANCE = 0.4    # how often the autopilot counters a shown intent
+AUTOPILOT_HEAL_MIN_SHARE = 0.6  # a heal is only used when this much of it would land
+
+# Boss intents: each turn the boss decides its next move and shows it with this chance (else "?").
+# A shown intent is always true.
+INTENT_SHOW_RATE = {1: 0.75, 2: 0.65, 3: 0.60}
+
+# Blooms: each turn won adds one (up to BLOOM_MAX), a boss hit wipes them, the skill spends them:
+# effect x (1 + BLOOM_BONUS x blooms).
+BLOOM_MAX = 3
+BLOOM_BONUS = 0.5
 
 # Signature skills. Each creature has one. The skill always goes through, then it needs
 # SKILL_COOLDOWN_TURNS turns before it can be used again.
@@ -80,28 +102,34 @@ SKILLS = {
 }
 
 # Moisture tiers: how dry the plant is decides how strong the boss is.
-# Every tier must stay winnable (the two plants together win at least 40% of fights), since a
-# win waters the plant. The numbers are set so a harder boss usually knocks the first plant out.
 #   moisture 50 and above: no boss
 #   under 50: tier 1   under 25: tier 2   0 (at or below 1): tier 3
+# Every tier must stay winnable, since a win waters the plant. Tuned against the band tests in
+# test_balance.py (20k seeded fights per tier, both lead orders):
+#   tier  masher  autopilot  reader (turns)  always-Attack
+#   1     98.7%   99.97%     100% (5.2)      90.8%
+#   2     96.8%   99.8%      100% (6.3)      86.1%
+#   3     95.8%   99.6%      100% (6.8)      82.5%
+# masher = random move + skill whenever ready; reader = counters shown intents, cashes blooms in.
 TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
 BOSS_TIERS = {            # tier: (name, hp, attack)
-    1: ("Drought Chomper", 28, 7),
-    2: ("Parched Brute", 31, 7),
-    3: ("Desert Dragon", 34, 8),
+    1: ("Drought Chomper", 34, 7),
+    2: ("Parched Brute", 36, 8),
+    3: ("Desert Dragon", 38, 8),
 }
 
-# Overall health fades while the plant is dry and recovers when it is not (percent per second)
+# Overall health fades while the plant is dry and recovers when it is not (percent per second).
+# It is a mood shown to the player only: it does not change the fight.
 HEALTH_DECAY_PER_SEC = {1: 1.0, 2: 2.5, 3: 5.0}
 HEALTH_RECOVER_PER_SEC = 3.0
 # Winning a fight perks the plant up straight away
 HEALTH_WIN_BONUS = 25.0
-# Health bands shown to the player. At 0 the plant is wilted: it hits weaker, but it can still
-# win, and winning waters it, so it always has a way back.
 HEALTH_WEARY_BELOW = 60.0
 HEALTH_WILTING_BELOW = 30.0
-WILTED_ATK_FACTOR = 0.8
+
+# State message version sent to the game screen
+PROTOCOL_VERSION = 2
 
 # Temporary random moisture simulator (python3 main.py --sim)
 SIM_COOLDOWN_SECONDS = 30.0

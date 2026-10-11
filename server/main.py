@@ -1,11 +1,17 @@
 """Run the game server: python main.py
 
   --sim             made-up soil moisture for both plants instead of real sensors
-  --offline         no Mosquitto needed: an in-process loopback replaces the broker (implies --sim)
+  --offline         no Mosquitto needed: an in-process loopback replaces the broker (implies --sim).
+                    The pump log is kept in memory only, unless --state is given.
   --ws-port=N       serve the WebSocket on port N instead of config.WS_PORT
+  --seed=N          fixed random seed for the game and the simulated soil (repeatable runs)
+  --state=PATH      pump log / stats file (default: server/var/pump_log.json)
 """
 import asyncio
+import datetime
 import logging
+import math
+import os
 import random
 import sys
 import time
@@ -14,19 +20,33 @@ import api
 import battle
 import config as C
 import mqtt_io
+import persist
+import protocol
 from engine import GameEngine
 from moisture_sim import MoistureSim
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("main")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
+    """One incoming message (MQTT or WebSocket) -> pump commands. Never raises: a bad message is
+    logged and ignored, so nothing anyone publishes can stop the server."""
+    try:
+        return _route(engine, topic, payload, now)
+    except Exception:
+        log.exception("ignored message on %r: %r", topic, payload)
+        return []
+
+
+def _route(engine, topic, payload, now):
     if topic == C.TOPIC_STATUS_ESP32:
         engine.on_esp_status(payload, now)
-    elif topic == "ws/" + C.WS_ACTION_MOVE:
-        return engine.on_player_move(payload, now)
-    elif topic == "ws/" + C.WS_ACTION_DEMO_BOSS:
+    elif topic == protocol.MOVE_TOPIC:
+        move, turn, _ = protocol.parse_move(payload)
+        return engine.on_player_move(move, now, turn)
+    elif topic == protocol.DEMO_TOPIC:
         return engine.on_demo_boss(now)
     elif topic == C.TOPIC_DEBUG_BOSS:
         return engine.on_debug_boss(payload, now)
@@ -34,12 +54,22 @@ def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
         for p in C.PLANTS:
             if topic == C.TOPIC_SOIL.format(plant=p):
                 try:
-                    return engine.on_soil_raw(p, int(float(payload)), now)
-                except ValueError:
+                    value = float(payload)
+                except (TypeError, ValueError):
+                    value = float("nan")
+                if not math.isfinite(value):
                     log.warning("bad soil payload on %s: %r", topic, payload)
+                    return []
+                return engine.on_soil_raw(p, int(value), now)
             elif topic == C.TOPIC_PAD.format(plant=p):
                 engine.on_pad(p, payload)
     return []
+
+
+def published(info) -> bool:
+    """paho's publish() returns a message info with rc 0 (MQTT_ERR_SUCCESS) when queued; the
+    loopback returns None and cannot fail."""
+    return info is None or getattr(info, "rc", 0) == 0
 
 
 def _flag_value(name: str):
@@ -52,7 +82,9 @@ def _flag_value(name: str):
 async def main():
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
-    engine = GameEngine(creatures=battle.load_creatures())
+    seed = _flag_value("--seed")
+    rng = random.Random(int(seed)) if seed is not None else random.Random()
+    engine = GameEngine(creatures=battle.load_creatures(), rng=rng)
     if _flag_value("--ws-port"):
         C.WS_PORT = int(_flag_value("--ws-port"))
     feed = api.Feed(engine, queue)
@@ -63,35 +95,71 @@ async def main():
     else:
         client = mqtt_io.connect(loop, queue)
 
+    state_path = _flag_value("--state")
+    if state_path is None and not offline:
+        state_path = os.path.join(HERE, C.PUMP_LOG_FILE)
+    if state_path:
+        data = persist.load(state_path, time.time())
+        engine.restore(data, time.monotonic())
+        log.info("pump log %s: %s", state_path, data["status"])
+        engine.dirty = data["status"] == persist.CORRUPT   # rewrite a damaged file at once
+    else:
+        log.info("pump log kept in memory only")
+
     sim = None
     if "--sim" in sys.argv or offline:
         # TEMPORARY: made-up moisture for both plants instead of real sensors
-        sim = {p: MoistureSim(start=random.uniform(*C.SIM_START_PCT[p])) for p in C.PLANTS}
+        sim = {p: MoistureSim(rng=random.Random(rng.random()), start=rng.uniform(*C.SIM_START_PCT[p]))
+               for p in C.PLANTS}
         C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS
         C.REWARD_MIN_GAP_SECONDS = C.SIM_COOLDOWN_SECONDS
         log.info("SIMULATED moisture is on, cooldown %.0fs", C.COOLDOWN_SECONDS)
 
-    def send(cmd):
-        client.publish(cmd.topic, cmd.payload)
+    def send(cmd, now):
+        # QoS 0, not retained: a pump command is never stored or re-sent later by the broker.
+        info = client.publish(cmd.topic, cmd.payload, qos=0, retain=False)
+        if not published(info):
+            engine.pump_failed(cmd, now)
+            return
         for p in (sim or {}):
             if cmd.topic == C.TOPIC_CMD_PUMP.format(plant=p):
                 sim[p].watered(int(cmd.payload))
 
+    def save_if_dirty(now):
+        if not (engine.dirty and state_path):
+            engine.dirty = False
+            return
+        engine.dirty = False
+        try:
+            persist.save(state_path, engine.persisted(now), time.time())
+        except OSError:
+            log.exception("could not save the pump log to %s", state_path)
+
     async def ticker():
         while True:
             await asyncio.sleep(0.2)
-            # With a game screen connected the player picks the moves. With none, the game plays itself.
-            engine.manual = bool(feed.clients)
-            for cmd in engine.tick(time.monotonic()):
-                send(cmd)
-            await feed.publish_if_changed()
+            try:
+                now = time.monotonic()
+                engine.set_manual(bool(feed.clients), now)
+                engine.set_today(datetime.date.today().isoformat())
+                for cmd in engine.tick(now):
+                    send(cmd, now)
+                save_if_dirty(now)
+                await feed.publish_if_changed(now)
+            except Exception:
+                log.exception("tick failed")
 
     async def consumer():
         while True:
             topic, payload = await queue.get()
-            for cmd in route(engine, topic, payload, time.monotonic()):
-                send(cmd)
-            await feed.publish_if_changed()
+            try:
+                now = time.monotonic()
+                for cmd in route(engine, topic, payload, now):
+                    send(cmd, now)
+                save_if_dirty(now)
+                await feed.publish_if_changed(now)
+            except Exception:
+                log.exception("message on %r failed", topic)
 
     async def moisture_simulator():
         client.publish(C.TOPIC_STATUS_ESP32, "online")
@@ -102,7 +170,7 @@ async def main():
             for p in C.PLANTS:
                 sim[p].step(1.0)
 
-    async with feed.serve():
+    async with feed.serve(C.WS_HOST, C.WS_PORT):
         log.info("ws on %s:%s, mqtt %s:%s", C.WS_HOST, C.WS_PORT, C.MQTT_HOST, C.MQTT_PORT)
         tasks = [ticker(), consumer()]
         if sim:
@@ -111,4 +179,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     asyncio.run(main())

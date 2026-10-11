@@ -1,4 +1,6 @@
-"""Run: python -m unittest test_server -v  (from the server folder, no hardware needed)"""
+"""Run every server test: `python3 test_server.py` (from the server folder; no hardware, no broker,
+no pip packages needed). It also runs test_contract.py (turn contract, pump safety, persistence,
+protocol) and test_balance.py (seeded balance bands)."""
 import random
 import unittest
 from dataclasses import replace
@@ -184,9 +186,12 @@ class EngineFlowTests(unittest.TestCase):
 
     def test_snapshot_has_agreed_fields(self):
         snap = GameEngine().snapshot()
-        for key in ("creatures", "meters", "mode", "boss", "battle", "reward"):
+        for key in ("v", "creatures", "meters", "mode", "fighters", "health", "condition", "tier",
+                    "demo_available", "boss", "battle", "result", "stats"):
             self.assertIn(key, snap)
+        self.assertNotIn("reward", snap)
         self.assertIn("stale", snap["meters"])
+        self.assertIn("thirsty", snap["meters"])
 
     def test_wet_soil_never_gets_water(self):
         e = GameEngine(rng=random.Random(3))
@@ -202,8 +207,11 @@ class EngineFlowTests(unittest.TestCase):
 
     def play_demo(self, e, t):
         cmds = e.on_demo_boss(t)
-        for _ in range(400):
+        for i in range(400):
             t += 0.5
+            if i % 4 == 0:                        # the sensors keep reporting a wet pot
+                for p in C.PLANTS:
+                    cmds += e.on_soil_raw(p, WET_RAW, t)
             cmds += e.tick(t)
         return cmds, t
 
@@ -217,7 +225,7 @@ class EngineFlowTests(unittest.TestCase):
                 if cmds:
                     break
             self.assertEqual(len(cmds), 1)
-            self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
+            self.assertEqual(int(cmds[0].payload), C.DEMO_SIP_MS)   # wet soil: only a sip
             for _ in range(5):  # repeated presses cannot flood the pot
                 again, t = self.play_demo(e, t)
                 self.assertEqual(again, [])
@@ -279,14 +287,29 @@ class TierTests(unittest.TestCase):
             g = feed_dry_pct(S.Game(), pct)
             self.assertEqual((g.mode, g.tier), (S.BOSS, tier), pct)
 
-    def test_harder_tier_skips_the_cooldown(self):
+    def test_a_harder_tier_does_not_skip_the_cooldown(self):
         g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)
         g, _ = S.on_battle_done(g, False, 10.0)            # lost, now in cooldown
         later = 10.0 + C.BOSS_BREATHER_SECONDS + 1.0       # past the breather, inside the cooldown
-        g = feed_dry_pct(g, 40.0, now=later)               # same tier: still blocked
+        g = feed_dry_pct(g, 40.0, now=later)               # same tier: blocked
         self.assertEqual(g.mode, S.COOLDOWN)
-        g = feed_dry_pct(g, 10.0, now=later + 1.0)         # drier: a harder boss comes
+        g = feed_dry_pct(g, 10.0, now=later + 1.0)         # drier: still blocked (P4/P5)
+        self.assertEqual(g.mode, S.COOLDOWN)
+        g = S.on_tick(g, 10.0 + C.COOLDOWN_SECONDS)
+        g = feed_dry_pct(g, 10.0, now=10.0 + C.COOLDOWN_SECONDS)
         self.assertEqual((g.mode, g.tier), (S.BOSS, 2))
+
+    def test_another_plants_easier_fight_does_not_shorten_a_cooldown(self):
+        """P4: A loses at tier 2, B then fights tier 1; A still waits out its own cooldown."""
+        g = S.on_tick(feed_dry_pct(S.Game(), 10.0, "A"), C.BOSS_INTRO_SECONDS)
+        g, _ = S.on_battle_done(g, False, 10.0)
+        g = S.on_tick(S.on_demo(g, "B", 11.0, tier=1), 11.0 + C.BOSS_INTRO_SECONDS)
+        g, _ = S.on_battle_done(g, True, 30.0)
+        g = S.on_tick(g, 30.0 + C.REWARD_DISPLAY_SECONDS)
+        t = 30.0 + C.BOSS_BREATHER_SECONDS + 1.0           # breather over, A's cooldown not
+        self.assertLess(t, 10.0 + C.COOLDOWN_SECONDS)
+        g = feed_dry_pct(g, 5.0, "A", now=t)
+        self.assertNotEqual(g.mode, S.BOSS)
 
     def test_no_plant_calls_a_boss_right_after_a_fight(self):
         g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)   # plant A's boss
@@ -401,6 +424,7 @@ class TeamTests(unittest.TestCase):
         cmds = []
         while e.game.mode == S.BATTLE:
             t += C.BATTLE_TURN_SECONDS + 0.1
+            e.on_soil_raw("A", DRY_RAW, t)
             e.battle = replace(e.battle, boss_hp=1, creature_hp=e.battle.creature.hp)
             cmds = e.on_player_move("skill", t) or cmds
         self.assertEqual(e.game.mode, S.REWARD)
@@ -413,20 +437,6 @@ class TeamTests(unittest.TestCase):
         e.tick(C.BOSS_INTRO_SECONDS + 0.1)
         self.assertEqual(e.battle.creature.name, C.PLANT_FIGHTERS["A"]["name"])
         self.assertEqual(e.battle.bench[0][1].name, "Mossling")
-
-
-class BalanceTests(unittest.TestCase):
-    def test_every_tier_is_winnable_at_least_40_percent(self):
-        for tier in (1, 2, 3):
-            wins = 0
-            games = 3000
-            for seed in range(games):
-                rng = random.Random(seed)
-                fight = team_fight(tier, "AB"[seed % 2])
-                while not B.winner(fight):
-                    fight = B.play_turn(fight, rng)
-                wins += B.winner(fight) == "creature"
-            self.assertGreaterEqual(wins / games, 0.40, f"tier {tier}")
 
 
 class HealthTests(unittest.TestCase):
@@ -569,21 +579,6 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(b.last_move["creature"], "attack")
         self.assertEqual(b.boss_hp, 40 - 8)
 
-    def test_wilted_plant_hits_weaker_but_never_zero(self):
-        weak = B.weakened(B.Stats(atk=8), C.WILTED_ATK_FACTOR)
-        self.assertLess(weak.atk, 8)
-        self.assertGreaterEqual(B.weakened(B.Stats(atk=1), 0.1).atk, 1)
-
-    def test_every_tier_is_winnable_even_with_no_skill(self):
-        for tier in (1, 2, 3):
-            wins = 0
-            for seed in range(3000):
-                rng = random.Random(seed)
-                fight = team_fight(tier, "AB"[seed % 2], skills=False)
-                while not B.winner(fight):
-                    fight = B.play_turn(fight, rng)
-                wins += B.winner(fight) == "creature"
-            self.assertGreaterEqual(wins / 3000, 0.40, f"tier {tier}")
 
     def test_creatures_json_loads_and_ignores_the_comment(self):
         creatures = B.load_creatures("creatures.json")
@@ -638,7 +633,7 @@ class ManualBattleTests(unittest.TestCase):
     def test_not_manual_means_the_game_plays_itself(self):
         e, t = self.into_battle(manual=False)
         self.assertEqual(e.on_player_move("attack", t), [])
-        e.tick(t + C.BATTLE_TURN_SECONDS + 0.1)
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1 + C.AUTO_TURN_SECONDS)
         self.assertGreaterEqual(e.battle.turn, 1)
 
     def test_pad_picks_the_creature_and_its_skill(self):
@@ -665,6 +660,7 @@ class ManualBattleTests(unittest.TestCase):
             e, t = self.into_battle(seed=seed)
             for _ in range(60):
                 t += C.BATTLE_TURN_SECONDS + 0.1
+                e.on_soil_raw("A", DRY_RAW, t)
                 cmds = e.on_player_move("skill" if e.battle and e.battle.skill_ready_in == 0 else "attack", t) \
                     if e.game.mode == S.BATTLE else []
                 if cmds:
@@ -683,14 +679,14 @@ class HealthConsequenceTests(unittest.TestCase):
             e.health = health
             self.assertEqual(e.condition(), name)
 
-    def test_wilted_plant_fights_with_less_attack(self):
-        for health, weaker in [(100.0, False), (0.0, True)]:
+    def test_health_is_a_mood_only_and_never_weakens_a_fighter(self):
+        for health in (100.0, 0.0):
             e = GameEngine()
             e.health = health
             e.soil_pct = {"A": 10.0, "B": 10.0}   # still dry, so health does not recover
             e.on_demo_boss(0.0, "A")
             e.tick(C.BOSS_INTRO_SECONDS + 0.1)
-            self.assertEqual(e.battle.creature.atk < C.DEFAULT_CREATURE_ATK, weaker)
+            self.assertEqual(e.battle.creature.atk, C.PLANT_FIGHTERS["A"]["atk"])
 
     def test_a_win_perks_the_plant_up(self):
         e = GameEngine(rng=random.Random(1))
@@ -742,6 +738,9 @@ class StaleTimerTests(unittest.TestCase):
         self.assertEqual(e.game.mode, S.BATTLE)
         e.tick(C.ESP32_STALE_SECONDS + 5)
         self.assertEqual(e.game.mode, S.WALKING)
+        self.assertTrue(e.snapshot()["battle"]["over"])          # held a moment for the screen
+        self.assertEqual(e.result["outcome"], "dismissed")
+        e.tick(C.ESP32_STALE_SECONDS + 5 + C.RESULT_HOLD_SECONDS)
         self.assertIsNone(e.battle)
 
     def test_no_pump_while_the_link_is_silent(self):
@@ -776,7 +775,7 @@ class StaleTimerTests(unittest.TestCase):
 class BothPlantsDryTests(unittest.TestCase):
     def waiting_game(self, a_pct, b_pct):
         """Both plants are dry and waiting out a cooldown that a boss of any tier cannot skip."""
-        g = S.Game(mode=S.COOLDOWN, cooldown_until={"A": 100.0, "B": 100.0}, last_tier=3, mode_until=100.0)
+        g = S.Game(mode=S.COOLDOWN, cooldown_until={"A": 100.0, "B": 100.0}, mode_until=100.0)
         for _ in range(C.SOIL_DRY_READINGS_N + 2):
             g = S.on_soil(g, "A", a_pct, 10.0)
             g = S.on_soil(g, "B", b_pct, 10.0)
@@ -811,6 +810,9 @@ class BothPlantsDryTests(unittest.TestCase):
             g = S.on_soil(g, "B", 5.0, 0)
         self.assertEqual((g.mode, g.boss_plant), (S.BOSS, "A"))
 
+
+from test_contract import *  # noqa: E402,F401,F403  (one command runs every test)
+from test_balance import *   # noqa: E402,F401,F403
 
 if __name__ == "__main__":
     unittest.main()

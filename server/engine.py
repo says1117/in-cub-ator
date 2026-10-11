@@ -483,7 +483,7 @@ class GameEngine:
             if heard is None or now - heard > C.SOIL_FRESH_SECONDS:
                 log.info("water for %s dropped, no fresh reading from its soil sensor", pot)
                 continue
-            if not demo and self.soil_pct[pot] >= C.SOIL_WET_THRESHOLD_PCT:
+            if not demo and not C.WATER_WET_SOIL and self.soil_pct[pot] >= C.SOIL_WET_THRESHOLD_PCT:
                 log.info("water for %s dropped, the soil got wet meanwhile", pot)
                 continue
             log.info("command %s %s", cmd.topic, cmd.payload)

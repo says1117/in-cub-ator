@@ -52,7 +52,7 @@ Run these from a laptop on the same network (Mac commands shown):
    Expect 8 of 8: ports 8080, 8765, 1883 reachable; page loads; live game state; cube status online; soil readings arriving.
 2. **Pump safety (you watch the pumps):**
    `firmware/tests/integration/phase4_check.sh <Jetson IP>`
-   Expect: 2 s run, a too-soon command refused, bad payload ignored, a 60 s request capped to 3 s, offline seen after unplugging.
+   Expect: a short (under 1 s) run, a too-soon command refused, bad payload ignored, a 60 s request capped to 1 s, offline seen after unplugging.
 3. **Play it:** open `http://<Jetson IP>:8080` in Safari or Chrome. Plants walk; press the demo button or let the soil call a boss; win; the dry pot gets watered.
 4. **Server tests on the Jetson:** `cd server && python3 -m unittest test_server test_plant_db test_summon test_progress test_snapshot` (179 pass on the Mac).
 

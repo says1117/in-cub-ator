@@ -34,12 +34,12 @@ BOSS_BREATHER_SECONDS = 20.0  # after any fight ends, no plant can call a boss f
 ESP32_STALE_SECONDS = 30.0
 
 # Reward safety.
-# PUMP_MAX_MS is the hard cap on any pump command. It is a conservative PLACEHOLDER until Role 1
-# gives the firmware's real cap: it must never be higher than that. Raise it only with Role 1.
-# A harder boss gives more water, but always inside the cap.
-PUMP_MAX_MS = 3000
-PUMP_MS_PER_WIN = 2000
-PUMP_MS_BY_TIER = {1: 2000, 2: 2500, 3: 3000}
+# PUMP_MAX_MS is the hard cap on any pump command. It must never be higher than the firmware's
+# PUMP_MAX_RUN_MS (1000 ms, set by Role 1 after bench testing). Raise it only with Role 1.
+# A harder boss gives more water, but always inside the cap. Runs are short: 3 s flooded the pots.
+PUMP_MAX_MS = 1000
+PUMP_MS_PER_WIN = 400
+PUMP_MS_BY_TIER = {1: 400, 2: 600, 3: 800}
 REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket

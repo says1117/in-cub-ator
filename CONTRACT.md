@@ -126,7 +126,7 @@ Behavior in schema 2: only plants whose tag is on a pad are in the game. With no
 
 ## Open decisions
 
-1. Pump max run time and minimum gap (1000 ms and 30000 ms; the server should send at most 1000 ms, Role 2 to confirm).
+1. Pump max run time and minimum gap (1000 ms and 30000 ms; the server sends 400 to 800 ms per win and caps at 1000 ms).
 2. Light maximum minutes (starting value 30, Role 2 to confirm).
 3. How often soil is published (starting value every 2000 ms). Pads publish only on change.
 4. Game state message: draft written above from the plant-db-tests code; Roles 2 and 3 to confirm.

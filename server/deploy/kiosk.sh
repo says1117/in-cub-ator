@@ -18,7 +18,7 @@ fi
 # wait until the game screen is being served
 for _ in $(seq 1 60); do curl -sf "$URL" >/dev/null && break; sleep 1; done
 
-if command -v chromium-browser >/dev/null; then exec chromium-browser --kiosk --noerrdialogs --disable-infobars "$URL"
-elif command -v chromium >/dev/null; then exec chromium --kiosk --noerrdialogs --disable-infobars "$URL"
+if command -v chromium-browser >/dev/null; then exec chromium-browser --kiosk --noerrdialogs --disable-infobars --autoplay-policy=no-user-gesture-required "$URL"
+elif command -v chromium >/dev/null; then exec chromium --kiosk --noerrdialogs --disable-infobars --autoplay-policy=no-user-gesture-required "$URL"
 else exec firefox --kiosk "$URL"
 fi

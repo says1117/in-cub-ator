@@ -85,7 +85,7 @@ It checks five times a second. The screen sends two kinds of message back:
   "health": 72.4,
   "condition": "healthy",
   "tier": 1,
-  "boss": {"plant": "A", "name": "Drought Chomper", "tier": 1, "hp": 30, "max_hp": 38,
+  "boss": {"plant": "A", "name": "Drought Chomper", "kind": "chomper", "tier": 1, "hp": 30, "max_hp": 38,
            "type": "drought", "source": "soil"},
   "battle": {"turn": 2, "plant": "A",
              "team": {"A": {"name": "Ember", "hp": 23, "max_hp": 30, "state": "fighting"},
@@ -168,12 +168,17 @@ The sensor gives a raw number. The server turns it into a percentage: 0% is bone
 100% is wet. The two calibration numbers are `SOIL_RAW_DRY` (3000) and `SOIL_RAW_WET`
 (1200). They are placeholders until the real sensors are measured.
 
-| Moisture | Tier | Boss | Boss HP | Boss attack | Water on a win |
-| --- | --- | --- | --- | --- | --- |
-| 50% and above | 0 | none | | | |
-| under 50% | 1 | Drought Chomper | 38 | 9 | 2.0 s |
-| under 25% | 2 | Parched Brute | 44 | 11 | 2.5 s |
-| 1% or lower | 3 | Desert Dragon | 48 | 13 | 3.0 s |
+| Moisture | Tier | Boss HP | Boss attack | Water on a win |
+| --- | --- | --- | --- | --- |
+| 50% and above | 0 | no boss | | |
+| under 50% | 1 | 38 | 9 | 2.0 s |
+| under 25% | 2 | 44 | 11 | 2.5 s |
+| 1% or lower | 3 | 48 | 13 | 3.0 s |
+
+**Which boss comes is a separate roll.** Each time a boss is called, the game picks one of two
+at random, **50% each**, whatever the soil says: the **Drought Chomper** or the **Sporeling Trio**
+(`BOSS_KINDS` in `server/config.py`). The tier only sets how strong it is. The pick is kept for
+the whole fight and sent to the screen as `boss.kind`.
 
 A drier plant gets a harder boss and a bigger drink. Every tier is meant to stay winnable,
 because winning is the only way the plant gets watered. Section 6 has the win rates.
@@ -233,13 +238,13 @@ The bluff move is always the one that beats the obvious answer: it shows attack,
 it uses special. A bluff that lands hits 1.5 times as hard. So against a coin flip, copying
 the shown move is the safe play: a graze if it was real, a hit for you if it was the bluff.
 
-**What makes the three bosses different**
+**What makes the three tiers different** (either boss can be any tier)
 
 | Tier | Calm tells | Enraged tells | Its own trick |
 | --- | --- | --- | --- |
-| 1 Drought Chomper | always SURE | 70% LIKELY, 30% COIN FLIP | the move cards say WINS, CLASH or LOSES |
-| 2 Parched Brute | always LIKELY | half LIKELY, half COIN FLIP | every third turn is a HEAVY wind-up: SURE, and it hits double |
-| 3 Desert Dragon | half LIKELY, half COIN FLIP | 25% LIKELY, 75% COIN FLIP | heavy wind-ups too, and once enraged they can be bluffs |
+| 1 mild | always SURE | 70% LIKELY, 30% COIN FLIP | the move cards say WINS, CLASH or LOSES |
+| 2 dry | always LIKELY | half LIKELY, half COIN FLIP | every third turn is a HEAVY wind-up: SURE, and it hits double |
+| 3 bone dry | half LIKELY, half COIN FLIP | 25% LIKELY, 75% COIN FLIP | heavy wind-ups too, and once enraged they can be bluffs |
 
 - **Enraged:** at half health the boss roars. From the next turn it hits harder (+2, +2, +3)
   and its tells get shakier, as in the table.
@@ -316,9 +321,14 @@ The rules only know attack, guard, special and skill. Each fighter does them its
 | Zest | Blade Rush: darts in and cuts three times | Stripe Wall: striped blades stab up as a fence; if it holds they launch | Citrus Volt: a ball of lightning jumps to the boss | Sunburst: a small sun heals Zest, then spears the boss |
 | Boss | a pair of huge jaws snaps shut | it slams the ground: a crack races over and roots spike up | a ball of heat builds in its mouth, then a beam | none |
 
-The three boss tiers share these moves under their own names and colours (`BOSS_MOVES` and
-`BOSS_PALETTES` in `client/src/data/bosses.js`): red heat for the Chomper, sand and gold
-for the Brute, cold violet fire for the Dragon.
+Both bosses use these three moves under their own names and colours (`BOSS_MOVES` and
+`BOSS_PALETTES` in `client/src/data/bosses.js`): red heat for the Chomper (Chomp, Scorch Ray,
+Thorn Quake) and pink spores for the Sporeling Trio (Spore Gnash, Spore Cannon, Mycelium Quake).
+
+The **Sporeling Trio** is three sad mushrooms on one patch of ground, a flat picture
+(`client/public/assets/bosses/sporelings.png`) with no moving pieces. Where the Chomper opens
+its mouth to roar, the Trio rears up and shakes. Its attacks come from the left-hand mushroom's
+mouth (`mouth` in `bosses.js`).
 
 Both sides always show their move, even the one that lost the turn, and the turn is told
 line by line. "EMBER USED VINE HAYMAKER!" types out, a beat passes, the move plays, and a
@@ -408,12 +418,59 @@ The screen is a Phaser 4 game, 800 by 450, drawn in code with a few picture file
 says what is going on, the connection status, the demo button and the sound switch. If the
 game server cannot be reached it says so in the middle of the screen.
 
-**Sound** (`audio.js`) is made in code: there are no sound files. A calm tune plays in the
-forest and a driving one in the fight, which speeds up when the boss is enraged. Every
-move, hit, block, tell and result has its own effect, and the pump has a watering sound.
-The M key or the SOUND button turns it all off. A browser only allows sound after the first
-key press or click; for a kiosk start Chromium with
-`--autoplay-policy=no-user-gesture-required`.
+**Sound** (`audio.js`) is made in code: there are no sound files. Voices are built from
+detuned stacks, FM bells, filter sweeps, distortion and noise, with a shared reverb, a drum
+kit and a gentle limiter. Two songs play (below) and every event has a sound of its own. The
+M key or the SOUND button turns it all off. A browser only allows sound after the first key
+press or click; for a kiosk start Chromium with `--autoplay-policy=no-user-gesture-required`.
+On the dev server, `/sounds.html` lists every sound and both songs to click and hear.
+
+How each event sounds, what else was considered, and why this one won. The choice is fixed:
+the same event always gets the same sound.
+
+| Event | What is happening | Considered | Chosen |
+| --- | --- | --- | --- |
+| Forest walk | calm, nothing to do but watch | a loop of wind only; a slow solo piano; a pad with a plucked arpeggio and a tune | **Forest song**: D major, 72 bpm, warm pad, harp arpeggio, a flute tune, birds, wind. It has a story over 8 bars and never fights the alarm. |
+| Boss alert | dry soil called a boss | a plain beep; a rising horn; a two-tone siren | **Siren and low swell**: four siren pulses, then a deep swell, so it feels like something is coming |
+| Boss far off | it bounds once, far away | silence; a distant drum | **Small thump** with dust |
+| Tree breaks | it knocks a tree down | a single crash | **Crack, creak, crash** in three parts |
+| Boss lands | big impact, the ground jumps | a short boom; a boom with a falling sine; a layered impact | **Layered impact**: sub-bass drop, noise crash, rumble, and the music ducks |
+| Boss roars | it roars at the dragon | a growl sample (not allowed); noise only; a distorted saw with a flutter, plus voice-like noise bands | **Distorted saw growl** with two moving noise bands |
+| Cut to fight | two flashes, then the fight screen | a whoosh; a hit and a riser | **Two sharp hits then a riser** |
+| Fight starts | the battle screen opens | straight into the song; a drum hit; a sting then the song | **Sting** (kick, cymbal, minor chord, toms), then the **Battle song** fades in half a second later |
+| Battle song | the whole fight | four-on-the-floor dance; slow dark ambient; driving rock with a hook | **Battle song**: A minor, 138 bpm, kick and snare, pumping saw bass, fast arpeggio, a lead hook. It builds over 8 bars and rolls into the loop. |
+| Boss wind-up shown | the tell appears | one beep for all; a different sound per grade | **A different sound per grade**: SURE a clear fifth, LIKELY a minor third left hanging, COIN FLIP a spinning coin. You can hear how sure it is. |
+| Heavy wind-up | a double-damage hit is coming | a drum roll; a low warning tone; a heartbeat with a rising growl | **Heartbeat and a rising growl** |
+| Pick a move | you choose a card | a click; a blip; a two-note bell | **Two-note bell**; a dull buzz if the skill is not ready |
+| Line typing out | "EMBER USED ..." types in | silence; a typewriter; a quiet tick | **Quiet tick** in three pitches, so it does not drone |
+| Ember attack, Haymaker | a burning fist | a plain whoosh; whoosh plus flame | **Wind-up whoosh and a flame roar** |
+| Ember guard, Aegis | a wheel of petals | a clang; a chime; a shimmering bell chord | **Shimmering bell chord** |
+| Ember special, Flare | burning petals corkscrew | a laser; a rising saw; a rising saw with crackle | **Rising saw with a wobble and crackle** |
+| Ember skill, Inferno Bloom | a long charge, then a pillar of fire | a boom; a riser then a boom; riser, boom, and sparkles | **Riser, eruption, sparkle shower** |
+| Zest attack, Blade Rush | three quick cuts | one slash; three slashes | **Three metallic slashes**, left to right |
+| Zest guard, Stripe Wall | blades stab up as a fence | one thud; a stab per blade | **Four rising plucked stabs** |
+| Zest special, Citrus Volt | a ball of lightning | white noise; a buzz; random zaps with a hum | **Random zaps over a buzzing hum** |
+| Zest skill, Sunburst | a small sun, heals | a harp; a warm chord; a swelling chord then sparkles | **Swelling major chord, then sparkles** |
+| Boss bite | huge jaws | a growl; a snap; a growl, then a snap and a thud | **Growl, then the jaws shut** with a thud, in time with the picture |
+| Boss ray | a beam, aimed first | a laser; a charge hum then a beam | **Rising charge, then a roaring beam** |
+| Boss quake | roots spike up | a rumble; rumble, crack, snaps | **Rumble, crack, then roots snapping up** |
+| Plant lands a hit | damage to the boss | a thud; a thud and a slap; a layered punch | **Layered punch** (noise, sub thump, a crack), slightly different each time |
+| Big hit, or the last blow | 9 damage or more, or a knockout | the same, louder; a bigger layered hit | **Bigger layered hit** with a bell shimmer; the music ducks |
+| Plant is hurt | damage to the plant | the same as a hit; a thud and a short cry | **Thud and a short falling cry** |
+| Tie graze | a small hit in a clash | silence; a small thud | **Small thud** |
+| Block | a guard holds | a thump; a clang | **Metal clang** with a ring |
+| Clash | two moves meet | the block sound; a blast | **Clang plus a blast** |
+| Whiff, no effect | a move does nothing | silence; a flat drop; air and a small drop | **Air and a small drop** |
+| Bluff | the tell was a lie | a laugh (not allowed); a buzzer; falling plucks and a sneer | **Falling plucks and a sneer** |
+| Heal | plant recovers | a chime; a harp run with sparkle | **Harp run with sparkle** |
+| Skill ready | the skill is charged | a ding; a rising arpeggio | **Rising arpeggio and a bell** |
+| Plant faints | knocked out | a thud; a falling slide and a thud | **Falling slide and a thud** |
+| Next plant steps in | "GO!" | a horn; a whoosh and two bounds | **Whoosh, two bounds and a rising bell** |
+| Boss enraged | it loses its temper | a louder roar; roar, riser, hit, toms | **Roar, riser, hit and toms**; the Battle song speeds up to 160 bpm with a doubled lead, a double-time hat and a busier kick |
+| Boss defeated | it comes apart | an explosion; an explosion and sparkles | **Deep boom, crash and a shower of bells** |
+| Victory | you win | a jingle; a fanfare | **Brass fanfare** in C, timpani, cymbal and bells |
+| Defeat | you lose | a buzzer; a slow falling phrase | **Slow falling phrase** in A minor |
+| Watering | the real pump runs | a loop of water; a motor and a stream | **Motor hum, a stream, bubbles, then drips**, as long as the real pump |
 
 **The two plants in the forest**
 
@@ -437,7 +494,8 @@ key press or click; for a kiosk start Chromium with
   in from the bench, growing as it comes forward.
 - The screen: the fighting plant's plate is top left (its face, HP, the soil it is fighting
   for, and the plant on the bench under it), the boss's plate is top right, and the four
-  move cards run along the bottom. Each card says what the move beats and loses to. The
+  move cards form a block of two by two at the bottom right, a little see-through so the
+  field shows behind them. A small plate at the bottom left holds the log line. Each card says what the move beats and loses to. The
   skill card shows its charges. Health bars only drop when the blow lands, and a line
   calls out each move by name. Keys 1 to 4 pick a card.
 - **The wind-up panel** sits under the boss's plate and points at it: the move it is
@@ -489,8 +547,8 @@ and the tree is standing again.
 
 ## 13. The Drought Chomper
 
-The boss is a thorny plant with three hanging flower heads. One picture is used for all
-three tiers for now; higher tiers are drawn a little taller.
+The boss is a thorny plant with three hanging flower heads. It is one of the two bosses (the
+other is the Sporeling Trio, section 7). A drier tier draws it a little taller.
 
 It is not one flat picture. It was cut into eight layers so each can move on its own
 (`client/src/render/bossRig.js`, with the layer positions in `client/src/data/chomperRig.js`):
@@ -613,7 +671,7 @@ are given the time as a number, which is why they can be tested quickly.
   `serial_bridge.py` fills the gap for soil only. It does not pass on pad (NFC) readings,
   so through the bridge the plants always fight as themselves unless a pad message is
   published by hand.
-- **Boss art.** All three tiers share the Drought Chomper picture.
+- **Boss art.** Two bosses, the Drought Chomper and the Sporeling Trio, each used at every tier. The old "Desert Dragon" was only the Chomper with another name, so it is gone.
 - **Storage screen.** A placeholder.
 - **Vision / Jetson.** Not started.
 - **Plant art.** Each plant has one picture, seen from the front, in the forest and in the

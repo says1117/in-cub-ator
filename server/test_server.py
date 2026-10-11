@@ -267,6 +267,59 @@ class EngineFlowTests(unittest.TestCase):
         self.assertEqual((cmds, e.game.mode), ([], S.WALKING))
 
 
+class BossKindTests(unittest.TestCase):
+    def call_boss(self, seed, plant="A"):
+        e = GameEngine(rng=random.Random(seed))
+        e.on_demo_boss(0.0, plant)
+        return e
+
+    def test_every_kind_is_equally_likely(self):
+        counts = {k: 0 for k in C.BOSS_KINDS}
+        for seed in range(2000):
+            counts[self.call_boss(seed).snapshot()["boss"]["kind"]] += 1
+        for kind, n in counts.items():
+            self.assertAlmostEqual(n / 2000, 1 / len(C.BOSS_KINDS), delta=0.04, msg=kind)
+
+    def test_the_kind_does_not_depend_on_how_dry_it_is(self):
+        for pct in (40.0, 10.0, 0.0):
+            seen = set()
+            for seed in range(60):
+                e = GameEngine(rng=random.Random(seed))
+                e.soil_pct = {"A": pct, "B": 100.0}
+                e.on_demo_boss(0.0, "A")
+                seen.add(e.snapshot()["boss"]["kind"])
+            self.assertEqual(seen, set(C.BOSS_KINDS), f"soil {pct}%")
+
+    def test_the_kind_and_name_stay_the_same_through_a_fight(self):
+        e = self.call_boss(5)
+        kind = e.snapshot()["boss"]["kind"]
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        snap = e.snapshot()
+        self.assertEqual((snap["boss"]["kind"], snap["boss"]["name"]), (kind, C.BOSS_KINDS[kind]))
+        self.assertEqual(e.battle.boss.name, C.BOSS_KINDS[kind])
+
+    def test_the_numbers_still_follow_the_dryness(self):
+        for tier, (_, hp, atk) in C.BOSS_TIERS.items():
+            e = GameEngine(rng=random.Random(tier))
+            e.soil_pct = {"A": {1: 40.0, 2: 10.0, 3: 0.0}[tier], "B": 100.0}
+            e.on_demo_boss(0.0, "A")
+            e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+            self.assertEqual((e.battle.boss.hp, e.battle.boss.atk), (hp, atk))
+
+    def test_a_new_boss_is_picked_each_time(self):
+        e = GameEngine(rng=random.Random(1))
+        kinds = set()
+        t = 0.0
+        for _ in range(30):
+            e.on_demo_boss(t, "A")
+            kinds.add(e.snapshot()["boss"]["kind"])
+            e.on_esp_status("offline", t)      # a lost link sends the boss away
+            e.on_soil_raw("A", WET_RAW, t)
+            t += C.BOSS_BREATHER_SECONDS + C.COOLDOWN_SECONDS + 1
+            e.tick(t)
+        self.assertEqual(kinds, set(C.BOSS_KINDS))
+
+
 class TierTests(unittest.TestCase):
     def test_tier_for_moisture(self):
         self.assertEqual(S.tier_for(80), 0)
@@ -664,7 +717,7 @@ class HealthTests(unittest.TestCase):
         snap = e.snapshot()
         self.assertIn("health", snap)
         self.assertEqual(snap["tier"], 3)
-        self.assertEqual(snap["boss"]["name"], B.boss_for_tier(3).name)
+        self.assertEqual(snap["boss"]["name"], C.BOSS_KINDS[snap["boss"]["kind"]])
 
 
 class SimTests(unittest.TestCase):

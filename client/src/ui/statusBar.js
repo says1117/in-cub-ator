@@ -36,7 +36,7 @@ const css = `
   border-color:#ff8f6b;display:none}
 #hud .lost b{display:block;color:#ff8f6b;font-size:1.5em}
 #hud.in-battle .bar,#hud.in-battle .tools #demoBtn,#hud.in-battle .conn,#hud.in-battle .tip,#hud.in-battle .banner{display:none}
-#hud.in-battle .tools{top:auto;bottom:21.5%;right:.6%}
+#hud.in-battle .tools{top:9%;bottom:auto;right:auto;left:50%;transform:translateX(-50%)}
 #hud.in-battle .tools button{padding:.35em .6em;opacity:.75}
 `;
 

@@ -8,6 +8,7 @@
 import Phaser from "phaser";
 import { rigPartKey } from "../data/bosses.js";
 import { createCastShadow, outlineOfPicture } from "./castShadow.js";
+import { createSporeRig } from "./sporeRig.js";
 
 const ROAR_MS = 1500;
 const RAISE = 0.92;       // how far the middle head swings up, in radians
@@ -26,6 +27,7 @@ export function hasBossRig(scene, art) {
 // options.light: where the light is, for the shadow it throws (see render/castShadow.js).
 export function createBossRig(scene, art, x, y, height, options = {}) {
   const rig = art.rig;
+  if (rig.kind === "spores") return createSporeRig(scene, art, x, y, height, options);
   const root = scene.add.container(x, y);
   const body = scene.add.container(0, 0);
   // the shadow it throws: the outline of its whole picture, laid on the ground

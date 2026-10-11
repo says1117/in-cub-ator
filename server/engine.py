@@ -1,6 +1,7 @@
 """GameEngine glues the pure pieces together. No network code, so it runs in tests."""
 import logging
 import random
+from dataclasses import replace
 from typing import Optional
 
 import battle as B
@@ -33,11 +34,17 @@ class GameEngine:
         # After a lost fight the battle stays in the state message for a moment, so the screen
         # can play the last blow. {"plant", "tier", "source", "until"} or None.
         self.lost: Optional[dict] = None
+        self.boss_kind: Optional[str] = None   # which kind of boss is here now: see config.BOSS_KINDS
 
     def _set(self, new: S.Game):
         if new.mode != self.game.mode:
             log.info("mode %s -> %s (boss=%s source=%s)", self.game.mode, new.mode,
                      new.boss_plant, new.source)
+        if new.boss_plant is None:
+            self.boss_kind = None
+        elif self.boss_kind is None:
+            self.boss_kind = self.rng.choice(sorted(C.BOSS_KINDS))   # every kind has the same chance
+            log.info("the boss is a %s", C.BOSS_KINDS[self.boss_kind])
         self.game = new
 
     # inputs -----------------------------------------------------------
@@ -131,6 +138,11 @@ class GameEngine:
             self.battle = None
         return commands
 
+    def _boss_stats(self, tier: int) -> B.Stats:
+        """The boss's numbers come from how dry it is, its name from which kind it is."""
+        stats = B.boss_for_tier(tier)
+        return replace(stats, name=C.BOSS_KINDS[self.boss_kind]) if self.boss_kind else stats
+
     def fighter(self, plant: str) -> B.Stats:
         """A plant's fighting numbers: the known figure on its pad, else the plant's own."""
         stats = self.creatures.get(self.pads.get(plant, ""), B.plant_fighter(plant))
@@ -145,7 +157,7 @@ class GameEngine:
         self.last_reward = None   # nothing has been won yet in this fight
         tier = self.game.tier or 1
         charge = C.SKILL_CHARGE_START if self.health >= C.HEALTH_WEARY_BELOW else C.SKILL_CHARGE_START_WEARY
-        self.battle = B.start(self.fighter(first), B.boss_for_tier(tier), plant=first,
+        self.battle = B.start(self.fighter(first), self._boss_stats(tier), plant=first,
                               bench=[(p, self.fighter(p)) for p in bench],
                               tier=tier, charge=charge, rng=self.rng)
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
@@ -200,12 +212,13 @@ class GameEngine:
     def _finish_battle(self, won: bool, now: float) -> list:
         demo = self.game.source == C.SOURCE_DEMO
         tier = self.game.tier or 1
+        kind = self.boss_kind   # read now: a lost fight clears the boss as soon as the state changes
         new, plant = S.on_battle_done(self.game, won, now)
         self._set(new)
         if won:
             self.health = min(100.0, self.health + C.HEALTH_WIN_BONUS)
         else:
-            self.lost = {"plant": self.battle.plant, "tier": tier, "until": now + C.LOSS_DISPLAY_SECONDS,
+            self.lost = {"plant": self.battle.plant, "tier": tier, "kind": kind, "until": now + C.LOSS_DISPLAY_SECONDS,
                          "source": C.SOURCE_DEMO if demo else C.SOURCE_SOIL}
         if plant is None:
             return []
@@ -261,7 +274,7 @@ class GameEngine:
 
     def snapshot(self) -> dict:
         g, b = self.game, self.battle
-        boss_stats = b.boss if b else B.boss_for_tier(g.tier or 1)
+        boss_stats = b.boss if b else self._boss_stats(g.tier or 1)
         lost = self.lost if (b and g.boss_plant is None) else None   # the last blow of a lost fight
         return {
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
@@ -278,6 +291,7 @@ class GameEngine:
             "boss": None if (g.boss_plant is None and not lost) else {
                 "plant": lost["plant"] if lost else g.boss_plant,
                 "name": boss_stats.name,
+                "kind": (lost or {}).get("kind") or self.boss_kind or "chomper",
                 "tier": lost["tier"] if lost else g.tier,
                 "hp": b.boss_hp if b else boss_stats.hp,
                 "max_hp": boss_stats.hp,

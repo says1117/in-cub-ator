@@ -46,7 +46,27 @@ await Promise.race([
 ]).catch(() => {});
 
 const game = new Phaser.Game(config);
-if (import.meta.env.DEV) window.__game = game;   // dev only: lets you poke at the game from the browser console
+if (import.meta.env.DEV) {
+  window.__game = game;   // dev only: lets you poke at the game from the browser console
+  // dev only: opens the battle screen on a made-up fight, with no game server. kind: "chomper" or "sporelings".
+  window.__fakeBattle = (kind = "sporelings", tier = 1) => {
+    const boss = { plant: "A", name: kind === "sporelings" ? "Sporeling Trio" : "Drought Chomper", kind, tier, hp: 44, max_hp: 44, type: "drought", source: "demo" };
+    const battle = {
+      turn: 0, plant: "A", creature: "Ember", creature_hp: 30, creature_max_hp: 30, boss_hp: 44, last_move: null,
+      team: { A: { name: "Ember", hp: 30, max_hp: 30, state: "fighting" }, B: { name: "Zest", hp: 34, max_hp: 34, state: "ready" } },
+      intent: { move: "attack", grade: "likely", chance: 0.75, bluff: "special", heavy: false },
+      enraged: false, enrage_hp: 22, hints: true, skill: { name: "Inferno Bloom", ready: true, charge: 2, need: 2 },
+      manual: true, awaiting_move: true, move_seconds_left: 10,
+    };
+    game.registry.set("serverState", {
+      mode: "battle", creatures: { A: null, B: null }, meters: { water: { A: 20, B: 80 }, stale: false },
+      fighters: { A: { name: "Ember", skill: "Inferno Bloom" }, B: { name: "Zest", skill: "Sunburst" } },
+      health: 90, condition: "healthy", tier, reward: null, boss, battle,
+    });
+    game.scene.start("BossScene");
+    document.getElementById("hud")?.style.setProperty("display", "none");
+  };
+}
 
 // Navigate between URLs and scenes
 function navigate(path) {

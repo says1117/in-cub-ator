@@ -258,35 +258,34 @@ export function createBattleHud(scene, layers) {
   const clock = box(root, 356, 27, 88, 3, GOLD);
 
   // ---------------------------------------------------------------- the dock along the bottom
-  back.fillStyle(INK, 0.3); back.fillRect(0, 356, 800, 6);
-  back.fillStyle(0x090d1c, 0.92); back.fillRect(0, 362, 800, 88);
-  back.fillStyle(EDGE, 1); back.fillRect(0, 362, 800, 1);
-  plate(back, 6, 368, 182, 76, { shadow: false });
-  const log = text(root, 13, 373, "", { wrap: 168, spacing: 3 });
+  // no bar across the bottom any more: the field shows through. The log is a small plate on the
+  // left, and the four move cards float on the right, a little see-through.
+  plate(back, 6, 386, 290, 58, { shadow: false, alpha: 0.88 });
+  const log = text(root, 13, 391, "", { wrap: 276, spacing: 3 });
   // the rule of the game, always in view
   let ruleX = 13;
   for (const [word, color] of [["ATK", TYPES.attack.color], [">", null], ["SPC", TYPES.special.color], [">", null], ["GRD", TYPES.guard.color], [">", null], ["ATK", TYPES.attack.color]]) {
     const t = text(root, ruleX, 431, word, { color: color ? hex(color) : DIM, bold: Boolean(color) });
     ruleX += t.width + 3;
   }
-  text(root, 181, 431, "BEATS", { color: DIM, ox: 1 });
+  text(root, 289, 431, "BEATS", { color: DIM, ox: 1 });
 
   const cards = [];
-  const CARD = { w: 147, h: 76 };
+  const CARD = { w: 130, h: 72 };   // the four cards sit in a square on the right, two by two
   ["attack", "guard", "special", "skill"].forEach((key, index) => {
     const type = TYPES[key];
-    const home = { x: 194 + index * 151, y: 368 };
+    const home = { x: 532 + (index % 2) * 134, y: 298 + Math.floor(index / 2) * 76 };
     const card = scene.add.container(home.x, home.y);
     root.add(card);
     const g = gfx(card);
     const icon = gfx(card);
-    const title = text(card, 43, 8, "", { bold: true, wrap: 84, spacing: 1 });
+    const title = text(card, 43, 8, "", { bold: true, wrap: 70, spacing: 1 });
     const kind = text(card, 43, 30, type.label, { color: hex(type.color) });
     const line1 = text(card, 8, 48, "", { color: "#c9d2f2" });
     const line1b = text(card, 8, 48, "", { bold: true });
     const line2 = text(card, 8, 60, "", { color: "#6f7aa6" });
     const pips = gfx(card);
-    text(card, 136, 9, String(index + 1), { color: hex(type.color), ox: 0.5 });
+    text(card, CARD.w - 11, 9, String(index + 1), { color: hex(type.color), ox: 0.5 });
     const glow = box(card, 0, 0, CARD.w, CARD.h, type.color, 0).setBlendMode(Phaser.BlendModes.ADD);
     const zone = scene.add.zone(0, 0, CARD.w, CARD.h).setOrigin(0).setInteractive({ useHandCursor: true });
     card.add(zone);
@@ -294,12 +293,12 @@ export function createBattleHud(scene, layers) {
     const paint = () => {
       g.clear();
       const lit = entry.hover && entry.enabled;
-      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE });
+      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE, alpha: 0.66 });
       g.fillStyle(type.color, 1); g.fillRect(4, 1, CARD.w - 8, 2);
       g.fillStyle(shade(type.color, 0.32), 1); g.fillRect(7, 8, 30, 30);
       g.fillStyle(type.color, 1); g.fillRect(7, 8, 30, 1); g.fillRect(7, 37, 30, 1); g.fillRect(7, 8, 1, 30); g.fillRect(36, 8, 1, 30);
       g.fillStyle(EDGE, 0.7); g.fillRect(8, 44, CARD.w - 16, 1);
-      g.fillStyle(INK, 0.8); g.fillRect(130, 7, 12, 12);
+      g.fillStyle(INK, 0.8); g.fillRect(CARD.w - 17, 7, 12, 12);
     };
     entry.paint = paint;
     paint();
@@ -334,7 +333,7 @@ export function createBattleHud(scene, layers) {
       entry.line2.setText(line).setColor(color);
       for (let i = 0; i < need; i++) {
         entry.pips.fillStyle(i < charge ? GOLD : TRACK, 1);
-        entry.pips.fillRect(CARD.w - 10 - (need - i) * 13, 61, 11, 6);
+        entry.pips.fillRect(CARD.w - 8 - (need - i) * 13, 62, 11, 6);
       }
       entry.glow.setVisible(Boolean(skill && skill.ready && enabled));
     } else {
@@ -354,7 +353,7 @@ export function createBattleHud(scene, layers) {
       entry.paint();
       if (!enabled) scene.tweens.add({ targets: entry.card, y: entry.home.y, duration: 100 });
     }
-    entry.card.setAlpha(enabled || chosen ? 1 : 0.45);
+    entry.card.setAlpha(enabled || chosen ? 1 : 0.6);
   }
 
   let shownFighter = null;

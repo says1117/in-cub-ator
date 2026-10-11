@@ -235,6 +235,7 @@ export default class AdventureScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.flash(110, 255, 255, 255);
+    audio.play("cut");
     this.time.delayedCall(170, () => cam.flash(110, 255, 255, 255));
     this.time.delayedCall(340, () => {
       cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, go);

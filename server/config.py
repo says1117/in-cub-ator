@@ -93,11 +93,16 @@ SKILLS = {
 #   under 50: tier 1   under 25: tier 2   0 (at or below 1): tier 3
 TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
-BOSS_TIERS = {            # tier: (name, hp, attack)
-    1: ("Drought Chomper", 38, 9),
-    2: ("Parched Brute", 44, 11),
-    3: ("Desert Dragon", 48, 13),
+BOSS_TIERS = {            # tier: (label, hp, attack). How dry the soil is decides the numbers.
+    1: ("mild", 38, 9),
+    2: ("dry", 44, 11),
+    3: ("bone dry", 48, 13),
 }
+
+# Who the boss is does not depend on how dry it is: each time one is called, the game picks one
+# of these at random, every kind equally likely. The name is what the screen shows; the picture
+# and the moves for each kind are in client/src/data/bosses.js.
+BOSS_KINDS = {"chomper": "Drought Chomper", "sporelings": "Sporeling Trio"}
 
 # The wind-up. Before the player picks, the boss shows the move it is winding up and how sure
 # that is. The grade is the chance that the shown move is the real one. When it is not, the

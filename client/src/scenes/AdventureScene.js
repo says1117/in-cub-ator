@@ -29,14 +29,6 @@ export default class AdventureScene extends Phaser.Scene {
     paintEnchantedForest(this);
     this.createCharacterTexture();
 
-    // LIVE FOOTAGE button (Okayuu's footage page): opens the plant camera view.
-    this.add.text(740, 72, "LIVE FOOTAGE", { fontFamily: "Tiny5", fontSize: "16px",
-      color: "#fff2b0", backgroundColor: "#24120f", padding: { x: 6, y: 4 } })
-      .setOrigin(1, 0).setDepth(100).setInteractive({ useHandCursor: true })
-      .on("pointerover", function () { this.setColor("#ffffff"); })
-      .on("pointerout", function () { this.setColor("#fff2b0"); })
-      .on("pointerdown", () => this.registry.get("navigate")("/footage"));
-
     // SKY AND SUN
     this.sky = this.add.image(
       400,

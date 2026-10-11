@@ -20,6 +20,12 @@ def feed_dry(g, plant="A", n=C.SOIL_DRY_READINGS_N, now=0.0):
     return g
 
 
+def talking(e):
+    """The same engine with an ESP32 that never goes quiet, for tests that do not send readings."""
+    e.last_seen = float("inf")
+    return e
+
+
 def feed_dry_pct(g, pct, plant="A", n=C.SOIL_DRY_READINGS_N, now=0.0):
     for _ in range(n):
         g = S.on_soil(g, plant, pct, now)
@@ -141,13 +147,14 @@ class RewardTests(unittest.TestCase):
 
 class BattleTests(unittest.TestCase):
     def test_rules(self):
-        b = B.start(B.Stats(hp=10, atk=5), B.Stats(hp=10, atk=3))
+        b = B.start(B.Stats(hp=10, atk=5), B.Stats(hp=30, atk=3))
         b = B.resolve_turn(b, "attack", "special")
-        self.assertEqual(b.boss_hp, 5)
-        b = B.resolve_turn(b, "attack", "attack")
-        self.assertEqual((b.boss_hp, b.creature_hp), (5, 10))
+        self.assertEqual(b.boss_hp, 25)
+        b = B.resolve_turn(b, "attack", "attack")   # a tie: the plant is grazed for half, rounded down
+        self.assertEqual((b.boss_hp, b.creature_hp), (25, 9))
+        self.assertEqual(b.last_move["hit"], "tie")
         b = B.resolve_turn(b, "attack", "guard")
-        self.assertEqual(b.creature_hp, 7)
+        self.assertEqual(b.creature_hp, 6)
 
     def test_fight_ends_with_a_winner(self):
         b = B.start(B.Stats())
@@ -212,7 +219,7 @@ class EngineFlowTests(unittest.TestCase):
         C.REWARD_MIN_GAP_SECONDS = 10 ** 6
         try:
             for seed in range(50):
-                e = GameEngine(rng=random.Random(seed))
+                e = talking(GameEngine(rng=random.Random(seed)))
                 cmds, t = self.play_demo(e, 0.0)  # soil is 100% wet by default
                 if cmds:
                     break
@@ -319,14 +326,32 @@ def team_fight(tier, first="A", skills=True):
         s = B.plant_fighter(plant)
         return s if skills else replace(s, skill="")
     other = "B" if first == "A" else "A"
-    return B.start(stats(first), B.boss_for_tier(tier), plant=first, bench=[(other, stats(other))])
+    return B.start(stats(first), B.boss_for_tier(tier), plant=first, bench=[(other, stats(other))],
+                   tier=tier)
+
+
+def charged(b):
+    """The same fight with the skill ready to use."""
+    return replace(b, charge=C.SKILL_CHARGE_NEED)
+
+
+def win_rate(tier, pick, games=3000, **kw):
+    """Share of fights the plants win when `pick(fight, rng)` chooses every move."""
+    wins = 0
+    for seed in range(games):
+        rng = random.Random(seed)
+        fight = B.plan(team_fight(tier, "AB"[seed % 2], **kw), rng)
+        while not B.winner(fight):
+            fight = B.play_turn(fight, rng, pick(fight, rng))
+        wins += B.winner(fight) == "creature"
+    return wins / games
 
 
 class TeamTests(unittest.TestCase):
     """The two plants fight as a team: the dry one first, the other steps in if it faints."""
 
     def into_battle(self, plant="A", seed=1):
-        e = GameEngine(rng=random.Random(seed))
+        e = talking(GameEngine(rng=random.Random(seed)))
         e.manual = True
         e.on_demo_boss(0.0, plant)
         e.tick(C.BOSS_INTRO_SECONDS + 0.1)
@@ -340,12 +365,12 @@ class TeamTests(unittest.TestCase):
             self.assertEqual([p for p, _ in e.battle.bench], [other])
 
     def test_the_other_plant_steps_in_when_the_first_faints(self):
-        b = replace(team_fight(1, "A"), creature_hp=1, skill_ready_in=3)
+        b = replace(team_fight(1, "A"), creature_hp=1, charge=0)
         b = B.resolve_turn(b, "special", "attack")      # attack beats special: the plant is hit
         self.assertEqual(b.plant, "B")
         self.assertEqual(b.creature.name, C.PLANT_FIGHTERS["B"]["name"])
         self.assertEqual(b.creature_hp, C.PLANT_FIGHTERS["B"]["hp"])   # full strength
-        self.assertEqual(b.skill_ready_in, 0)                          # its own skill, ready
+        self.assertTrue(B.skill_ready(b))                              # its own skill, charged
         self.assertEqual(b.last_move["swap"], {"out": "A", "in": "B", "name": C.PLANT_FIGHTERS["B"]["name"]})
         self.assertEqual(b.bench, ())
         self.assertEqual([p for p, _ in b.fallen], ["A"])
@@ -362,7 +387,7 @@ class TeamTests(unittest.TestCase):
         self.assertNotIn("swap", b.last_move)
 
     def test_nobody_steps_in_once_the_boss_is_beaten(self):
-        b = replace(team_fight(1, "A"), creature_hp=1, boss_hp=1)
+        b = charged(replace(team_fight(1, "A"), creature_hp=1, boss_hp=1))
         b = B.resolve_turn(b, B.SKILL, "attack")   # the skill lands, and the boss hits back
         self.assertEqual(B.winner(b), "creature")
         self.assertEqual(b.plant, "A")
@@ -420,7 +445,7 @@ class PlantSkillTests(unittest.TestCase):
 
     def test_ember_inferno_bloom_hits_harder_than_a_plain_attack(self):
         ember = B.plant_fighter("A")
-        b = B.resolve_turn(B.start(ember, B.boss_for_tier(1)), "skill", "guard")
+        b = B.resolve_turn(charged(B.start(ember, B.boss_for_tier(1))), "skill", "guard")
         dealt = B.boss_for_tier(1).hp - b.boss_hp
         self.assertEqual(b.last_move["skill"], "Inferno Bloom")
         self.assertGreater(dealt, ember.atk)
@@ -428,7 +453,7 @@ class PlantSkillTests(unittest.TestCase):
 
     def test_zest_sunburst_heals_and_hits(self):
         zest = B.plant_fighter("B")
-        hurt = replace(B.start(zest, B.boss_for_tier(1)), creature_hp=10)
+        hurt = charged(replace(B.start(zest, B.boss_for_tier(1)), creature_hp=10))
         b = B.resolve_turn(hurt, "skill", "special")
         self.assertEqual(b.last_move["skill"], "Sunburst")
         self.assertEqual(b.creature_hp, 10 + C.SKILLS["sunburst"]["heal"])
@@ -438,7 +463,7 @@ class PlantSkillTests(unittest.TestCase):
     def test_an_attacking_boss_still_hits_through_either_skill(self):
         for plant in C.PLANTS:
             stats = B.plant_fighter(plant)
-            b = B.resolve_turn(replace(B.start(stats, B.boss_for_tier(1)), creature_hp=20), "skill", "attack")
+            b = B.resolve_turn(charged(replace(B.start(stats, B.boss_for_tier(1)), creature_hp=20)), "skill", "attack")
             self.assertEqual(b.last_move["hit"], "both")
 
     def test_every_plant_skill_exists(self):
@@ -446,18 +471,138 @@ class PlantSkillTests(unittest.TestCase):
             self.assertIn(C.PLANT_FIGHTERS[plant]["skill"], C.SKILLS)
 
 
+def believe(fight, rng):
+    return B.auto_move(fight, rng)
+
+
+def mash(fight, rng):
+    return rng.choice(B.PLAYER_MOVES)
+
+
 class BalanceTests(unittest.TestCase):
-    def test_every_tier_is_winnable_at_least_40_percent(self):
+    """A win waters the plant, so answering the tells must win, and ignoring them must not."""
+
+    def test_answering_every_tell_wins_on_every_tier(self):
+        # This is also what the game plays when nobody is at the screen.
+        for tier, floor in ((1, 0.95), (2, 0.90), (3, 0.75)):
+            self.assertGreaterEqual(win_rate(tier, believe), floor, f"tier {tier}")
+
+    def test_random_buttons_do_worse_than_reading(self):
         for tier in (1, 2, 3):
-            wins = 0
-            games = 3000
-            for seed in range(games):
-                rng = random.Random(seed)
-                fight = team_fight(tier, "AB"[seed % 2])
-                while not B.winner(fight):
-                    fight = B.play_turn(fight, rng)
-                wins += B.winner(fight) == "creature"
-            self.assertGreaterEqual(wins / games, 0.40, f"tier {tier}")
+            self.assertLess(win_rate(tier, mash, games=1500), win_rate(tier, believe, games=1500) - 0.2,
+                            f"tier {tier}")
+
+    def test_one_key_loses(self):
+        for move in B.PLAYER_MOVES:
+            for tier in (1, 2, 3):
+                self.assertLess(win_rate(tier, lambda f, r: move, games=1000), 0.5, f"{move} on tier {tier}")
+
+    def test_always_copying_the_boss_loses(self):
+        for tier in (1, 2, 3):
+            self.assertLess(win_rate(tier, lambda f, r: f.intent["move"], games=1000), 0.5, f"tier {tier}")
+
+
+class TellTests(unittest.TestCase):
+    """The boss shows the move it is winding up before the player picks."""
+
+    def planned(self, tier, seed, **changes):
+        return B.plan(replace(team_fight(tier), **changes), random.Random(seed))
+
+    def test_a_sure_tell_is_always_the_real_move(self):
+        for seed in range(300):
+            b = self.planned(1, seed)
+            self.assertEqual(b.intent["grade"], "sure")
+            self.assertEqual(b.boss_next, b.intent["move"])
+            self.assertIsNone(b.intent["bluff"])
+
+    def test_a_bluff_is_always_the_move_that_was_shown_as_the_bluff(self):
+        bluffs = 0
+        for seed in range(600):
+            b = self.planned(3, seed)
+            self.assertIn(b.boss_next, (b.intent["move"], b.intent["bluff"]))
+            self.assertEqual(b.intent["bluff"], B.BEATS[b.intent["move"]])  # it beats the natural counter
+            bluffs += b.boss_next != b.intent["move"]
+        self.assertGreater(bluffs, 100)
+
+    def test_a_grade_is_honest_about_its_chance(self):
+        real = total = 0
+        for seed in range(4000):
+            b = self.planned(2, seed, turn=0)
+            if b.intent["grade"] == "likely":
+                total += 1
+                real += b.boss_next == b.intent["move"]
+        self.assertAlmostEqual(real / total, C.TELL_CHANCE["likely"], delta=0.03)
+
+    def test_tells_get_shakier_when_the_boss_is_enraged(self):
+        calm = sum(self.planned(1, s).intent["chance"] for s in range(400))
+        angry = sum(self.planned(1, s, enraged=True).intent["chance"] for s in range(400))
+        self.assertLess(angry, calm)
+
+    def test_the_boss_enrages_at_half_health_and_hits_harder(self):
+        b = replace(team_fight(1), boss_hp=20)
+        self.assertFalse(b.enraged)
+        calm_hit = B.plain_hit(b)
+        b = B.resolve_turn(b, "attack", "special")
+        self.assertTrue(b.enraged)
+        self.assertTrue(b.last_move["enraged"])
+        self.assertEqual(B.plain_hit(b), calm_hit + C.ENRAGE_ATK_BONUS[1])
+
+    def test_a_heavy_wind_up_comes_every_third_turn_and_hits_double(self):
+        b = self.planned(2, 1, turn=2)
+        self.assertTrue(b.intent["heavy"])
+        self.assertEqual(b.intent["grade"], "sure")
+        self.assertFalse(self.planned(2, 1, turn=0).intent["heavy"])
+        self.assertFalse(self.planned(1, 1, turn=2).intent["heavy"])   # tier 1 never does
+        hit = B.resolve_turn(b, B.BEATS[b.boss_next], b.boss_next)     # the plant picks the losing move
+        self.assertEqual(hit.last_move["took"], B.boss_for_tier(2).atk * 2)
+        self.assertTrue(hit.last_move["heavy"])
+
+    def test_a_landed_bluff_hits_harder_and_is_reported(self):
+        b = replace(self.planned(3, 1, turn=0), boss_next="")
+        shown = b.intent["move"]
+        real = b.intent["bluff"] or B.BEATS[shown]
+        hit = B.resolve_turn(b, B.BEATEN_BY[shown], real)   # the plant countered the shown move
+        self.assertTrue(hit.last_move["bluffed"])
+        self.assertEqual(hit.last_move["shown"], shown)
+        self.assertEqual(hit.last_move["took"], int(B.boss_for_tier(3).atk * C.BLUFF_FACTOR + 0.5))
+
+    def test_no_single_hit_goes_over_the_cap(self):
+        for tier in (1, 2, 3):
+            for seed in range(200):
+                b = self.planned(tier, seed, enraged=True, turn=2)
+                for move in B.MOVES:
+                    self.assertLessEqual(B.boss_hit(b, move), C.BOSS_HIT_CAP)
+
+    def test_the_boss_answers_a_move_it_has_seen_twice(self):
+        answered = sum(self.planned(3, s, seen=("guard", "guard")).intent["move"] == "special"
+                       for s in range(400))
+        self.assertGreater(answered / 400, 0.8)
+
+    def test_copying_the_shown_move_is_safe_against_a_bluff(self):
+        b = replace(self.planned(3, 1, turn=0))
+        shown, real = b.intent["move"], B.BEATS[b.intent["move"]]
+        hit = B.resolve_turn(b, shown, real)
+        self.assertEqual(hit.last_move["hit"], "creature")   # the copy beats the bluff move
+
+    def test_the_real_move_never_reaches_the_screen(self):
+        e = GameEngine(rng=random.Random(2))
+        e.manual = True
+        e.on_demo_boss(0.0, "A")
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        snap = e.snapshot()["battle"]
+        self.assertEqual(set(snap["intent"]), {"move", "grade", "chance", "bluff", "heavy"})
+        self.assertNotIn("boss_next", snap)
+        self.assertTrue(snap["hints"])                        # tier 1 teaches the triangle
+        self.assertEqual(snap["enrage_hp"], B.boss_for_tier(1).hp // 2)
+
+    def test_a_weary_cube_starts_with_an_empty_skill(self):
+        for health, charge in ((100.0, C.SKILL_CHARGE_START), (40.0, C.SKILL_CHARGE_START_WEARY)):
+            e = GameEngine(rng=random.Random(2))
+            e.health = health
+            e.soil_pct = {"A": 10.0, "B": 10.0}
+            e.on_demo_boss(0.0, "A")
+            e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+            self.assertEqual(e.battle.charge, charge)
 
 
 class HealthTests(unittest.TestCase):
@@ -480,6 +625,17 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(results[0], 100.0)
         self.assertLess(results[1], 100.0)
         self.assertLess(results[2], results[1])
+
+    def test_health_holds_during_a_fight(self):
+        e = GameEngine(rng=random.Random(1))
+        e.manual = True
+        e.soil_pct = {"A": 10.0, "B": 10.0}
+        e.on_demo_boss(0.0, "A")
+        before = e.health
+        for i in range(1, 9):
+            e.tick(i * 1.0)
+        self.assertIn(e.game.mode, (S.BOSS, S.BATTLE))
+        self.assertEqual(e.health, before)
 
     def test_health_recovers_when_moisture_returns(self):
         e = GameEngine()
@@ -557,7 +713,7 @@ class SimTests(unittest.TestCase):
 class SkillTests(unittest.TestCase):
     def fight(self, skill, **stats):
         creature = B.Stats(name="T", hp=stats.get("hp", 30), atk=stats.get("atk", 8), skill=skill)
-        return B.start(creature, B.Stats(name="boss", hp=40, atk=6, skill=""))
+        return charged(B.start(creature, B.Stats(name="boss", hp=40, atk=6, skill="")))
 
     def test_thorn_burst_always_hits_but_the_boss_can_hit_back(self):
         b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")  # guard would block a plain attack
@@ -566,19 +722,22 @@ class SkillTests(unittest.TestCase):
         b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "attack")
         self.assertEqual((b.boss_hp, b.creature_hp), (32, 24))
 
-    def test_skill_needs_recharging(self):
+    def test_a_used_skill_is_empty(self):
         b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")
-        self.assertEqual(b.skill_ready_in, C.SKILL_COOLDOWN_TURNS)
-        again = B.resolve_turn(b, B.SKILL, "guard")  # not ready: becomes a plain attack
+        self.assertEqual(b.charge, 0)
+        again = B.resolve_turn(b, B.SKILL, "guard")  # not charged: becomes a plain attack
         self.assertEqual(again.last_move["creature"], "attack")
         self.assertNotIn("skill", again.last_move)
-        self.assertEqual(again.skill_ready_in, C.SKILL_COOLDOWN_TURNS - 1)
 
-    def test_skill_is_ready_again_after_the_wait(self):
+    def test_won_turns_charge_the_skill_again(self):
         b = B.resolve_turn(self.fight("thorn_burst"), B.SKILL, "guard")
-        for _ in range(C.SKILL_COOLDOWN_TURNS):
-            b = B.resolve_turn(b, "guard", "guard")
-        self.assertEqual(b.skill_ready_in, 0)
+        b = B.resolve_turn(b, "guard", "guard")      # a tie charges nothing
+        b = B.resolve_turn(b, "special", "attack")   # nor does a lost turn
+        self.assertEqual(b.charge, 0)
+        for _ in range(C.SKILL_CHARGE_NEED):
+            self.assertFalse(B.skill_ready(b))
+            b = B.resolve_turn(b, "attack", "special")
+        self.assertTrue(B.skill_ready(b))
 
     def test_bark_shield_blocks_everything(self):
         b = self.fight("bark_shield")
@@ -594,6 +753,7 @@ class SkillTests(unittest.TestCase):
         b = B.resolve_turn(b, B.SKILL, "attack")      # heal, but the attacking boss still hits
         self.assertEqual(b.last_move["healed"], min(8, 30 - hurt))
         self.assertEqual(b.creature_hp, hurt + b.last_move["healed"] - 6)
+        self.assertEqual(b.last_move["took"], 6)
 
     def test_no_skill_means_skill_is_a_plain_attack(self):
         b = B.resolve_turn(self.fight(""), B.SKILL, "special")
@@ -607,14 +767,7 @@ class SkillTests(unittest.TestCase):
 
     def test_every_tier_is_winnable_even_with_no_skill(self):
         for tier in (1, 2, 3):
-            wins = 0
-            for seed in range(3000):
-                rng = random.Random(seed)
-                fight = team_fight(tier, "AB"[seed % 2], skills=False)
-                while not B.winner(fight):
-                    fight = B.play_turn(fight, rng)
-                wins += B.winner(fight) == "creature"
-            self.assertGreaterEqual(wins / 3000, 0.40, f"tier {tier}")
+            self.assertGreaterEqual(win_rate(tier, believe, skills=False), 0.40, f"tier {tier}")
 
     def test_creatures_json_loads_and_ignores_the_comment(self):
         creatures = B.load_creatures("creatures.json")
@@ -625,7 +778,7 @@ class SkillTests(unittest.TestCase):
 class ManualBattleTests(unittest.TestCase):
     def into_battle(self, manual=True, uid="04:A1:B2:C3", seed=3):
         creatures = B.load_creatures("creatures.json")
-        e = GameEngine(creatures=creatures, rng=random.Random(seed))
+        e = talking(GameEngine(creatures=creatures, rng=random.Random(seed)))
         e.manual = manual
         e.on_pad("A", uid)
         e.on_demo_boss(0.0, "A")
@@ -677,18 +830,22 @@ class ManualBattleTests(unittest.TestCase):
         self.assertEqual(e.battle.creature.name, "Mossling")
         snap = e.snapshot()["battle"]
         self.assertEqual(snap["skill"]["name"], "Photosynthesis")
-        self.assertTrue(snap["skill"]["ready"])
+        self.assertEqual(snap["skill"]["charge"], C.SKILL_CHARGE_START)
+        self.assertEqual(snap["skill"]["need"], C.SKILL_CHARGE_NEED)
+        self.assertFalse(snap["skill"]["ready"])
 
     def test_unknown_tag_uses_the_defaults(self):
         e, _ = self.into_battle(uid="not-a-known-tag")
         self.assertEqual(e.battle.creature.name, C.PLANT_FIGHTERS["A"]["name"])
 
-    def test_skill_shows_its_recharge_in_the_snapshot(self):
+    def test_skill_shows_its_charge_in_the_snapshot(self):
         e, t = self.into_battle()
+        e.battle = charged(e.battle)
+        self.assertTrue(e.snapshot()["battle"]["skill"]["ready"])
         e.on_player_move("skill", t)
         snap = e.snapshot()["battle"]
         self.assertFalse(snap["skill"]["ready"])
-        self.assertEqual(snap["skill"]["ready_in"], C.SKILL_COOLDOWN_TURNS)
+        self.assertEqual(snap["skill"]["charge"], 0)
 
     def test_a_full_manual_fight_ends_and_can_pay_out(self):
         paid = False
@@ -696,8 +853,7 @@ class ManualBattleTests(unittest.TestCase):
             e, t = self.into_battle(seed=seed)
             for _ in range(60):
                 t += C.BATTLE_TURN_SECONDS + 0.1
-                cmds = e.on_player_move("skill" if e.battle and e.battle.skill_ready_in == 0 else "attack", t) \
-                    if e.game.mode == S.BATTLE else []
+                cmds = e.on_player_move(B.auto_move(e.battle, e.rng), t) if e.game.mode == S.BATTLE else []
                 if cmds:
                     paid = True
                     self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
@@ -756,6 +912,57 @@ def replace_boss_hp(battle, hp):
 
 
 class StaleTimerTests(unittest.TestCase):
+    def won_demo(self, e):
+        e.manual = True
+        e.on_demo_boss(0.0, "A")
+        t = C.BOSS_INTRO_SECONDS + 0.1
+        e.tick(t)
+        e.battle = charged(replace(e.battle, boss_hp=1))
+        return e.on_player_move("skill", t + 1.0)
+
+    def test_no_pump_before_the_esp32_was_ever_heard_from(self):
+        e = GameEngine(rng=random.Random(1))
+        self.assertEqual(self.won_demo(e), [])
+        self.assertEqual(e.game.mode, S.REWARD)          # the fight is still won on screen
+        self.assertIsNone(e.snapshot()["reward"])        # and no watering is claimed
+        e = GameEngine(rng=random.Random(1))
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        self.assertEqual(len(self.won_demo(e)), 1)
+
+    def test_status_messages_cannot_hide_missing_readings(self):
+        e = GameEngine()
+        e.on_soil_raw("A", WET_RAW, 0.0)
+        for t in range(5, int(C.ESP32_STALE_SECONDS) + 10, 5):
+            e.on_esp_status("online", float(t))
+            e.tick(float(t))
+        self.assertTrue(e.game.stale)
+
+    def test_an_old_reward_is_not_shown_for_a_new_fight(self):
+        e = GameEngine(rng=random.Random(1))
+        e.last_reward = {"type": "water", "plant": "A", "size": 2000, "tier": 1}
+        e.on_demo_boss(0.0, "A")
+        e.tick(C.BOSS_INTRO_SECONDS + 0.1)
+        self.assertIsNone(e.snapshot()["reward"])
+
+    def test_a_lost_fight_stays_on_screen_for_its_last_blow(self):
+        e = talking(GameEngine(rng=random.Random(1)))
+        e.manual = True
+        e.on_demo_boss(0.0, "A")
+        t = C.BOSS_INTRO_SECONDS + 0.1
+        e.tick(t)
+        e.battle = replace(e.battle, creature_hp=1, bench=(), intent=dict(e.battle.intent, move="attack"),
+                           boss_next="attack")
+        self.assertEqual(e.on_player_move("special", t + 1.0), [])
+        e.tick(t + 1.2)
+        snap = e.snapshot()
+        self.assertEqual(snap["mode"], S.COOLDOWN)
+        self.assertEqual(snap["battle"]["creature_hp"], 0)
+        self.assertEqual(snap["boss"]["plant"], "A")
+        self.assertFalse(snap["battle"]["awaiting_move"])
+        e.tick(t + 1.2 + C.LOSS_DISPLAY_SECONDS)
+        self.assertIsNone(e.snapshot()["battle"])
+        self.assertIsNone(e.snapshot()["boss"])
+
     def test_silence_counts_as_offline(self):
         e = GameEngine()
         e.on_soil_raw("A", WET_RAW, 0.0)

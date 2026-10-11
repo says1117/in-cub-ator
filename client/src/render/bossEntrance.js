@@ -17,6 +17,7 @@
 //
 // onStep(step, state) is called as it goes, so others can react (the plants in render/petParade.js do):
 // "spotted", "impact", "faceoff", "roar", and "reset" when everything has been put back.
+import { audio } from "../audio.js";
 import Phaser from "phaser";
 import { bossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "./bossRig.js";
@@ -476,6 +477,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     after(320, () => {
       tween({ targets: screen, alpha: 0, duration: 180 });
       cam.shake(520, 0.02);
+      audio.play("land");
       onStep("impact");
       wreckTerrain();
       // a quick push-in, as if the landing rocked the camera
@@ -605,6 +607,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
       const dread = keep(scene.add.rectangle(400, 225, 800, 450, 0x2a0410, 0).setDepth(18.5));
       tween({ targets: dread, fillAlpha: 0.34, duration: 160, yoyo: true, hold: 420 });
       scene.cameras.main.shake(roarDelay ? 680 : 300, roarDelay ? 0.011 : 0.006);
+      audio.play("roar");
     });
 
     // the dragon braces: a small hop toward it

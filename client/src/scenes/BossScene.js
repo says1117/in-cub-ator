@@ -9,6 +9,7 @@ import { createFxKit } from "../render/fxKit.js";
 import { createBattleHud } from "../ui/battleHud.js";
 import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
+import { audio } from "../audio.js";
 
 const ENEMY_HEIGHT = 330;   // how tall the tier 1 boss is drawn here, roots included
 
@@ -18,7 +19,10 @@ const BENCH = { x: 228, y: 562, size: 0.62 };      // the plant waiting its turn
 const TRAINER = { x: 98, y: 568, height: 196 };    // the dragon, who sends the plants in
 const BOSS = { x: 905, y: 458 };                   // the spot the boss stands on
 
-const START = 140;        // ms before the plant moves, so its banner is read first
+const FOREST_KEY = "battle-forest";   // the battle's forest, flattened into one picture: see bakeForest()
+
+const CALL = 800;         // ms a line such as "EMBER used VINE HAYMAKER!" is up before the move starts
+const PAUSE = 650;        // ms of quiet after one side's move before the other is called
 const BOSS_BLOW = 620;    // about how long the boss's move takes to arrive
 
 export default class BossScene extends Phaser.Scene {
@@ -72,11 +76,20 @@ export default class BossScene extends Phaser.Scene {
     ]);
 
     this.buildWorld();
+    this.bakeForest();
     this.buildActors();
     // effects are drawn behind the fighters (over the world) and in front of everything
     this.kit = createFxKit(this, { back: this.auraLayer, front: this.effectLayer });
     this.hud = createBattleHud(this, { ui: this.uiLayer, fx: this.effectLayer, scale: this.W / this.scale.width });
     this.hud.onPick = (move) => this.pickMove(move);
+    // a new wind-up: the surer the tell, the steadier its sound; the boss leans in for a heavy one
+    this.hud.onTell = (tell) => {
+      audio.play(tell.heavy ? "heavy" : { sure: "tellSure", likely: "tellLikely", flip: "tellFlip" }[tell.grade] || "tellSure");
+      if (tell.heavy && this.enemySprite.roar) this.enemySprite.roar();
+    };
+    this.waterPlayed = false;
+    audio.setRage(false);
+    audio.music("battle");
     this.hud.log("Waiting for a boss...");
     // the forest's own meters and button stay out of the way while the battle screen is up
     document.getElementById("hud")?.classList.add("in-battle");
@@ -95,6 +108,8 @@ export default class BossScene extends Phaser.Scene {
       this.registry.events.off("changedata-serverState", this.stateListener);
       this.input.keyboard.off("keydown", this.keyListener);
       if (this.rewardTimer) this.rewardTimer.remove(false);
+      audio.setRage(false);
+      audio.music("forest");
       document.getElementById("hud")?.classList.remove("in-battle");
     });
 
@@ -155,6 +170,22 @@ export default class BossScene extends Phaser.Scene {
   // WORLD
   // --------------------------------------------------
 
+  // The forest is painted from over a hundred shapes that never move. Drawing them all again
+  // every frame is slow on a small computer, so they are flattened into one picture, at the
+  // size it is shown, and the shapes are thrown away. The picture is kept for the next fight.
+  bakeForest() {
+    const s = this.scale.width / this.W;
+    if (!this.textures.exists(FOREST_KEY)) {
+      const picture = this.textures.addDynamicTexture(FOREST_KEY, this.scale.width, this.scale.height);
+      this.forestLayer.setScale(s);
+      picture.draw(this.forestLayer, 0, 0);
+      if (picture.render) picture.render();
+      this.forestLayer.setScale(1);
+      this.forestLayer.removeAll(true);
+    }
+    this.forestLayer.add(this.add.image(0, 0, FOREST_KEY).setOrigin(0).setScale(1 / s));
+  }
+
   buildWorld() {
     const rng = new Phaser.Math.RandomDataGenerator([
       "root-cellar-forest-v5"
@@ -162,6 +193,7 @@ export default class BossScene extends Phaser.Scene {
 
     // Sky is isolated from all other scene elements.
     this.drawDetailedSky(rng);
+    if (this.textures.exists(FOREST_KEY)) return;   // the forest was painted for an earlier fight
 
     // Ground first, before trees and decorations.
     this.drawDetailedGround(rng);
@@ -1739,6 +1771,7 @@ drawAncientArch(x, y, scale = 1) {
         },
       });
       this.trainerCall();
+      audio.play("swap");
       this.hud.log(`Go, ${this.plantName(inId)}!`);
       this.hud.callout("left", "GO!", this.plantName(inId), next.plant.glow);
       this.hold = null;                      // the screen now shows the new plant
@@ -1779,7 +1812,13 @@ drawAncientArch(x, y, scale = 1) {
     const benchId = PLANT_IDS.find((other) => other !== id && team[other]);
     const bench = benchId ? { name: team[benchId].name, hp: team[benchId].hp, max: team[benchId].max_hp, state: team[benchId].state } : null;
     if (bench && hold && hold.id !== battle.plant && benchId === battle.plant) { bench.hp = bench.max; bench.state = "ready"; }
-    const skill = battle.skill ? { ...battle.skill, total: battle.skill.recharge || 4 } : null;
+    const skill = (hold && hold.skill) || battle.skill || null;
+    // The wind-up for the coming turn. It stays hidden while the last turn is still playing out.
+    const intent = !hold && !this.result && battle.intent && this.time.now >= this.busyUntil ? battle.intent : null;
+    const tell = intent && {
+      name: bossMove(boss.tier, intent.move).name, type: intent.move, grade: intent.grade, chance: intent.chance,
+      heavy: intent.heavy, alt: intent.bluff ? { name: bossMove(boss.tier, intent.bluff).name } : null,
+    };
     const moves = { ...plant.moves, skill: plantMove(plant, "skill", battle.skill ? battle.skill.name : "") };
     if (!battle.skill) moves.skill = { name: "Skill", icon: "star" };
     this.hud.update({
@@ -1788,7 +1827,12 @@ drawAncientArch(x, y, scale = 1) {
         hp: hold ? hold.hp : battle.creature_hp, max: hold ? hold.max : battle.creature_max_hp,
       },
       bench,
-      boss: { name: boss.name, hp: hold ? hold.bossHp : battle.boss_hp, max: boss.max_hp, tier: boss.tier, demo: boss.source === "demo", colour: bossPalette(boss.tier).main },
+      boss: {
+        name: boss.name, hp: hold ? hold.bossHp : battle.boss_hp, max: boss.max_hp, tier: boss.tier, demo: boss.source === "demo",
+        colour: bossPalette(boss.tier).main, enraged: hold ? hold.enraged : battle.enraged,
+        enrageAt: battle.enrage_hp ? battle.enrage_hp / boss.max_hp : 0,
+      },
+      tell, tellKey: `${battle.turn}`, hints: Boolean(battle.hints),
       soil: meters && meters.water ? meters.water[boss.plant] : null,
       vigor: state.health,
       turn: battle.turn,
@@ -1809,10 +1853,19 @@ drawAncientArch(x, y, scale = 1) {
 
   pickMove(move) {
     const battle = this.serverState?.battle;
-    if (!battle?.awaiting_move || (move === "skill" && !battle.skill?.ready)) return;
-    if (this.result || this.time.now < this.busyUntil) return;   // the last turn is still playing out
+    if (!battle?.awaiting_move || this.result || this.time.now < this.busyUntil) return;   // the last turn is still playing out
+    if (this.chosen) return;
+    if (move === "skill" && !battle.skill?.ready) { audio.play("no"); return; }
+    audio.play("pick");
     this.registry.get("sendMove")?.(move);
     this.chosen = move;
+    // if the server never answers (a dropped message), the cards come back
+    const turn = battle.turn;
+    this.time.delayedCall(1500, () => {
+      if (this.chosen !== move || this.serverState?.battle?.turn !== turn) return;
+      this.chosen = null;
+      this.refreshHud();
+    });
     this.hud.log("Here it comes...");
     this.refreshHud();
   }
@@ -1830,7 +1883,7 @@ drawAncientArch(x, y, scale = 1) {
       if (this.fightingPlant(state) !== this.activeId) this.placeTeam(state);
       this.refreshHud();
       if ((!previous || previous.turn === battle.turn) && this.time.now >= this.busyUntil && !this.chosen) {
-        this.hud.log(battle.awaiting_move ? "Choose a move." : "The fight is on...");
+        this.hud.log(battle.awaiting_move ? "Read the wind-up. Choose a move." : "The fight is on...");
       }
       this.lastBattle = { ...battle };
     }
@@ -1876,22 +1929,43 @@ drawAncientArch(x, y, scale = 1) {
     const before = previous.plant === undefined || previous.plant === actorId ? previous.creature_hp : 0;
     const playerLoss = Math.max(0, (swap ? before : before - battle.creature_hp) + healed);
     const plantLands = bossLoss > 0;
-    const bossLands = playerLoss > 0;
     const tie = move.hit === "tie";
+    const bossLands = playerLoss > 0 && !tie;
+    const graze = tie ? playerLoss : 0;   // a tie costs the plant a little
     const shielded = move.boss === "attack" && !bossLands && mine.body === "guard";
     const above = () => ({ x: actor.x - 20, y: actor.y - actor.getHeight() * 0.8 });
 
     this.chosen = null;
-    this.hold = { id: actorId, name: who, max: previous.creature_max_hp, hp: before, bossHp: previous.boss_hp };
-    this.hud.callout("left", who, mine.name, actor.plant.glow);
-    this.hud.log(`${who} used ${mine.name}!`);
+    this.hold = {
+      id: actorId, name: who, max: previous.creature_max_hp, hp: before, bossHp: previous.boss_hp,
+      skill: previous.skill, enraged: previous.enraged,
+    };
+
+    // The turn is told like a story: "EMBER used VINE HAYMAKER!", a beat, the move, a word for
+    // how it went, a pause, then the boss's line and its move.
+    const sayPlant = () => {
+      this.hud.announce(who, mine.name, actor.plant.glow, CALL + 500);
+      this.hud.log(`${who} used ${mine.name}!`);
+      audio.play("call");
+      this.time.delayedCall(CALL, () => audio.play(move.skill ? "skill" : mine.body === "guard" ? "block" : "swing"));
+    };
+    const sayBoss = () => {
+      this.hud.announce(state.boss.name, theirs.name, palette.main, CALL + 500);
+      this.hud.log(move.bluffed ? `A bluff! ${state.boss.name} used ${theirs.name}!` : `${state.boss.name} used ${theirs.name}!`);
+      audio.play(move.bluffed ? "bluff" : "call");
+      if (move.bluffed) this.hud.word("BLUFF!", "#ff8f6b", BOSS.x - 20, BOSS.y - 330, 16);
+    };
+    const shout = (str, color) => this.hud.word(str, color, 640, 300, 24);
+    const finisher = battle.boss_hp <= 0;
 
     const onBossHurt = () => {
       this.hold.bossHp = battle.boss_hp;
       this.refreshHud();
       this.flash(enemy);
       this.lunge(enemy, 26);
+      audio.play(finisher || bossLoss >= 9 ? "crit" : "hit");
       this.hud.number(BOSS.x - 20, BOSS.y - 300, `-${bossLoss}`, "#fff48e", bossLoss >= 9);
+      shout(finisher ? "KNOCKOUT!" : bossLoss >= 9 ? "CRITICAL HIT!" : move.skill ? "BOOM!" : "DIRECT HIT!", finisher ? "#ffd867" : "#fff48e");
       this.benchCheers();
     };
     const onPlantHurt = () => {
@@ -1899,14 +1973,13 @@ drawAncientArch(x, y, scale = 1) {
       this.refreshHud();
       actor.play("hurt", { force: 1.3 });
       this.flash(actor);
+      audio.play(move.heavy || playerLoss >= 12 ? "crit" : "hurt");
       this.hud.number(above().x, above().y, `-${playerLoss}`, "#ff8f90", playerLoss >= 9);
+      shout(swap || battle.creature_hp <= 0 ? "KNOCKED OUT!" : move.heavy ? "HEAVY HIT!" : playerLoss >= 12 ? "CRUNCH!" : "OUCH!", "#ff8f90");
+      if (move.heavy || playerLoss >= 12) this.kit.shake(260, 0.012);
     };
     // The boss's move starts now. Returns when its blow arrives.
-    const bossGoes = (blocked, meet = null) => {
-      this.hud.callout("right", state.boss.name, theirs.name, palette.main);
-      this.hud.log(`${state.boss.name} used ${theirs.name}!`);
-      return playBossFx(theirs.fx, this.bossCtx(actor, bossLands, blocked, meet));
-    };
+    const bossGoes = (blocked, meet = null) => playBossFx(theirs.fx, this.bossCtx(actor, bossLands, blocked, meet));
     const reach = () => {
       if (!plantLands) return 0.42;
       return mine.reach === "boss" ? (BOSS.x - 235 - FIGHTER.x) / actor.getHeight() : 0.85;
@@ -1914,60 +1987,102 @@ drawAncientArch(x, y, scale = 1) {
 
     let length;
     if (shielded) {
-      // the boss comes first; the shield goes up just in time
-      const blow = bossGoes(true);
+      // the boss is called first, then the plant; the shield goes up just in time
+      sayBoss();
+      this.time.delayedCall(CALL, sayPlant);
+      const go = CALL * 2;
+      const blow = go + BOSS_BLOW;                    // about when the boss's blow arrives
+      this.time.delayedCall(go, () => bossGoes(true));
       const options = { ms: mine.ms, delay: 0 };
       options.delay = Math.max(0, blow - actor.hitTime(mine.body, options));
       actor.play(mine.body, options);
       const extra = playBattleFx(mine.fx, this.plantCtx(actor, blow, plantLands));
-      this.time.delayedCall(blow, () => { this.hud.word("BLOCKED!", "#bfe6ff", FIGHTER.x + 230, FIGHTER.y - 330); this.lunge(enemy, 40, 160); });
-      if (plantLands) this.time.delayedCall(blow + extra, onBossHurt);
-      length = blow + extra + 700;
+      this.time.delayedCall(blow, () => { shout("BLOCKED!", "#bfe6ff"); this.lunge(enemy, 40, 160); audio.play("block"); });
+      if (plantLands) this.time.delayedCall(blow + extra + 380, onBossHurt);
+      length = blow + extra + 1000;
+    } else if (tie) {
+      // both are called, then they go at once: they meet in the middle, and the plant is grazed
+      sayPlant();
+      this.time.delayedCall(CALL, sayBoss);
+      const go = CALL * 2;
+      const options = { ms: mine.ms, delay: go, reach: reach() };
+      actor.play(mine.body, options);
+      const hitAt = actor.hitTime(mine.body, options);
+      playBattleFx(mine.fx, this.plantCtx(actor, hitAt, false));
+      const mid = { x: (FIGHTER.x + BOSS.x) / 2 + 30, y: FIGHTER.y - 240 };
+      this.time.delayedCall(go, () => bossGoes(false, mid));
+      const meet = Math.max(hitAt, go + BOSS_BLOW);
+      this.time.delayedCall(meet, () => {
+        this.kit.impact(mid.x, mid.y, { power: 1.1, color: 0xd7e3ff });
+        shout(move.creature === "guard" ? "STANDOFF!" : "CLASH!", "#d7e3ff");
+        audio.play("clash");
+        if (graze > 0) {
+          this.hold.hp = swap ? 0 : battle.creature_hp;
+          this.refreshHud();
+          actor.play("hurt", { force: 0.7 });
+          this.hud.number(above().x, above().y, `-${graze}`, "#ff8f90");
+        }
+      });
+      length = meet + 800;
     } else {
-      const options = { ms: mine.ms, delay: START, reach: reach() };
+      sayPlant();
+      const options = { ms: mine.ms, delay: CALL, reach: reach() };
       actor.play(mine.body, options);
       const hitAt = actor.hitTime(mine.body, options);
       const extra = playBattleFx(mine.fx, this.plantCtx(actor, hitAt, plantLands));
       const landed = hitAt + extra;
       if (plantLands) this.time.delayedCall(landed, onBossHurt);
+      else if (!healed) this.time.delayedCall(landed, () => { shout(mine.body === "guard" ? "NOTHING TO BLOCK!" : "IT FAILED!", "#c9d2e8"); audio.play("miss"); });
       if (healed > 0) {
         this.time.delayedCall(hitAt, () => {
           this.hold.hp = Math.min(this.hold.max, this.hold.hp + healed);
           this.refreshHud();
           this.hud.number(above().x, above().y, `+${healed}`, "#8dff9b");
+          audio.play("heal");
         });
       }
-      if (tie) {
-        // both at once: they meet in the middle and nothing gets through
-        const mid = { x: (FIGHTER.x + BOSS.x) / 2 + 30, y: FIGHTER.y - 240 };
-        const blow = bossGoes(false, mid);
-        const meet = Math.max(hitAt, blow);
-        this.time.delayedCall(meet, () => {
-          this.kit.impact(mid.x, mid.y, { power: 1.1, color: 0xd7e3ff });
-          this.hud.word(move.creature === "guard" ? "STANDOFF" : "CLASH!", "#d7e3ff", mid.x, mid.y - 70);
-        });
-        length = meet + 750;
-      } else if (battle.boss_hp <= 0) {
-        length = landed + 520;               // that was the last blow: the boss has no answer
+      if (finisher) {
+        length = landed + 700;               // that was the last blow: the boss has no answer
       } else {
-        const bossStart = landed + (plantLands ? 460 : 260);
-        this.time.delayedCall(bossStart, () => {
+        const bossSays = landed + PAUSE;
+        this.time.delayedCall(bossSays, sayBoss);
+        this.time.delayedCall(bossSays + CALL, () => {
           const blow = bossGoes(false);
-          if (bossLands) this.time.delayedCall(blow, onPlantHurt);
+          this.time.delayedCall(blow, bossLands ? onPlantHurt : () => { shout("NO EFFECT!", "#c9d2e8"); audio.play("miss"); });
         });
-        length = bossStart + BOSS_BLOW + (bossLands ? 520 : 200);
+        length = bossSays + CALL + BOSS_BLOW + (bossLands ? 620 : 420);
       }
     }
 
     // a plant that runs out of health tips over; if the other one is ready, the dragon sends it in
+    if (swap || battle.creature_hp <= 0) this.time.delayedCall(length - 60, () => audio.play("faint"));
     if (swap) { this.swapFighter(swap.out, swap.in, length - 60); length += 1500; }
     else if (battle.creature_hp <= 0) this.time.delayedCall(length - 60, () => actor.setMood("fainted"));
+
+    // at half health the boss loses its temper: from now on it hits harder and its tells are shakier
+    if (move.enraged) {
+      this.time.delayedCall(length, () => {
+        if (this.result) return;
+        this.hold.enraged = true;
+        this.refreshHud();
+        if (enemy.roar) enemy.roar();
+        audio.play("roar");
+        audio.setRage(true);
+        this.kit.flash(palette.main, 0.35, 260);
+        this.kit.shake(420, 0.014);
+        this.kit.ring(BOSS.x, BOSS.y, { from: 60, to: 520, squash: 0.3, color: palette.hot, thick: 10, ms: 520, layer: "back" });
+        this.hud.word("ENRAGED!", "#ff6b5b", BOSS.x - 20, BOSS.y - 300, 24);
+        this.hud.log(`${state.boss.name} is enraged! It hits harder and bluffs more.`);
+      });
+      length += 1000;
+    }
 
     this.busyUntil = this.time.now + length;
     this.time.delayedCall(length + 20, () => {
       this.hold = null;
       this.refreshHud();
-      if (!this.result && this.serverState?.battle?.awaiting_move) this.hud.log("Choose a move.");
+      if (!this.result && battle.skill?.ready && !previous.skill?.ready && !move.swap) audio.play("charged");
+      if (!this.result && this.serverState?.battle?.awaiting_move) this.hud.log("Read the wind-up. Choose a move.");
     });
   }
 
@@ -1993,8 +2108,9 @@ drawAncientArch(x, y, scale = 1) {
     this.time.delayedCall(wait, () => {
       this.hold = null;
       this.refreshHud();
-      if (won) this.dissolveBoss();
-      else if (this.enemySprite.roar) this.enemySprite.roar();
+      audio.music(null);
+      if (won) { this.dissolveBoss(); this.kit.at(520, () => audio.play("boom")); }
+      else { if (this.enemySprite.roar) this.enemySprite.roar(); audio.play("roar"); }
       // the plants: a win has them bouncing, a loss leaves them flat out
       PLANT_IDS.forEach((id, i) => {
         const rig = this.fighters[id];
@@ -2007,6 +2123,7 @@ drawAncientArch(x, y, scale = 1) {
       });
       this.time.delayedCall(won ? 900 : 300, () => {
         this.resultPanel = this.hud.result(won, won ? "The drought boss has retreated." : "No water this time.");
+        audio.play(won ? "victory" : "defeat");
         if (won) { this.confetti(); this.showReward(this.serverState && this.serverState.reward); }
       });
     });
@@ -2042,7 +2159,8 @@ drawAncientArch(x, y, scale = 1) {
 
   showReward(reward) {
     if (!this.resultPanel) return;
-    if (!reward) { this.resultPanel.setLine("Soil is already wet, no water needed."); return; }
+    if (!reward) { this.resultPanel.setLine("No water sent: the pot is wet, or the cube is offline."); return; }
+    if (!this.waterPlayed) { this.waterPlayed = true; this.time.delayedCall(1300, () => audio.play("water", reward.size / 1000)); }
     const seconds = (reward.size / 1000).toFixed(1);
     this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s`);
     this.resultPanel.reward(`Watering plant ${reward.plant}`, reward.size);

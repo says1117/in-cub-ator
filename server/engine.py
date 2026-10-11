@@ -29,7 +29,10 @@ class GameEngine:
         self.manual = False
         self.move_ready_at = 0.0     # earliest time the next move is accepted
         self.move_deadline = 0.0     # after this the game picks the move
-        self.last_seen: Optional[float] = None  # last time the ESP32 was heard from
+        self.last_seen: Optional[float] = None  # last time the ESP32 sent a reading
+        # After a lost fight the battle stays in the state message for a moment, so the screen
+        # can play the last blow. {"plant", "tier", "source", "until"} or None.
+        self.lost: Optional[dict] = None
 
     def _set(self, new: S.Game):
         if new.mode != self.game.mode:
@@ -56,7 +59,9 @@ class GameEngine:
 
     def on_esp_status(self, text: str, now: Optional[float] = None):
         online = text.strip() == "online"
-        if online and now is not None:
+        # "online" starts the silence clock but never resets it: only readings prove the soil
+        # numbers are fresh, so a repeated status message cannot hide dead sensors.
+        if online and now is not None and (self.last_seen is None or self.game.stale):
             self.last_seen = now
         self._set(S.on_status(self.game, online))
         if self.game.mode not in (S.BATTLE, S.REWARD):
@@ -120,7 +125,9 @@ class GameEngine:
                 self.battle = B.play_turn(self.battle, self.rng)
                 commands = self._after_turn(now)
 
-        if self.game.mode not in (S.BATTLE,) and self.battle and self.game.mode != S.REWARD:
+        if self.lost and (now >= self.lost["until"] or self.game.mode in (S.BOSS, S.BATTLE)):
+            self.lost = None
+        if self.game.mode not in (S.BATTLE, S.REWARD) and self.battle and not self.lost:
             self.battle = None
         return commands
 
@@ -135,8 +142,12 @@ class GameEngine:
         # The plant that called the boss fights first. The others wait on the bench, driest first.
         first = self.game.boss_plant
         bench = sorted((p for p in C.PLANTS if p != first), key=lambda p: self.soil_pct[p])
-        self.battle = B.start(self.fighter(first), B.boss_for_tier(self.game.tier or 1),
-                              plant=first, bench=[(p, self.fighter(p)) for p in bench])
+        self.last_reward = None   # nothing has been won yet in this fight
+        tier = self.game.tier or 1
+        charge = C.SKILL_CHARGE_START if self.health >= C.HEALTH_WEARY_BELOW else C.SKILL_CHARGE_START_WEARY
+        self.battle = B.start(self.fighter(first), B.boss_for_tier(tier), plant=first,
+                              bench=[(p, self.fighter(p)) for p in bench],
+                              tier=tier, charge=charge, rng=self.rng)
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
         self.move_ready_at = now + 0.5
         self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
@@ -144,11 +155,17 @@ class GameEngine:
     def _after_turn(self, now: float) -> list:
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
         self.move_ready_at = now + C.BATTLE_TURN_SECONDS  # time for the client to show the turn
-        self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
-        if (self.battle.last_move or {}).get("swap"):   # a plant fainted: time for the next one to come in
-            self.next_turn_at += C.SWAP_EXTRA_SECONDS
-            self.move_ready_at += C.SWAP_EXTRA_SECONDS
-            self.move_deadline += C.SWAP_EXTRA_SECONDS
+        # the time to choose starts when a move can be chosen, not while the last turn is still playing
+        self.move_deadline = self.move_ready_at + C.PLAYER_MOVE_TIMEOUT_SECONDS
+        last = self.battle.last_move or {}
+        log.info("turn %d: %s vs %s (shown %s), hit=%s, plant %d hp, boss %d hp", self.battle.turn,
+                 last.get("skill") or last.get("creature"), last.get("boss"), last.get("shown"),
+                 last.get("hit"), self.battle.creature_hp, self.battle.boss_hp)
+        extra = (C.SWAP_EXTRA_SECONDS if last.get("swap") else 0.0) + (C.ENRAGE_EXTRA_SECONDS if last.get("enraged") else 0.0)
+        if extra:   # a plant fainted and the next one comes in, or the boss stops to roar
+            self.next_turn_at += extra
+            self.move_ready_at += extra
+            self.move_deadline += extra
         result = B.winner(self.battle)
         return self._finish_battle(result == "creature", now) if result else []
 
@@ -166,11 +183,14 @@ class GameEngine:
         return S.tier_for(min(self.soil_pct.values()))
 
     def _update_health(self, now: float):
-        """Overall health fades while any plant is dry, faster the drier it is."""
+        """Overall health fades while any plant is dry and nobody is fighting for it, faster the
+        drier it is."""
         if self._last_tick is not None:
             dt = min(max(now - self._last_tick, 0.0), 1.0)
             tier = self.moisture_tier()
-            if tier >= 1:
+            if self.game.mode in (S.BOSS, S.BATTLE, S.REWARD):
+                pass   # help is on the way: health holds while a boss is being fought
+            elif tier >= 1:
                 self.health -= C.HEALTH_DECAY_PER_SEC[tier] * dt
             else:
                 self.health += C.HEALTH_RECOVER_PER_SEC * dt
@@ -184,10 +204,14 @@ class GameEngine:
         self._set(new)
         if won:
             self.health = min(100.0, self.health + C.HEALTH_WIN_BONUS)
+        else:
+            self.lost = {"plant": self.battle.plant, "tier": tier, "until": now + C.LOSS_DISPLAY_SECONDS,
+                         "source": C.SOURCE_DEMO if demo else C.SOURCE_SOIL}
         if plant is None:
             return []
-        if self.game.stale:
-            log.info("reward for %s blocked, ESP32 offline", plant)
+        if self.game.stale or self.last_seen is None:
+            log.info("reward for %s blocked, ESP32 %s", plant,
+                     "offline" if self.game.stale else "not heard from yet")
             return []
         pct = self.soil_pct[plant]
         cmd = R.water_reward(plant, pct, now, self.last_reward_at[plant], demo=demo, tier=tier)
@@ -202,7 +226,7 @@ class GameEngine:
     # output -----------------------------------------------------------
     def _battle_snapshot(self, b) -> dict:
         skill = B.skill_of(b.creature)
-        left = max(0.0, self.move_deadline - (self._last_tick or 0.0))
+        left = min(C.PLAYER_MOVE_TIMEOUT_SECONDS, max(0.0, self.move_deadline - (self._last_tick or 0.0)))
         team = {b.plant: {"name": b.creature.name, "hp": b.creature_hp, "max_hp": b.creature.hp,
                           "state": "fighting"}}
         team.update({p: {"name": s.name, "hp": s.hp, "max_hp": s.hp, "state": "ready"} for p, s in b.bench})
@@ -216,20 +240,29 @@ class GameEngine:
             "creature_max_hp": b.creature.hp,
             "boss_hp": b.boss_hp,
             "last_move": b.last_move,
+            # the tell for the coming turn: the move the boss shows, how sure it is (grade and
+            # chance), the move it would use if this is a bluff, and whether it is a heavy hit
+            "intent": b.intent,
+            "enraged": b.enraged,
+            "enrage_hp": int(b.boss.hp * C.ENRAGE_AT),
+            "hints": b.tier in C.TIER_HINTS,   # the cards may say how each move does against the tell
             "skill": None if skill is None else {
                 "name": skill["name"],
-                "ready": b.skill_ready_in == 0,
-                "ready_in": b.skill_ready_in,
-                "recharge": C.SKILL_COOLDOWN_TURNS,   # turns a used skill takes to come back
+                "ready": B.skill_ready(b),
+                "charge": b.charge,                 # turns won so far
+                "need": C.SKILL_CHARGE_NEED,        # turns to win before it can be used
             },
             "manual": self.manual,
-            "awaiting_move": self.manual and B.winner(b) is None,
+            # false while the last turn is still being shown: a move sent then would be thrown away
+            "awaiting_move": (self.manual and B.winner(b) is None
+                              and (self._last_tick or 0.0) >= self.move_ready_at),
             "move_seconds_left": int(left + 0.999) if self.manual else None,
         }
 
     def snapshot(self) -> dict:
         g, b = self.game, self.battle
         boss_stats = b.boss if b else B.boss_for_tier(g.tier or 1)
+        lost = self.lost if (b and g.boss_plant is None) else None   # the last blow of a lost fight
         return {
             "creatures": {p: self.pads[p] or None for p in C.PLANTS},
             "meters": {
@@ -242,14 +275,14 @@ class GameEngine:
             "health": round(self.health, 1),
             "condition": self.condition(),
             "tier": self.moisture_tier(),
-            "boss": None if g.boss_plant is None else {
-                "plant": g.boss_plant,
+            "boss": None if (g.boss_plant is None and not lost) else {
+                "plant": lost["plant"] if lost else g.boss_plant,
                 "name": boss_stats.name,
-                "tier": g.tier,
+                "tier": lost["tier"] if lost else g.tier,
                 "hp": b.boss_hp if b else boss_stats.hp,
                 "max_hp": boss_stats.hp,
                 "type": "drought",
-                "source": g.source,
+                "source": lost["source"] if lost else g.source,
             },
             "battle": None if b is None else self._battle_snapshot(b),
             "reward": self.last_reward,

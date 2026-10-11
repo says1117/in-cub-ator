@@ -19,6 +19,8 @@ class Feed:
             await ws.send(json.dumps(self.engine.snapshot()))
             async for message in ws:
                 self._on_client_message(message)
+        except websockets.ConnectionClosed:
+            pass   # a screen that was closed or lost its network: nothing to report
         finally:
             self.clients.discard(ws)
 

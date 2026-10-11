@@ -38,7 +38,7 @@ export const PLANTS = {
     },
     // Skills are looked up by the name the server sends. blurb: one line on the button.
     skills: {
-      "Inferno Bloom": { body: "channel", fx: "inferno", icon: "bloom", ms: 1500, blurb: "SURE HIT x1.25" },
+      "Inferno Bloom": { body: "channel", fx: "inferno", icon: "bloom", ms: 1500, blurb: "SURE HIT: 14" },
       ...FIGURE_SKILLS,
     },
   },

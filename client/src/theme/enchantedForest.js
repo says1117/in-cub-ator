@@ -17,6 +17,7 @@ const TAU = Math.PI * 2;
 const WISTERIA = ["#3a2790", "#5538bb", "#7653dc", "#9877ee", "#bb9df7", "#dcc0fb"];
 const WISTERIA_DIM = ["#2a2470", "#3d3396", "#5347b4", "#6c5fcb", "#8a7fdd"];
 const LILAC = ["#40458f", "#6172c2", "#8b90e6", "#ae9cf3", "#cfa7f7", "#eec4fb"];
+const BLOSSOM = ["#6d2f73", "#a4478f", "#d76aa9", "#f394c4", "#ffbddc", "#ffe4f0"];   // the pink trees between the lilac ones
 const TEAL = ["#0b2530", "#10393d", "#175048", "#216a57", "#348a64"];
 const MOSS = ["#11331f", "#1b4d30", "#2a6f3e", "#479748", "#80c651", "#c0e862"];
 const SAGE = ["#274435", "#375a44", "#4f7557", "#779674"];
@@ -1198,14 +1199,17 @@ class Wind {
         hold: 1.6 + this.r() * 1.8,
       };
       this.gusts.push(gust);
-      this.nextGust = t + 6 + this.r() * 8;
+      this.nextGust = t + 3 + this.r() * 3.5;   // the next one is on its way before this one has died down
       if (this.onGust) this.onGust(gust);
     }
     this.gusts = this.gusts.filter((g) => t - g.t0 < g.hold * 4 + 1200 / g.speed + 2);
   }
 
   at(x, t) {
-    let w = 0.14 + 0.09 * Math.sin(t * 0.55 + x * 0.004) + 0.05 * Math.sin(t * 1.9 + x * 0.013);
+    // The breeze never stops: a slow swell, a quicker flutter, and ripples that travel from right
+    // to left across the screen, so one tree stirs just after the one beside it.
+    let w = 0.2 + 0.11 * Math.sin(t * 0.55 + x * 0.004) + 0.06 * Math.sin(t * 1.9 + x * 0.013)
+      + 0.13 * Math.max(0, Math.sin(t * 1.15 + x * 0.0075)) + 0.07 * Math.sin(t * 0.23 + 1.3);
     for (const g of this.gusts) {
       const local = t - g.t0 - (920 - x) / g.speed; // time since the gust front passed x
       if (local <= 0) continue;
@@ -1313,7 +1317,7 @@ function plantTree(scene, life, key, spec, getX, y, scale, flip, depth, alpha = 
   strand(spec.frontStrands, "bright", depth + 0.003);
 
   // key, spec and flip are kept so a tree can be snapped later (see bossEntrance.js)
-  life.trees.push({ getX, y, scale, parts, key, spec, flip, depth, broken: null });
+  life.trees.push({ getX, y, scale, parts, key, spec, flip, depth, broken: null, phase: r() * TAU, bend: 0 });
 }
 
 function updateTrees(life, t, dt) {
@@ -1325,6 +1329,12 @@ function updateTrees(life, t, dt) {
     const cos = snap ? Math.cos(snap.angle) : 1;
     const sin = snap ? Math.sin(snap.angle) : 0;
     const lean = snap ? snap.angle : 0;
+    // The whole tree bends from its foot: into the wind's push, with a slow sway of its own. The
+    // bend follows the wind a little late, the way a trunk does. A snapped tree does not bend.
+    const windHere = hidden ? 0 : life.wind.at(x, t);
+    const bendTo = snap ? 0 : -(windHere * 0.03 + Math.sin(t * 0.8 + tree.phase) * 0.011 + Math.sin(t * 0.31 + tree.phase * 1.7) * 0.008);
+    tree.bend += (bendTo - tree.bend) * Math.min(1, dt * 2.2);
+    const bc = Math.cos(tree.bend), bs = Math.sin(tree.bend);
     for (const part of tree.parts) {
       let lx = part.lx;
       let ly = part.ly;
@@ -1333,10 +1343,10 @@ function updateTrees(life, t, dt) {
         ly = snap.pivotY + lx * sin + dy * cos;
         lx = lx * cos - dy * sin;
       }
-      const px = x + lx * tree.scale;
-      const py = tree.y + ly * tree.scale;
+      const px = x + (lx * bc - ly * bs) * tree.scale;
+      const py = tree.y + (lx * bs + ly * bc) * tree.scale;
       if (part.kind === "base") {
-        part.sprite.setPosition(px, py);
+        part.sprite.setPosition(px, py).setRotation(tree.bend);
         continue;
       }
       if (part.kind === "top") {
@@ -1350,12 +1360,15 @@ function updateTrees(life, t, dt) {
       const w = life.wind.at(px, t);
       if (part.kind === "clump") {
         // the crown leans with the wind and rustles
-        const rustle = Math.sin(t * 1.4 + part.phase) * 0.012 + Math.sin(t * 5.3 + part.phase * 2) * 0.006 * (0.4 + w);
-        part.sprite.setRotation(-w * 0.022 * part.sway + rustle + lean);
-        part.sprite.setPosition(px - w * 2.4 * part.sway * tree.scale, py + Math.sin(t * 1.1 + part.phase) * 0.8);
+        // and each clump of it swells and settles like something breathing
+        const rustle = Math.sin(t * 1.4 + part.phase) * 0.022 + Math.sin(t * 5.3 + part.phase * 2) * 0.01 * (0.4 + w);
+        const swell = 1 + Math.sin(t * 0.9 + part.phase * 1.3) * 0.022 + w * 0.02;
+        part.sprite.setRotation(-w * 0.04 * part.sway + rustle + lean + tree.bend);
+        part.sprite.setScale(tree.scale * swell, tree.scale * (2 - swell));
+        part.sprite.setPosition(px - w * 3.6 * part.sway * tree.scale, py + Math.sin(t * 1.1 + part.phase) * 1.6 + w * 1.2);
       } else {
         // a hanging strand is a damped pendulum pushed by the wind
-        const target = w * part.gain + Math.sin(t * 2.4 + part.phase) * 0.035 * (0.5 + w);
+        const target = w * part.gain * 1.45 + Math.sin(t * 2.4 + part.phase) * 0.05 * (0.5 + w) + Math.sin(t * 0.9 + part.phase * 0.6) * 0.03;
         part.vel += (-(part.angle - target) * part.stiff - part.vel * 3.4) * dt;
         part.angle += part.vel * dt;
         part.sprite.setRotation(part.angle);   // strands keep hanging down, even on a fallen tree
@@ -1694,6 +1707,15 @@ function bringForestToLife(scene) {
     const bx = i * (PERIOD / 6) + (((i * 53) % 44) - 22) + 90;
     const getX = () => mod(bx - (scene.nearMountains ? scene.nearMountains.tilePositionX : 0) + 260, PERIOD) - 260;
     plantTree(scene, life, key, spec, getX, 389, 1, i % 3 === 1, 2.01);
+  }
+  // pink blossom trees in the gaps between them: a little smaller, and a step in front so they show
+  for (let i = 0; i < 6; i++) {
+    const spec = { ...midTreeSpec(1500 + i * 29, i + 1), tones: BLOSSOM };
+    const key = `efBlossom${i}`;
+    buildTreeTextures(scene.textures, key, spec);
+    const bx = (i + 0.5) * (PERIOD / 6) + (((i * 37) % 50) - 25) + 90;
+    const getX = () => mod(bx - (scene.nearMountains ? scene.nearMountains.tilePositionX : 0) + 260, PERIOD) - 260;
+    plantTree(scene, life, key, spec, getX, 390, 0.74 + (i % 3) * 0.07, i % 2 === 0, 2.02);
   }
   // the middle layer's own picture now holds only the dark shrubs
   setTexture(scene.textures, "nearMountains", paintMidShrubs());

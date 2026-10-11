@@ -126,11 +126,6 @@ def category_of(stats: Stats, move: str) -> Optional[str]:
     return None
 
 
-def _scaled(value: float, power: int) -> int:
-    """Damage for a move's power. Exactly the old number at power 100, so balance does not move."""
-    return round(value) if power == 100 else round(value * power / 100)
-
-
 def winner(b: Battle) -> Optional[str]:
     if b.boss_hp <= 0:
         return "creature"
@@ -159,6 +154,12 @@ def plan(b: Battle, rng: random.Random) -> Battle:
     intent = {"move": shown, "grade": grade, "chance": chance, "heavy": heavy,
               "bluff": None if chance >= 1 else BEATS[shown]}
     return replace(b, intent=intent, boss_next=real)
+
+
+def plant_hit(b: Battle, factor: float = 1.0, power: int = 100) -> int:
+    """What the plant's hit takes off the boss: its attack, times the player's standing buff, scaled
+    by the move's power (100 for the plain moves and plants without named moves)."""
+    return int(b.creature.atk * factor * C.PLAYER_DAMAGE_BUFF * power / 100 + 0.5)
 
 
 def plain_hit(b: Battle) -> int:
@@ -239,7 +240,7 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
         log["actor_pad"] = b.plant
         log["actor_plant_id"] = b.creature.plant_id
     if use_skill:
-        damage = _scaled(b.creature.atk * skill.get("damage_factor", 0), power)
+        damage = plant_hit(b, skill.get("damage_factor", 0), power)
         heal = min(skill.get("heal", 0), b.creature.hp - c_hp)
         b_hp -= damage
         c_hp += heal
@@ -252,7 +253,7 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
         log.update(skill=skill["name"], damage=damage, healed=heal)
     else:
         if BEATS[creature_move] == boss_move:
-            damage = _scaled(b.creature.atk, power)
+            damage = plant_hit(b, power=power)
             b_hp, who = b_hp - damage, "creature"
             charge = min(C.SKILL_CHARGE_NEED, charge + 1)
             log["damage"] = damage

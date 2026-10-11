@@ -12,6 +12,8 @@ import state_machine as S
 from engine import GameEngine
 
 C.PLANTS_NEED_PADS = False   # most tests do not touch the pads: both plants count as on the cube (PresenceTests turns pads on)
+BUFF = C.PLAYER_DAMAGE_BUFF
+C.PLAYER_DAMAGE_BUFF = 1.0    # the rule tests are written in plain numbers (BuffTests turns the player's buff back on)
 DRY_RAW = C.SOIL_RAW_DRY
 WET_RAW = C.SOIL_RAW_WET
 
@@ -1424,6 +1426,34 @@ class PotionTests(unittest.TestCase):
         e.on_player_move("attack", t)                    # the turn is now being shown
         if e.battle and B.winner(e.battle) is None:
             self.assertFalse(e.on_potion(t + 0.1))
+
+
+
+class BuffTests(unittest.TestCase):
+    """The player's plant always hits 1.3 times as hard. The boss does not."""
+
+    def setUp(self):
+        C.PLAYER_DAMAGE_BUFF = BUFF
+
+    def tearDown(self):
+        C.PLAYER_DAMAGE_BUFF = 1.0
+
+    def test_the_buff_is_on_in_the_real_game(self):
+        self.assertEqual(BUFF, 1.3)
+
+    def test_a_plain_hit_is_buffed(self):
+        b = B.start(B.Stats(hp=10, atk=10), B.Stats(hp=40, atk=3))
+        b = B.resolve_turn(b, "attack", "special")
+        self.assertEqual(b.boss_hp, 40 - 13)
+        self.assertEqual(b.last_move["damage"], 13)
+
+    def test_the_boss_is_not_buffed(self):
+        b = B.start(B.Stats(hp=10, atk=10), B.Stats(hp=40, atk=3))
+        b = B.resolve_turn(b, "guard", "special")
+        self.assertEqual(b.creature_hp, 10 - 3)
+
+    def test_a_skill_is_buffed(self):
+        self.assertEqual(B.plant_hit(B.start(B.Stats(hp=10, atk=8), B.Stats(hp=40, atk=3)), 1.75), 18)
 
 
 if __name__ == "__main__":

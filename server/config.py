@@ -82,6 +82,9 @@ CREATURES_FILE = "creatures.json"
 PLANTS_NEED_PADS = True
 SIM_PAD_TAGS = {"A": "SIM-A", "B": "SIM-B"}   # the made-up tags of --sim, not in creatures.json so the plants fight as themselves
 
+# Every hit the player's plant lands is this much stronger, always.
+PLAYER_DAMAGE_BUFF = 1.3
+
 # A known figure on a plant's pad (creatures.json) replaces that plant's numbers.
 PLANT_FIGHTERS = {
     "A": {"name": "Ember", "hp": 30, "atk": 8, "skill": "inferno_bloom"},

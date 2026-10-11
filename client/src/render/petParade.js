@@ -13,8 +13,8 @@ import { PLANTS, PLANT_IDS, otherPlant } from "../data/plants.js";
 import { createPlantRig, hasPlantRig } from "./plantRig.js";
 import { audio } from "../audio.js";
 
-const SIZE = 0.345;            // forest size: a share of the battle-screen picture
-const HOME = { A: -76, B: -144 };   // where each one hops, measured from the dragon
+const SIZE = 0.47;             // forest size: a share of the battle-screen picture
+const HOME = { A: -84, B: -162 };   // where each one hops, measured from the dragon
 const DEPTH = { A: 8.7, B: 8.6 };   // above the dragon's shadow (8), behind the dragon (9, 10)
 const GROUND_SLIP = 0.4;       // how much of the ground's speed carries a standing plant backward
 const AHEAD = 10;              // how far ahead of its spot a hop lands

@@ -6,7 +6,7 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(Path(__file__).resolve().parents[1]/'client'/'dist'), **kwargs)
     def do_GET(self):
-        if self.path.split('?')[0] in ('/', '/adventure', '/boss', '/storage', '/cast_iron', '/monstera'):
+        if self.path.split('?')[0] in ('/', '/adventure', '/boss', '/storage', '/cast_iron', '/monstera', '/footage'):
             self.path = '/index.html'
         super().do_GET()
 

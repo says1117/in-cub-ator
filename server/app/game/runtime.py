@@ -62,7 +62,7 @@ class IntegratedEngine(GameEngine):
         self.next_kind = (self.next_kind + 1) % len(BOSS_ORDER)
         blocked = None
         if won and not commands:
-            blocked = "offline" if self.game.stale or self.last_seen is None else "soil_wet" if self.soil_pct[plant] >= C.SOIL_WET_THRESHOLD_PCT and self.game.source != C.SOURCE_DEMO else "pump_resting"
+            blocked = "offline" if self.game.stale or self.last_seen is None else "soil_wet" if self.soil_pct[plant] >= C.SOIL_WET_THRESHOLD_PCT and self.game.source not in (C.SOURCE_DEMO, "random") else "pump_resting"
         self.result = {"fight": self.encounter_id, "outcome": "won" if won else "lost",
                        "plant": plant, "kind": kind, "water_ms": 0, "blocked": blocked}
         if commands:
@@ -107,6 +107,9 @@ class GameRuntime:
         self.drying = self.simulation and os.getenv("INCUBE_MOISTURE_SIM", "0") == "1"
         self.engine = IntegratedEngine(creatures=B.load_creatures(str(Path(__file__).with_name("creatures.json"))))
         self.clients = set()
+        self.explorers = {}
+        self.encounter_rng = random.Random()
+        self.random_encounter_at = None
         self.events = asyncio.Queue()
         self.lock = asyncio.Lock()
         self.last_sample = 0
@@ -175,6 +178,35 @@ class GameRuntime:
         for key, value in data.items():
             if key != "version":
                 setattr(e, key, value)
+
+    def exploring(self, client, active=True):
+        if client in self.clients and active:
+            self.explorers[client] = time.time()
+        else:
+            self.explorers.pop(client, None)
+        if not self.explorers:
+            self.random_encounter_at = None
+
+    def random_encounter(self, now):
+        e = self.engine
+        self.explorers = {client: seen for client, seen in self.explorers.items()
+                          if client in self.clients and now - seen < 6}
+        walking = bool(self.explorers) and e.game.mode in (S.WALKING, S.COOLDOWN)
+        if not walking or e.game.stale or not self.slot_ids or now < e.game.quiet_until:
+            self.random_encounter_at = None
+            return
+        ready = [p for p in self.slot_ids if now >= e.game.cooldown_until[p]]
+        if not ready:
+            self.random_encounter_at = None
+            return
+        if self.random_encounter_at is None:
+            self.random_encounter_at = now + self.encounter_rng.uniform(20, 45)
+        elif now >= self.random_encounter_at:
+            plant = self.encounter_rng.choice(ready)
+            e.on_demo_boss(now, plant)
+            if e.game.mode == S.BOSS:
+                e.game = replace(e.game, source="random")
+            self.random_encounter_at = None
 
     async def action(self, action, move=None, turn=None, fight=None, plant=None):
         async with self.lock:
@@ -320,6 +352,7 @@ class GameRuntime:
                     await self.broadcast()
             previous_id = e.encounter_id
             e.tick(now)
+            self.random_encounter(now)
             if e.result is None and previous_id and e.battle is None and e.game.mode == S.WALKING:
                 e.result = {"fight": previous_id, "outcome": "dismissed", "plant": previous_plant,
                             "water_ms": 0, "blocked": None}

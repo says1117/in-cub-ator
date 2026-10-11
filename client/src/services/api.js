@@ -46,7 +46,3 @@ async function sendWateringRequest(plantId, endpoint, payload) {
 export function requestWateringReward(plantId, battleId) {
   return sendWateringRequest(plantId, "watering-reward", { battleId });
 }
-
-export function requestManualWatering(plantId, requestId) {
-  return sendWateringRequest(plantId, "water", { requestId });
-}

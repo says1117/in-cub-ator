@@ -1,6 +1,7 @@
 import { connectGameSource } from "./state/gameSource.js";
 import Phaser from "phaser";
 import AdventureScene from "./scenes/AdventureScene.js";
+import FootageScene from "./scenes/FootageScene.js";
 import StorageScene from "./scenes/StorageScene.js";
 import CastIronScene from "./scenes/CastIronScene.js";
 import MonsteraScene from "./scenes/MonsteraScene.js";
@@ -16,6 +17,7 @@ const routes = {
   "/": "AdventureScene",
   "/adventure": "AdventureScene",
   "/storage": "StorageScene",
+  "/footage": "FootageScene",
   "/cast_iron": "CastIronScene",
   "/monstera": "MonsteraScene",
   "/boss": "BossScene"
@@ -44,7 +46,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [BootScene, AdventureScene, StorageScene, CastIronScene, MonsteraScene, BossScene, HudScene]
+  scene: [BootScene, AdventureScene, FootageScene, StorageScene, CastIronScene, MonsteraScene, BossScene, HudScene]
 };
 
 await loadFont();
@@ -69,6 +71,7 @@ let gameFeed = connectGameSource((state, rejected) => {
 });
 game.registry.set("sendMove", (move, turn) => gameFeed.send({ action: "move", move, turn,
   fight: game.registry.get("serverState")?.battle?.id }));
+game.registry.set("sendWalking", (active = true) => gameFeed.send({ action: active ? "exploring" : "stop_exploring" }));
 game.registry.set("sendDemo", () => gameFeed.send({ action: "demo_boss" }));
 loadPlants().catch(error => console.error("Backend connection failed:", error));
 

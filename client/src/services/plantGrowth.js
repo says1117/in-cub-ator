@@ -6,7 +6,7 @@ export function initializePlantGrowth(scene) {
   scene.growthTween = null;
   // Keep the pot grounded as the foliage grows upward.
   sprite.y = scene.H * 0.625;
-  sprite.setOrigin(0.5, 1);
+  sprite.setOrigin?.(0.5, 1);
 }
 
 export function refreshPlantGrowth(scene) {
@@ -25,7 +25,8 @@ export function refreshPlantGrowth(scene) {
   if (first) scene.plantSprite.setScale(x, y);
   else scene.growthTween = scene.tweens.add({
     targets: scene.plantSprite, scaleX: x, scaleY: y,
-    duration: popped ? 360 : 450, ease: popped ? "Back.easeOut" : "Sine.easeInOut"
+    duration: scene.plantSprite.isPlantRig ? 700 : popped ? 360 : 450,
+    ease: popped && !scene.plantSprite.isPlantRig ? "Back.easeOut" : "Sine.easeInOut"
   });
   if (popped) {
     scene.registry.get("audio")?.sfx("plant_pop");

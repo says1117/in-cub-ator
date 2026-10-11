@@ -43,11 +43,13 @@ availability. `/ws/game` supplies game/battle state and accepts demo/move action
 `GET /api/game` reads the current game snapshot.
 
 Default mode simulates watering: the server rewards victory with +20 moisture,
-and the detail-page WATER +10% button requests +10. Stored receipt IDs prevent
+and detail-page water buttons play a cosmetic splash and sound without changing
+moisture or sending a watering request. Defeat a boss to earn water.
+Stored receipt IDs prevent
 retries from watering twice. Stored moisture is broadcast over WebSocket; the
 client does not invent a moisture reading from an HTTP success.
 
-At 100% moisture the server awards one level, blocks both watering sources for
+At 100% moisture the server awards one level, blocks victory watering for
 10 seconds, then resets moisture to 60%. The hold survives restart. Repeated full
 readings do not award extra levels. Plant detail pages retain growth/pop, care
 sounds and distinct moisture/light/CO₂ update effects.
@@ -77,3 +79,57 @@ From `server`, install test dependency `httpx` if needed and run:
 
 Tests use isolated temporary databases and mocked hardware. From `client`, run
 `node --test test/*.test.js` and `npm run build`.
+
+Random encounters also appear during active walking on `/` and `/adventure`, after a
+random 20–45 second wait. The server owns the timer shared by all screens, respects
+plant cooldowns and the post-battle breather, and alternates the two bosses. Leaving
+the forest, hiding the tab, or disconnecting stops exploration. Random encounters
+can appear with healthy moisture; victory uses the existing watering reward, full
+moisture lock, and pump safety limits. Low-moisture encounters still work.
+
+## Live footage preparation
+
+Open `/footage` from the forest's **LIVE FOOTAGE** button or from Storage. This
+page uses the forest theme, shows two live camera views, reconnects automatically,
+and labels sensor readings separately from future AI assessments. Storage and
+plant-care pages continue to use their existing plant artwork.
+
+The webcam connects to the computer running the backend (or later the Jetson).
+Install the updated backend requirements and restart it:
+
+```bash
+cd server
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --port 8000
+```
+
+Grant that Python/terminal process camera permission in your operating system.
+By default both views share webcam index `0`. To assign separate webcams:
+
+```bash
+export INCUBE_CAMERA_SOURCES='{"PLANT_001":0,"PLANT_002":1}'
+```
+
+For two plants visible in one camera, assign a normalized crop to each view:
+
+```bash
+export INCUBE_CAMERA_SOURCES='{"PLANT_001":{"source":0,"crop":[0,0,0.5,1]},"PLANT_002":{"source":0,"crop":[0.5,0,0.5,1]}}'
+```
+
+Use the actual database plant IDs. Crops are `[x,y,width,height]`, fractions of the
+camera frame. Sources can also be OpenCV-compatible camera URLs; credentials stay
+on the backend. One worker owns each physical camera, so shared views do not
+compete for it. Cameras start on demand, release after five seconds without views,
+and capture up to eight frames per second. A failed camera, missing OpenCV,
+bad frame or timed-out request shows **Camera unavailable** and retries.
+
+Preparation endpoints:
+
+- `GET /api/plants/{plantId}/footage/frame`: current JPEG, or 503 while unavailable.
+- `GET /api/plants/{plantId}/footage`: camera status and the future assessment contract.
+
+No trained model is provided yet. The assessment is explicitly
+`model_not_configured`, with null condition, confidence and assessment timestamp;
+the UI displays **Model not configured · not assessed**. A future trained model
+can populate that contract with its output for the corresponding cropped view.
+This page displays live footage; it does not save recordings.

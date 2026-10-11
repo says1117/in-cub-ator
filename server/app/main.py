@@ -1,6 +1,8 @@
 
 # app/main.py
 
+from .footage import PlantFootage
+from fastapi.responses import Response
 from .mqtt_client import start_mqtt
 from .game.runtime import GameRuntime
 import asyncio
@@ -22,7 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
-from .models import Plant, WateringReward, ManualWatering, WateringCooldown
+from .models import Plant, WateringReward, WateringCooldown
 from .plants import plants as initial_plants
 from .progression import update_moisture, expire_cooldowns, FULL_DURATION
 
@@ -62,6 +64,7 @@ def get_all_plants(db):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.footage = PlantFootage()
     Base.metadata.create_all(bind=engine)
 
     with SessionLocal() as db:
@@ -91,6 +94,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await asyncio.to_thread(app.state.footage.close)
         game_task.cancel()
         with suppress(asyncio.CancelledError):
             await game_task
@@ -282,11 +286,10 @@ async def award_simulated_watering(plant_id: str, request: VictoryRewardRequest)
 
 @app.post("/api/plants/{plant_id}/water")
 async def manually_water_plant(plant_id: str, request: ManualWateringRequest):
-    if not app.state.game.simulation:
-        return await app.state.game.hardware_water(plant_id, request.requestId)
-    return await apply_simulated_watering(
-        plant_id, request.requestId, 10.0, ManualWatering, "requestId"
-    )
+    with SessionLocal() as db:
+        if db.get(Plant, plant_id) is None:
+            raise HTTPException(404, "Plant not found")
+    raise HTTPException(403, "Manual watering is disabled. Defeat a boss to earn water.")
 
 
 @app.websocket("/ws/plants")
@@ -341,6 +344,9 @@ async def game_websocket(websocket: WebSocket):
                 continue
             if not isinstance(data, dict):
                 continue
+            if data.get("action") in ("exploring", "stop_exploring"):
+                runtime.exploring(websocket, data["action"] == "exploring")
+                continue
             accepted = await runtime.action(data.get("action"), data.get("move"),
                                             data.get("turn"), data.get("fight"), data.get("plant"))
             if not accepted:
@@ -349,3 +355,21 @@ async def game_websocket(websocket: WebSocket):
         pass
     finally:
         runtime.clients.discard(websocket)
+        runtime.explorers.pop(websocket, None)
+
+
+@app.get("/api/plants/{plant_id}/footage/frame")
+async def plant_footage_frame(plant_id: str, db: Session = Depends(get_db)):
+    if db.get(Plant, plant_id) is None:
+        raise HTTPException(404, "Plant not found")
+    frame = app.state.footage.frame(plant_id)
+    if frame is None:
+        return Response(status_code=503, headers={"Cache-Control": "no-store", "Retry-After": "1"})
+    return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/plants/{plant_id}/footage")
+async def plant_footage_status(plant_id: str, db: Session = Depends(get_db)):
+    if db.get(Plant, plant_id) is None:
+        raise HTTPException(404, "Plant not found")
+    return app.state.footage.status(plant_id)

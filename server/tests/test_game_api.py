@@ -17,8 +17,20 @@ class GameAPITests(unittest.TestCase):
                 with TestClient(main.app) as client:
                     with client.websocket_connect('/ws/game',headers={'origin':'http://localhost:5173'}) as a:
                         self.assertTrue(a.receive_json()['state']['authoritative'])
+                        runtime=main.app.state.game
+                        a.send_json({'action':'exploring'})
+                        while not runtime.explorers:
+                            a.receive_json()
+                        self.assertTrue(runtime.explorers)
+                        a.send_json({'action':'stop_exploring'})
+                        while runtime.explorers:
+                            a.receive_json()
+                        self.assertIsNone(runtime.random_encounter_at)
                         a.send_json({'action':'demo_boss','plant':'A'})
-                        state=a.receive_json()['state']; self.assertEqual(state['mode'],'boss'); fight=state['boss']['encounterId']
+                        while True:
+                            state=a.receive_json()['state']
+                            if state['mode']=='boss': break
+                        fight=state['boss']['encounterId']
                         with client.websocket_connect('/ws/game',headers={'origin':'http://localhost:5173'}) as b:
                             self.assertEqual(b.receive_json()['state']['boss']['encounterId'],fight)
                             # Advance the pure server clock to avoid a slow timed integration test.

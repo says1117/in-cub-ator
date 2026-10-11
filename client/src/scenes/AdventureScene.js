@@ -23,8 +23,47 @@ export default class AdventureScene extends Phaser.Scene {
   }
 
   create() {
-    this.add.text(740, 436, "STORAGE →", { fontFamily: "Tiny5", fontSize: "16px", color: "#fff2b0", backgroundColor: "#24120f", padding: { x: 6, y: 4 } }).setOrigin(1).setDepth(100).setInteractive({ useHandCursor: true }).on("pointerdown", () => this.registry.get("navigate")("/storage"));
+    this.add.text(740, 72, "LIVE FOOTAGE", { fontFamily: "Tiny5", fontSize: "16px",
+      color: "#fff2b0", backgroundColor: "#24120f", padding: { x: 6, y: 4 } })
+      .setOrigin(1, 0).setDepth(100).setInteractive({ useHandCursor: true })
+      .on("pointerover", function () { this.setColor("#ffffff"); })
+      .on("pointerout", function () { this.setColor("#fff2b0"); })
+      .on("pointerdown", () => {
+        this.registry.get("audio")?.sfx("ui_select");
+        this.registry.get("navigate")("/footage");
+      });
+    this.storageButton = this.add.text(740, 436, "STORAGE >", {
+      fontFamily: "Tiny5", fontSize: "16px", color: "#fff2b0",
+      backgroundColor: "#24120f", padding: { x: 6, y: 4 }
+    }).setOrigin(1).setDepth(100).setInteractive({ useHandCursor: true });
+    const resetStorage = () => {
+      this.storageButton.setColor("#fff2b0").setBackgroundColor("#24120f").setScale(1);
+    };
+    this.storageButton.on("pointerover", () => {
+      this.storageButton.setColor("#ffd77a").setBackgroundColor("#35325e").setScale(1.05);
+    });
+    this.storageButton.on("pointerout", resetStorage);
+    this.input.on("gameout", resetStorage);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.input.off("gameout", resetStorage));
+    this.storageButton.on("pointerdown", () => {
+      this.storageButton.setColor("#ffffff").setBackgroundColor("#7653dc");
+      this.registry.get("audio")?.sfx("ui_select");
+      this.registry.get("navigate")("/storage");
+    });
     this.walking = true;
+    this.lastExplorationPulse = -Infinity;
+    const stopExploring = () => this.registry.get("sendWalking")?.(false);
+    const onVisibility = () => {
+      if (document.hidden) stopExploring();
+      else this.lastExplorationPulse = -Infinity;
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    this.events.on(Phaser.Scenes.Events.SLEEP, stopExploring);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      stopExploring();
+      document.removeEventListener("visibilitychange", onVisibility);
+      this.events.off(Phaser.Scenes.Events.SLEEP, stopExploring);
+    });
     this.speed = 85;
 
     // Enchanted forest theme: paints the map layers (client/src/theme/enchantedForest.js)
@@ -343,6 +382,8 @@ export default class AdventureScene extends Phaser.Scene {
 
     if (shouldWalk === this.walking) return;
     this.walking = shouldWalk;
+    if (!shouldWalk) this.registry.get("sendWalking")?.(false);
+    else this.lastExplorationPulse = -Infinity;
 
     if (!this.walking) this.standStill();
   }
@@ -372,6 +413,9 @@ export default class AdventureScene extends Phaser.Scene {
     this.castShadow.setPosition(this.player.x, this.basePlayerY - 2).setVisible(this.shadow.visible);
 
     if (!this.walking) return;
+    if (!document.hidden && time - this.lastExplorationPulse >= 3000) {
+      if (this.registry.get("sendWalking")?.()) this.lastExplorationPulse = time;
+    }
 
     const dt = Math.min(delta / 1000, 0.05);
 

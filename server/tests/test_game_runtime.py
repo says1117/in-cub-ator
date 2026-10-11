@@ -39,6 +39,66 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def moisture(self,a,b):
         with self.sessions() as db:
             db.get(Plant,'PLANT_001').soilMoisture=a; db.get(Plant,'PLANT_002').soilMoisture=b; db.commit()
+    async def test_random_encounter_requires_walking_and_respects_cooldowns(self):
+        now = time.time()
+        self.rt.random_encounter(now)
+        self.assertIsNone(self.rt.random_encounter_at)
+        self.rt.explorers[self.ws] = now
+        self.rt.random_encounter(now)
+        deadline = self.rt.random_encounter_at
+        self.assertGreaterEqual(deadline - now, 20)
+        self.assertLessEqual(deadline - now, 45)
+        self.rt.random_encounter(now + 7)  # expired presence, e.g. disconnected browser
+        self.assertIsNone(self.rt.random_encounter_at)
+        self.rt.explorers[self.ws] = now
+        self.rt.random_encounter_at = now
+        self.rt.engine.game = replace(self.rt.engine.game, quiet_until=now + 20)
+        self.rt.random_encounter(now)
+        self.assertEqual(self.rt.engine.game.mode, S.WALKING)
+        self.rt.engine.game = replace(self.rt.engine.game, quiet_until=0,
+                                      cooldown_until={'A': now + 60, 'B': now + 60})
+        self.rt.random_encounter_at = now
+        self.rt.random_encounter(now)
+        self.assertEqual(self.rt.engine.game.mode, S.WALKING)
+        self.rt.engine.game = replace(self.rt.engine.game, cooldown_until={'A': 0, 'B': 0})
+        self.rt.random_encounter_at = now
+        self.rt.random_encounter(now)
+        e = self.rt.engine
+        self.assertEqual(e.game.mode, S.BOSS)
+        self.assertEqual(e.game.source, 'random')
+        self.assertEqual(e.boss_kind, 'chomper')
+        first_id = e.encounter_id
+        # Healthy moisture does not dismiss a random encounter.
+        e._set(S.on_soil(e.game, e.game.boss_plant, 80, now + 1))
+        self.assertEqual(e.game.mode, S.BOSS)
+        e.tick(now + 6)
+        e._finish_battle(True, now + 7)
+        await self.rt.drain_reward()
+        self.water.assert_awaited_once()
+        e.last_seen = now + 80
+        e.tick(now + 80)
+        self.rt.explorers[self.ws] = now + 80
+        self.rt.random_encounter_at = now + 80
+        self.rt.random_encounter(now + 80)
+        self.assertEqual(e.boss_kind, 'sporelings')
+        self.assertNotEqual(e.encounter_id, first_id)
+        second_id = e.encounter_id
+        self.rt.random_encounter_at = now + 80
+        self.rt.random_encounter(now + 80)
+        self.assertEqual(e.encounter_id, second_id)  # never overlap active fights
+
+    async def test_random_presence_stops_immediately_and_blocks_offline(self):
+        self.rt.exploring(self.ws)
+        self.rt.random_encounter_at = time.time()
+        self.rt.exploring(self.ws, False)
+        self.assertFalse(self.rt.explorers)
+        self.assertIsNone(self.rt.random_encounter_at)
+        self.rt.exploring(self.ws)
+        self.rt.engine.game = replace(self.rt.engine.game, stale=True)
+        self.rt.random_encounter_at = time.time()
+        self.rt.random_encounter(time.time())
+        self.assertEqual(self.rt.engine.game.mode, S.WALKING)
+
     async def test_spawn_cancel_and_restart(self):
         self.moisture(30,10); now=time.time()
         for i in range(5): await self.rt.step(now+i+1)

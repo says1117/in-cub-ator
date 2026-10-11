@@ -84,32 +84,27 @@ class WateringRewardTests(unittest.TestCase):
         self.assertEqual(response["increase"], 10)
         self.assertEqual(self.reward(str(uuid4())).json()["increase"], 0)
 
-    def test_manual_watering_adds_ten_and_broadcasts_selected_plant(self):
-        request_id = str(uuid4())
-        with self.client.websocket_connect(
-            "/ws/plants", headers={"origin": "http://localhost:5173"}
-        ) as socket:
-            before = socket.receive_json()["plants"]
-            response = self.client.post("/api/plants/PLANT_002/water", json={"requestId": request_id})
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()["increase"], 10)
-            after = socket.receive_json()["plants"]
-            self.assertEqual(after[0], before[0])
-            self.assertEqual(after[1]["soilMoisture"], 80)
-            duplicate = self.client.post("/api/plants/PLANT_002/water", json={"requestId": request_id})
-            self.assertTrue(duplicate.json()["alreadyRewarded"])
-            self.assertEqual(socket.receive_json()["plants"][1]["soilMoisture"], 80)
-        conflict = self.client.post("/api/plants/PLANT_001/water", json={"requestId": request_id})
-        self.assertEqual(conflict.status_code, 409)
+    def test_manual_watering_rejected_for_both_plants_without_mutation(self):
+        from app.models import ManualWatering, HardwareWatering
+        before = self.client.get("/api/plants").json()
+        for plant in before:
+            response = self.client.post(f"/api/plants/{plant['plantId']}/water",
+                                        json={"requestId": str(uuid4())})
+            self.assertEqual(response.status_code, 403)
+            self.assertIn("Defeat a boss", response.json()["detail"])
+        self.assertEqual(self.client.get("/api/plants").json(), before)
+        with self.sessions() as db:
+            self.assertEqual(db.query(ManualWatering).count(), 0)
+            self.assertEqual(db.query(HardwareWatering).count(), 0)
 
-    def test_manual_watering_caps_at_one_hundred_and_has_own_receipts(self):
-        request_id = str(uuid4())
-        self.reward(request_id)
-        response = self.client.post("/api/plants/PLANT_001/water", json={"requestId": request_id})
-        self.assertEqual(response.json()["soilMoisture"], 100)
-        self.assertFalse(response.json()["alreadyRewarded"])
-        response = self.client.post("/api/plants/PLANT_001/water", json={"requestId": str(uuid4())})
-        self.assertEqual(response.json()["increase"], 0)
+    def test_manual_watering_disabled_in_hardware_mode_without_pump(self):
+        from unittest.mock import AsyncMock
+        runtime = main.app.state.game
+        runtime.simulation = False
+        runtime.hardware_water = AsyncMock()
+        response = self.client.post("/api/plants/PLANT_001/water", json={"requestId": "hardware"})
+        self.assertEqual(response.status_code, 403)
+        runtime.hardware_water.assert_not_awaited()
         self.assertEqual(self.client.post("/api/plants/missing/water", json={"requestId": "missing"}).status_code, 404)
         self.assertEqual(self.client.post("/api/plants/PLANT_001/water", json={"requestId": ""}).status_code, 422)
 
@@ -120,13 +115,12 @@ class WateringRewardTests(unittest.TestCase):
             initial = socket.receive_json()["plants"][0]
             self.reward("first")
             socket.receive_json()
-            response = self.client.post("/api/plants/PLANT_001/water", json={"requestId": "full"})
+            response = self.reward("full")
             self.assertEqual(response.json()["level"], initial["level"] + 1)
             updated = socket.receive_json()["plants"][0]
             self.assertEqual(updated["soilMoisture"], 100)
             self.assertEqual(updated["level"], initial["level"] + 1)
-            for endpoint, body in [("water", {"requestId": "full"}),
-                                   ("water", {"requestId": "extra"}),
+            for endpoint, body in [("watering-reward", {"battleId": "full"}),
                                    ("watering-reward", {"battleId": "extra"})]:
                 response = self.client.post(f"/api/plants/PLANT_001/{endpoint}", json=body).json()
                 self.assertTrue(response["wateringBlocked"])
@@ -160,7 +154,7 @@ class WateringRewardTests(unittest.TestCase):
             self.client.patch("/api/plants/PLANT_001", json={"soilMoisture": 90})
             socket.receive_json()
             started = time.time()
-            response = self.client.post("/api/plants/PLANT_001/water", json={"requestId": "reach-full"}).json()
+            response = self.reward("reach-full").json()
             full = socket.receive_json()["plants"][0]
             self.assertEqual(full["level"], 6)
             self.assertAlmostEqual(full["wateringAvailableAt"] - started, 10, delta=1)
@@ -180,12 +174,14 @@ class WateringRewardTests(unittest.TestCase):
             replay = self.reward("blocked-win").json()
             self.assertEqual(replay["increase"], 0)
             self.assertEqual(socket.receive_json()["plants"][0]["soilMoisture"], 60)
-            self.client.post("/api/plants/PLANT_001/water", json={"requestId": "resume"})
-            self.assertEqual(socket.receive_json()["plants"][0]["soilMoisture"], 70)
+            self.reward("resume")
+            self.assertEqual(socket.receive_json()["plants"][0]["soilMoisture"], 80)
             self.reward("next-win")
-            self.assertEqual(socket.receive_json()["plants"][0]["soilMoisture"], 90)
-            self.client.post("/api/plants/PLANT_001/water", json={"requestId": "next-level"})
-            self.assertEqual(socket.receive_json()["plants"][0]["level"], 7)
+            next_full = socket.receive_json()["plants"][0]
+            self.assertEqual(next_full["soilMoisture"], 100)
+            self.assertEqual(next_full["level"], 7)
+            denied = self.client.post("/api/plants/PLANT_001/water", json={"requestId": "next-level"})
+            self.assertEqual(denied.status_code, 403)
 
     def test_restart_after_expiry_resets_to_sixty_without_new_hold(self):
         import time

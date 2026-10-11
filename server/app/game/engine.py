@@ -210,7 +210,8 @@ class GameEngine:
         self._last_tick = now
 
     def _finish_battle(self, won: bool, now: float) -> list:
-        demo = self.game.source == C.SOURCE_DEMO
+        source = self.game.source
+        demo = source in (C.SOURCE_DEMO, "random")
         tier = self.game.tier or 1
         kind = self.boss_kind   # read now: a lost fight clears the boss as soon as the state changes
         new, plant = S.on_battle_done(self.game, won, now)
@@ -219,7 +220,7 @@ class GameEngine:
             self.health = min(100.0, self.health + C.HEALTH_WIN_BONUS)
         else:
             self.lost = {"plant": self.battle.plant, "tier": tier, "kind": kind, "until": now + C.LOSS_DISPLAY_SECONDS,
-                         "source": C.SOURCE_DEMO if demo else C.SOURCE_SOIL}
+                         "source": source}
         if plant is None:
             return []
         if self.game.stale or self.last_seen is None:

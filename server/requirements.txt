@@ -23,3 +23,6 @@ websockets==17.2
 
 # Optional USB soil bridge used on Jetson.
 pyserial>=3.5,<4
+
+# Live footage page; OpenCV GUI windows are not required.
+opencv-python-headless>=4.10,<5

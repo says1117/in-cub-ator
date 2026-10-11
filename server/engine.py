@@ -1,6 +1,7 @@
 """GameEngine glues the pure pieces together. No network code, so it runs in tests."""
 import logging
 import random
+import uuid
 from typing import Optional
 
 import battle as B
@@ -21,6 +22,7 @@ class GameEngine:
         self.plant_db = plant_db
         self.pad_plant = {p: None for p in C.PLANTS}     # pad -> plant_id summoned there (plant_db only)
         self.pad_status = {p: "empty" for p in C.PLANTS}  # empty, known, unknown, invalid or moved
+        self.last_xp = None   # the last XP award: {plant_id: {xp, level, levelled_up, gained}}
         self.rng = rng or random.Random()
         self.soil_pct = {p: 100.0 for p in C.PLANTS}
         self.pads = {p: "" for p in C.PLANTS}
@@ -150,9 +152,10 @@ class GameEngine:
         """The player's move for this turn: attack, guard, special or skill."""
         if not self.manual or self.game.mode != S.BATTLE or self.battle is None:
             return []
-        if move not in B.PLAYER_MOVES or now < self.move_ready_at:
+        category = B.category_of(self.battle.creature, move)  # "attack" or the plant's own move id
+        if category is None or now < self.move_ready_at:
             return []
-        self.battle = B.play_turn(self.battle, self.rng, move)
+        self.battle = B.play_turn(self.battle, self.rng, category)
         return self._after_turn(now)
 
     def on_debug_boss(self, payload: str, now: float) -> list:
@@ -218,7 +221,8 @@ class GameEngine:
                 first = party[0]
             bench = [p for p in party if p != first]
             self.battle = B.start(self.fighter(first), B.boss_for_tier(self.game.tier or 1),
-                                  plant=first, bench=[(p, self.fighter(p)) for p in bench])
+                                  plant=first, bench=[(p, self.fighter(p)) for p in bench],
+                                  battle_id=uuid.uuid4().hex)
             self.next_turn_at = now + C.BATTLE_TURN_SECONDS
             self.move_ready_at = now + 0.5
             self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
@@ -273,6 +277,8 @@ class GameEngine:
         self._set(new)
         if won:
             self.health = min(100.0, self.health + C.HEALTH_WIN_BONUS)
+            if not demo:
+                self._award_xp(tier)
         if plant is None:
             return []
         if self.game.stale:
@@ -287,6 +293,25 @@ class GameEngine:
         self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload), "tier": tier}
         log.info("command %s %s", cmd.topic, cmd.payload)
         return [cmd]
+
+    def _award_xp(self, tier: int):
+        """XP for a won fight against a real (soil) boss, once per fight. Who gets it: every plant
+        still in the fight's roster when it ends (fighting, waiting on the bench, or fainted) that
+        is on a pad at that moment. Lifting a plant takes it out of the roster, so it gets no XP
+        even if it is put back. Never touches watering, and never blocks (saved in the background)."""
+        if self.plant_db is None or self.battle is None or not self.battle.battle_id:
+            return
+        b = self.battle
+        took_part = [b.creature.plant_id] + [s.plant_id for _, s in b.bench] + [s.plant_id for _, s in b.fallen]
+        still_here = {pid for _, pid in self.summoned()}
+        ids = [pid for pid in took_part if pid and pid in still_here]
+        xp = C.XP_PER_WIN_BY_TIER.get(tier, C.XP_PER_WIN_BY_TIER[1])
+        result = self.plant_db.award(b.battle_id, ids, xp)
+        if result:
+            self.last_xp = result
+            for pid, r in result.items():
+                log.info("%s gained %d XP (total %d, level %d%s)", pid, r["gained"], r["xp"], r["level"],
+                         ", level up!" if r["levelled_up"] else "")
 
     # output -----------------------------------------------------------
     def _battle_snapshot(self, b) -> dict:

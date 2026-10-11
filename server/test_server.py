@@ -1,6 +1,7 @@
 """Run: python -m unittest test_server -v  (from the server folder, no hardware needed)"""
 import random
 import unittest
+from unittest import mock
 from dataclasses import replace
 
 import battle as B
@@ -340,6 +341,7 @@ class TierTests(unittest.TestCase):
             g = feed_dry_pct(S.Game(), pct)
             self.assertEqual((g.mode, g.tier), (S.BOSS, tier), pct)
 
+    @mock.patch.object(C, "BOSS_BREATHER_SECONDS", 20.0)   # live play uses the same 10 minutes for both
     def test_harder_tier_skips_the_cooldown(self):
         g = S.on_tick(feed_dry_pct(S.Game(), 40.0), C.BOSS_INTRO_SECONDS)
         g, _ = S.on_battle_done(g, False, 10.0)            # lost, now in cooldown
@@ -483,6 +485,8 @@ class TeamTests(unittest.TestCase):
             e.battle = replace(e.battle, boss_hp=1, creature_hp=e.battle.creature.hp)
             cmds = e.on_player_move("skill", t) or cmds
         self.assertEqual(e.game.mode, S.REWARD)
+        self.assertEqual(cmds, [])   # no water while the victory screen plays
+        cmds = e.tick(t + C.REWARD_DISPLAY_SECONDS + 0.1)
         self.assertEqual([c.topic for c in cmds], [C.TOPIC_CMD_PUMP.format(plant="A")])
 
     def test_a_known_figure_on_a_pad_replaces_that_plant(self):
@@ -908,6 +912,8 @@ class ManualBattleTests(unittest.TestCase):
             for _ in range(60):
                 t += C.BATTLE_TURN_SECONDS + 0.1
                 cmds = e.on_player_move(B.auto_move(e.battle, e.rng), t) if e.game.mode == S.BATTLE else []
+                if e.game.mode == S.REWARD:
+                    cmds += e.tick(t + C.REWARD_DISPLAY_SECONDS + 0.1)   # water once the victory screen closes
                 if cmds:
                     paid = True
                     self.assertLessEqual(int(cmds[0].payload), C.PUMP_MAX_MS)
@@ -972,13 +978,15 @@ class StaleTimerTests(unittest.TestCase):
         t = C.BOSS_INTRO_SECONDS + 0.1
         e.tick(t)
         e.battle = charged(replace(e.battle, boss_hp=1))
-        return e.on_player_move("skill", t + 1.0)
+        cmds = e.on_player_move("skill", t + 1.0)
+        self.assertEqual(e.game.mode, S.REWARD)          # the fight is won on screen
+        self.reward_seen = e.snapshot()["reward"]
+        return cmds + e.tick(t + 1.0 + C.REWARD_DISPLAY_SECONDS + 0.1)   # water once the victory screen closes
 
     def test_no_pump_before_the_esp32_was_ever_heard_from(self):
         e = GameEngine(rng=random.Random(1))
         self.assertEqual(self.won_demo(e), [])
-        self.assertEqual(e.game.mode, S.REWARD)          # the fight is still won on screen
-        self.assertIsNone(e.snapshot()["reward"])        # and no watering is claimed
+        self.assertIsNone(self.reward_seen)              # no watering is claimed
         e = GameEngine(rng=random.Random(1))
         e.on_soil_raw("A", WET_RAW, 0.0)
         self.assertEqual(len(self.won_demo(e)), 1)

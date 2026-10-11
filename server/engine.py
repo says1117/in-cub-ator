@@ -34,6 +34,7 @@ class GameEngine:
         self.pads = {p: "" for p in C.PLANTS}
         self.last_reward_at = {p: float("-inf") for p in C.PLANTS}
         self.last_reward = None
+        self.pending_water = None    # a won fight's pump command, sent once the victory screen closes
         self.battle: Optional[B.Battle] = None
         self.next_turn_at = 0.0
         self.health = 100.0          # overall plant health, fades while the soil is dry
@@ -227,6 +228,7 @@ class GameEngine:
         self._update_health(now)
         self._check_stale(now)
         self._set(S.on_tick(self.game, now, can_fight=self.can_fight()))
+        commands += self._send_pending_water(now)
 
         if self.game.mode == S.BATTLE and self.battle is None:
             if self.can_fight():
@@ -397,6 +399,25 @@ class GameEngine:
             return []
         self.last_reward_at[plant] = now
         self.last_reward = {"type": "water", "plant": plant, "size": int(cmd.payload), "tier": tier}
+        # The boss dies and the victory screen plays first. The pump runs when the player is back
+        # in the forest (see _send_pending_water).
+        self.pending_water = cmd
+        log.info("won: %s %s waits for the victory screen", cmd.topic, cmd.payload)
+        return []
+
+    def _send_pending_water(self, now: float) -> list:
+        """Sends a won fight's water once the victory screen is over, if it is still safe."""
+        cmd = self.pending_water
+        if cmd is None or self.game.mode == S.REWARD:
+            return []
+        self.pending_water = None
+        plant = cmd.topic.rsplit("/", 1)[-1]
+        if self.game.stale or self.last_seen is None:
+            log.info("water for %s dropped, ESP32 offline", plant)
+            return []
+        if not self.present(plant):
+            log.info("water for %s dropped, the plant left the cube", plant)
+            return []
         log.info("command %s %s", cmd.topic, cmd.payload)
         return [cmd]
 

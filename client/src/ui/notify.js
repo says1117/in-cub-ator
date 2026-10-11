@@ -1,7 +1,9 @@
 // client/src/ui/notify.js: "Your plant is thirsty" notifications. Owner: Role 3 (client, art, demo).
-// The server sends thirsty: {A, B} (dry for long enough to call a boss). When a plant turns thirsty
-// this shows an in-game banner with a sound, flashes the tab title, and, where the browser allows it
-// (https pages only), a system notification. Nothing here waters anything: only a won fight does.
+// The server sends thirsty: {A, B} (dry for long enough to call a boss). A plant is announced once
+// per dry spell, and only while the forest is calm (not during a fight or the cooldown after one). It
+// is announced again only after its soil got wet. This shows an in-game banner with a sound, flashes
+// the tab title, and, where the browser allows it (https pages only), a system notification.
+// Nothing here waters anything: only a won fight does.
 import { audio } from "../audio.js";
 
 const css = `
@@ -37,14 +39,15 @@ export function mountThirstNotifier(parent, nameOf) {
   const stopTitle = () => { clearInterval(titleTimer); titleTimer = null; document.title = baseTitle; };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) stopTitle(); });
 
-  let was = null;   // the first state only sets the baseline, so a reload does not re-announce
+  const told = { A: false, B: false };   // announced in this dry spell
   let hideTimer = null;
   return {
     update(state) {
       const now = { A: false, B: false, ...(state && state.thirsty) };
-      if (was === null) { was = now; return; }
-      const fresh = ["A", "B"].filter((p) => now[p] && !was[p]);
-      was = now;
+      for (const p of ["A", "B"]) if (!now[p]) told[p] = false;   // wet again: a new dry spell may be told
+      if (!state || state.mode !== "walking") return;               // a fight or the cooldown: stay quiet
+      const fresh = ["A", "B"].filter((p) => now[p] && !told[p]);
+      for (const p of fresh) told[p] = true;
       if (!fresh.length) return;
       const names = fresh.map(nameOf).join(" and ");
       const many = fresh.length > 1;

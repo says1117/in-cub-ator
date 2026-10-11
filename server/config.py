@@ -31,8 +31,8 @@ SWAP_EXTRA_SECONDS = 1.6  # extra pause after a plant faints, while the next one
 ENRAGE_EXTRA_SECONDS = 1.0  # extra pause when the boss becomes enraged, while it roars on the client
 REWARD_DISPLAY_SECONDS = 6.0  # the last blow plays out, then the victory panel and the pump bar
 LOSS_DISPLAY_SECONDS = 6.0    # a lost fight stays in the state message this long, for the last blow
-COOLDOWN_SECONDS = 60.0
-BOSS_BREATHER_SECONDS = 20.0  # after any fight ends, no plant can call a boss for this long
+COOLDOWN_SECONDS = 600.0      # 10 minutes of calm after a fight, before dry soil can call the next boss
+BOSS_BREATHER_SECONDS = 600.0  # after any fight ends, no plant can call a boss for this long (the demo button still can)
 ESP32_STALE_SECONDS = 30.0
 
 # Reward safety.
@@ -42,7 +42,7 @@ ESP32_STALE_SECONDS = 30.0
 PUMP_MAX_MS = 2000
 PUMP_MS_PER_WIN = 2000
 PUMP_MS_BY_TIER = {1: 2000, 2: 2000, 3: 2000}  # 2 s per win: under 1 s did not reach the pot
-REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
+REWARD_MIN_GAP_SECONDS = 60.0  # pump rest per plant: a demo win soon after a real one still waters only after this
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket
 WS_ACTION_DEMO_BOSS = "demo_boss"

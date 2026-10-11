@@ -92,6 +92,9 @@ class PlayerTests(unittest.TestCase):
                     break
                 t, more = run(e, t, C.BATTLE_TURN_SECONDS + 0.5)
                 cmds += more + e.on_player_move("attack", t)
+            self.assertEqual(cmds, [])   # the boss is dead, but the victory screen plays first
+            t, more = run(e, t, C.REWARD_DISPLAY_SECONDS + 1)
+            cmds += more
         self.assertEqual([(c.topic, c.payload) for c in cmds],
                          [(C.TOPIC_CMD_PUMP.format(plant="A"), str(C.PUMP_MS_BY_TIER[e.last_reward["tier"]]))])
 
@@ -108,6 +111,31 @@ class PlayerTests(unittest.TestCase):
         self.assertNotIn(e.game.mode, (S.BOSS, S.BATTLE))
         self.assertIsNone(e.battle)
         self.assertEqual(cmds + more, [])
+
+
+class CooldownTests(unittest.TestCase):
+    def won_fight(self):
+        e = live()
+        e.manual = True
+        with mock.patch.object(C, "BOSS_TIERS", WEAK_BOSS):
+            t = PlayerTests.into_battle(self, e)
+            while e.game.mode == S.BATTLE:
+                t, _ = run(e, t, C.BATTLE_TURN_SECONDS + 0.5)
+                e.on_player_move("attack", t)
+        t, _ = run(e, t, C.REWARD_DISPLAY_SECONDS + 1)   # back in the forest
+        return e, t
+
+    def test_no_boss_for_ten_minutes_after_a_fight_even_with_dry_soil(self):
+        e, t = self.won_fight()
+        t, _ = run(e, t, 590 - C.REWARD_DISPLAY_SECONDS - 1)   # soil A stays bone dry all along
+        self.assertNotIn(e.game.mode, (S.BOSS, S.BATTLE))
+        t, _ = run(e, t, 20)
+        self.assertIn(e.game.mode, (S.BOSS, S.BATTLE))         # ten minutes on: the next boss
+
+    def test_the_demo_button_skips_the_cooldown(self):
+        e, t = self.won_fight()
+        e.on_demo_boss(t, "A")
+        self.assertEqual(e.game.mode, S.BOSS)
 
 
 if __name__ == "__main__":

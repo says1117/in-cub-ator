@@ -11,6 +11,7 @@ import "@fontsource/press-start-2p/400.css";
 import { connectWsSource } from "./state/wsSource.js";
 import { feedPlants } from "./state/plantFeed.js";
 import { mountThirstNotifier } from "./ui/notify.js";
+import { loadFont } from "./ui/font.js";
 import { mountStatusBar } from "./ui/statusBar.js";
 
 const routes = {
@@ -93,9 +94,10 @@ function navigate(path) {
 // Allow scenes to use the navigation function
 game.registry.set("navigate", navigate);
 
-// Start the correct scene based on the URL
+// Start the correct scene based on the URL, once the inventory's pixel font is ready (Phaser draws
+// text into a canvas once, so text made before the font loads would keep the fallback font).
 game.events.once(Phaser.Core.Events.READY, () => {
-  game.scene.start(getSceneFromURL());
+  loadFont().then(() => game.scene.start(getSceneFromURL()));
 });
 
 // Handle browser Back / Forward buttons

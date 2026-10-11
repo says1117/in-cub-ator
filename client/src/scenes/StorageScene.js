@@ -1,3 +1,7 @@
+import { preloadPlantArt } from "../data/plants.js";
+import { ensurePlantPortrait } from "../render/plantPortrait.js";
+import { drawCareForest, carePanel, plantBackdrop, hoverControl } from "../theme/plantCareTheme.js";
+import { FONT } from "../ui/font.js";
 import Phaser from "phaser";
 
 // Plant Storage — 800 x 450
@@ -20,17 +24,10 @@ const IMAGE_BY_SPECIES = {
 const LIGHT_DISPLAY_MAX_LUX = 2000;
 
 const C = {
-  soil: 0x553323,
-  dark: 0x38251e,
-  soilLight: 0x75472c,
-  outline: 0x2c1d19,
-  wood: 0x9b5935,
-  woodLight: 0xd39157,
-  parchment: 0xf3d8ac,
-  cream: 0xfff1d8,
-  ink: "#35241e",
-  water: 0x4faee6,
-  light: 0xf1bd48,
+  soil: 0x0b2530,
+  ink: "#f6ecd2",
+  water: 0x56b8ff,
+  light: 0xffd77a,
   health: 0x81c75d,
 };
 
@@ -40,18 +37,12 @@ export default class StorageScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image(
-      "cast-iron-plant",
-      "/assets/plants/cast_iron.png"
-    );
-
-    this.load.image(
-      "monstera-plant",
-      "/assets/plants/monstera.png"
-    );
+    preloadPlantArt(this);
   }
 
   create() {
+    ensurePlantPortrait(this, "A", "cast-iron-plant");
+    ensurePlantPortrait(this, "B", "monstera-plant");
     this.cameras.main.setBackgroundColor(C.soil);
 
     this.drawGround();
@@ -65,9 +56,9 @@ export default class StorageScene extends Phaser.Scene {
       400, 432,
       "YOUR LITTLE GREEN FRIENDS",
       {
-        fontFamily: "monospace",
-        fontSize: "10px",
-        color: "#d9b58a",
+        fontFamily: FONT,
+        fontSize: "16px",
+        color: "#dcc0fb",
       }
     ).setOrigin(0.5).setDepth(5);
 
@@ -75,9 +66,9 @@ export default class StorageScene extends Phaser.Scene {
     this.prevButton = this.add.text(
       30, 348, "<",
       {
-        fontFamily: "monospace",
+        fontFamily: FONT,
         fontSize: "24px",
-        color: "#fff0d3",
+        color: "#f6ecd2",
       }
     )
       .setOrigin(0.5)
@@ -87,9 +78,9 @@ export default class StorageScene extends Phaser.Scene {
     this.nextButton = this.add.text(
       770, 348, ">",
       {
-        fontFamily: "monospace",
+        fontFamily: FONT,
         fontSize: "24px",
-        color: "#fff0d3",
+        color: "#f6ecd2",
       }
     )
       .setOrigin(0.5)
@@ -105,6 +96,9 @@ export default class StorageScene extends Phaser.Scene {
       "pointerdown",
       () => this.changePage(1)
     );
+
+    hoverControl(this, this.prevButton, { x: 12, y: 330, width: 36, height: 36 });
+    hoverControl(this, this.nextButton, { x: 752, y: 330, width: 36, height: 36 });
 
     // Listen for backend plant updates
     this.onPlantsChanged = (plants) => {
@@ -169,9 +163,9 @@ export default class StorageScene extends Phaser.Scene {
         400, 225,
         "NO PLANTS REGISTERED YET",
         {
-          fontFamily: "monospace",
+          fontFamily: FONT,
           fontSize: "18px",
-          color: "#fff0d3",
+          color: "#f6ecd2",
         }
       ).setOrigin(0.5);
 
@@ -205,207 +199,41 @@ export default class StorageScene extends Phaser.Scene {
   }
 
   drawGround() {
-    const g = this.add.graphics();
-
-    g.fillStyle(C.soil, 1);
-    g.fillRect(0, 0, 800, 450);
-
-    // Deterministic soil texture
-    let seed = 2317;
-
-    const rand = () => {
-      seed = (
-        seed * 1664525 + 1013904223
-      ) >>> 0;
-
-      return seed / 4294967296;
-    };
-
-    const specks = [
-      0x42291f,
-      0x6b402a,
-      0x805038,
-      0x493022
-    ];
-
-    for (let i = 0; i < 950; i++) {
-      const x = Math.floor(rand() * 800 / 4) * 4;
-      const y = Math.floor(rand() * 450 / 4) * 4;
-
-      g.fillStyle(
-        specks[Math.floor(rand() * specks.length)],
-        0.65
-      );
-
-      g.fillRect(
-        x, y,
-        3 + Math.floor(rand() * 5),
-        2 + Math.floor(rand() * 3)
-      );
-    }
-
-    // Grass decorations
-    for (let i = 0; i < 25; i++) {
-      const x = Math.floor(rand() * 800);
-
-      const y = i < 13
-        ? 65 + Math.floor(rand() * 45)
-        : 386 + Math.floor(rand() * 53);
-
-      this.drawGrass(g, x, y, 0x46683a);
-    }
-
-    // Rocks
-    const rocks = [
-      [26, 185, 1],
-      [769, 176, 1],
-      [58, 393, 1.2],
-      [736, 405, 1.3],
-      [386, 400, 0.9]
-    ];
-
-    for (const [x, y, s] of rocks) {
-      this.drawRock(g, x, y, s);
-    }
-
-    // Flowers
-    const flowers = [
-      [95, 400],
-      [700, 383],
-      [30, 106],
-      [766, 95]
-    ];
-
-    for (const [x, y] of flowers) {
-      g.fillStyle(0x6c8c44);
-      g.fillRect(x - 2, y - 8, 4, 14);
-
-      g.fillStyle(0xffdb89);
-      g.fillRect(x - 4, y - 12, 9, 9);
-
-      g.fillStyle(0xffffff);
-      g.fillRect(x - 1, y - 9, 3, 3);
-    }
-
-    // Ground strip
-    g.fillStyle(0x432a20, 0.45);
-    g.fillRect(0, 364, 800, 14);
-
-    g.lineStyle(2, 0x895a39, 0.55);
-    g.lineBetween(0, 376, 800, 376);
+    drawCareForest(this);
   }
 
-  drawGrass(g, x, y, color) {
-    g.fillStyle(color);
-
-    g.fillTriangle(
-      x, y,
-      x - 9, y - 11,
-      x - 3, y
-    );
-
-    g.fillTriangle(
-      x, y,
-      x + 3, y - 16,
-      x + 5, y
-    );
-
-    g.fillTriangle(
-      x, y,
-      x + 12, y - 9,
-      x + 7, y
-    );
-  }
-
-  drawRock(g, x, y, scale) {
-    g.fillStyle(0x302923);
-    g.fillEllipse(
-      x, y + 5 * scale,
-      38 * scale, 11 * scale
-    );
-
-    g.fillStyle(0x806e5f);
-    g.fillEllipse(
-      x, y,
-      33 * scale, 19 * scale
-    );
-
-    g.fillStyle(0xa08a76);
-    g.fillEllipse(
-      x - 5 * scale,
-      y - 4 * scale,
-      17 * scale,
-      6 * scale
-    );
-  }
-
-  drawFrame(
-    x, y, width, height,
-    fill = C.parchment
-  ) {
-    const g = this.add.graphics();
-
-    g.fillStyle(C.outline);
-    g.fillRoundedRect(
-      x - 4, y - 4,
-      width + 8, height + 8, 7
-    );
-
-    g.fillStyle(C.woodLight);
-    g.fillRoundedRect(
-      x - 2, y - 2,
-      width + 4, height + 4, 5
-    );
-
-    g.fillStyle(C.wood);
-    g.fillRoundedRect(
-      x + 2, y + 2,
-      width - 4, height - 4, 4
-    );
-
-    g.fillStyle(fill);
-    g.fillRoundedRect(
-      x + 6, y + 6,
-      width - 12, height - 12, 3
-    );
-
-    if (this.drawingPlant) {
-      this.track(g);
-    }
-
+  drawFrame(x, y, width, height) {
+    const g = carePanel(this, x, y, width, height);
+    if (this.drawingPlant) this.track(g);
     return g;
   }
 
   drawHeader() {
-    this.drawFrame(
-      195, 13, 410, 55, C.wood
-    );
+    this.drawFrame(195, 13, 410, 55);
 
     this.add.text(
       400, 40,
       "PLANT STORAGE",
       {
-        fontFamily: "monospace",
+        fontFamily: FONT,
         fontSize: "27px",
-        fontStyle: "bold",
-        color: "#fff0d3",
-        stroke: "#422619",
-        strokeThickness: 5,
+        fontStyle: "normal",
+        color: "#f6ecd2",
+        stroke: "#0d1020",
+        strokeThickness: 0,
       }
     ).setOrigin(0.5);
 
-    this.drawFrame(
-      669, 19, 110, 42, C.wood
-    );
+    this.drawFrame(669, 19, 110, 42);
 
     const back = this.add.text(
       724, 40,
       "< BACK",
       {
-        fontFamily: "monospace",
-        fontSize: "17px",
-        fontStyle: "bold",
-        color: "#fff0d3",
+        fontFamily: FONT,
+        fontSize: "16px",
+        fontStyle: "normal",
+        color: "#f6ecd2",
       }
     )
       .setOrigin(0.5)
@@ -416,106 +244,26 @@ export default class StorageScene extends Phaser.Scene {
     });
 
     back.on("pointerout", () => {
-      back.setColor("#fff0d3");
+      back.setColor("#f6ecd2");
     });
 
+    hoverControl(this, back, { x: 669, y: 19, width: 110, height: 42 }, false);
     back.on("pointerdown", () => {
-      const navigate = this.game.registry.get("navigate");
-      if (navigate) navigate("/");
-      else window.location.assign("/");
+      this.registry.get("audio")?.sfx("ui_select");
+      this.registry.get("navigate")("/");
     });
   }
 
   drawCloud(centerX, centerY, message, index) {
-    const container = this.track(
-      this.add.container(centerX, centerY)
-    );
-
-    const g = this.add.graphics();
-
-    const outline = 0x35241e;
-    const cloudColor = 0xfff1d8;
-
-    const circles = [
-      [-85, 0, 27],
-      [-65, -20, 31],
-      [-30, -28, 34],
-      [10, -30, 35],
-      [48, -24, 33],
-      [80, -7, 29],
-      [65, 15, 28],
-      [25, 22, 32],
-      [-20, 23, 30],
-      [-65, 17, 26]
-    ];
-
-    // Cloud outline
-    g.fillStyle(outline);
-
-    circles.forEach(([x, y, r]) => {
-      g.fillCircle(x, y, r + 3);
-    });
-
-    // Cream cloud
-    g.fillStyle(cloudColor);
-
-    circles.forEach(([x, y, r]) => {
-      g.fillCircle(x, y, r);
-    });
-
-    // Thought cloud tail
-    g.fillStyle(outline);
-    g.fillTriangle(
-      -5, 32,
-      18, 32,
-      5, 49
-    );
-
-    g.fillStyle(cloudColor);
-    g.fillTriangle(
-      -3, 29,
-      15, 29,
-      5, 43
-    );
-
-    container.add(g);
-
-    const text = this.add.text(
-      0, -3, message,
-      {
-        fontFamily: "monospace",
-        fontSize: "14px",
-        fontStyle: "bold",
-        color: "#35241e",
-        align: "center",
-        wordWrap: { width: 175 }
-      }
-    ).setOrigin(0.5);
-
-    container.add(text);
-
-    // Floating animation
-    this.tweens.add({
-      targets: container,
-      y: centerY - 5,
-      duration: 900 + index * 150,
-      ease: "Sine.easeInOut",
-      yoyo: true,
-      repeat: -1
-    });
-
-    // Gentle wobble
-    this.tweens.add({
-      targets: container,
-      angle: index === 0 ? 2 : -2,
-      scaleX: 1.025,
-      scaleY: 0.975,
-      duration: 420,
-      ease: "Sine.easeInOut",
-      yoyo: true,
-      repeat: -1
-    });
-
+    const container = this.track(this.add.container(centerX, centerY));
+    const panel = carePanel(this, -122, -24, 244, 48);
+    container.add(panel);
+    container.add(this.add.text(0, 0, message, {
+      fontFamily: FONT, fontSize: "16px", color: "#f6ecd2", align: "center",
+      wordWrap: { width: 224 }
+    }).setOrigin(0.5));
+    this.tweens.add({ targets: container, y: centerY - 4,
+      duration: 1800 + index * 150, ease: "Sine.easeInOut", yoyo: true, repeat: -1 });
     return container;
   }
 
@@ -538,6 +286,7 @@ export default class StorageScene extends Phaser.Scene {
 
   addPlant(plant, centerX, index) {
     this.drawingPlant = true;
+    this.track(plantBackdrop(this, centerX, 223, 220, 160));
 
     const cardX = centerX - 138;
     const cardY = 295;
@@ -547,7 +296,7 @@ export default class StorageScene extends Phaser.Scene {
     );
 
     const image = IMAGE_BY_SPECIES[
-      species.toLowerCase()
+      species.trim().toLowerCase()
     ];
 
     const message = this.getMessage(plant);
@@ -562,28 +311,26 @@ export default class StorageScene extends Phaser.Scene {
       sprite = this.track(
         this.add.image(
           centerX, 228, image
-        ).setScale(1.75)
+        ).setScale(144 / this.textures.get(image).getSourceImage().height)
       );
 
       sprite.setInteractive({
         useHandCursor: true
       });
 
+      const hoverGlow = this.track(hoverControl(this, sprite, { x: centerX - 110, y: 143, width: 220, height: 145 }));
+      this.plantLayer.moveBelow(hoverGlow, sprite);
       sprite.on("pointerdown", () => {
         this.game.registry.set(
           "selectedPlantId",
           plant.plantId
         );
 
-        const target = image === "cast-iron-plant"
-          ? "CastIronScene"
-          : "MonsteraScene";
+        const path = image === "cast-iron-plant"
+          ? "/cast_iron"
+          : "/monstera";
 
-        if (this.scene.manager.keys[target]) {
-          this.scene.start(target, {
-            plantId: plant.plantId
-          });
-        }
+        this.registry.get("navigate")(path);
       });
     } else {
       sprite = this.track(
@@ -611,9 +358,9 @@ export default class StorageScene extends Phaser.Scene {
         centerX + 68, 246,
         "♪",
         {
-          fontFamily: "monospace",
+          fontFamily: FONT,
           fontSize: "18px",
-          color: "#ffcc72",
+          color: "#ffd77a",
         }
       ).setOrigin(0.5)
     );
@@ -634,28 +381,28 @@ export default class StorageScene extends Phaser.Scene {
 
     this.track(
       this.add.text(
-        centerX,
-        cardY + 20,
-        species.toUpperCase(),
+        cardX + 20,
+        cardY + 19,
+        species.toUpperCase().replace(" DELICIOSA", ""),
         {
-          fontFamily: "monospace",
-          fontSize: "14px",
-          fontStyle: "bold",
+          fontFamily: FONT,
+          fontSize: "16px",
+          fontStyle: "normal",
           color: C.ink,
         }
-      ).setOrigin(0.5)
+      ).setOrigin(0, 0.5)
     );
 
     this.track(
       this.add.text(
-        cardX + 19,
-        cardY + 41,
+        cardX + 207,
+        cardY + 11,
         `LV. ${plant.level ?? "?"}`,
         {
-          fontFamily: "monospace",
-          fontSize: "12px",
-          fontStyle: "bold",
-          color: "#76523a",
+          fontFamily: FONT,
+          fontSize: "16px",
+          fontStyle: "normal",
+          color: "#ffd77a",
         }
       )
     );
@@ -720,9 +467,9 @@ export default class StorageScene extends Phaser.Scene {
       this.add.text(
         x, y - 2, label,
         {
-          fontFamily: "monospace",
-          fontSize: "11px",
-          fontStyle: "bold",
+          fontFamily: FONT,
+          fontSize: "16px",
+          fontStyle: "normal",
           color: C.ink,
         }
       )
@@ -732,13 +479,13 @@ export default class StorageScene extends Phaser.Scene {
       this.add.graphics()
     );
 
-    g.fillStyle(0x6e4b38);
+    g.fillStyle(0xbb9df7);
     g.fillRect(
       bx - 1, y - 1,
       barWidth + 2, 12
     );
 
-    g.fillStyle(0xe4c9a4);
+    g.fillStyle(0x1b2440);
     g.fillRect(
       bx, y, barWidth, 10
     );
@@ -773,8 +520,8 @@ export default class StorageScene extends Phaser.Scene {
         y - 2,
         display,
         {
-          fontFamily: "monospace",
-          fontSize: "10px",
+          fontFamily: FONT,
+          fontSize: "16px",
           color: C.ink,
         }
       )

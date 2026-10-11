@@ -16,10 +16,12 @@ TOPIC_CMD_PUMP = "incube/cmd/pump/{plant}"
 TOPIC_STATUS_ESP32 = "incube/status/esp32"
 TOPIC_DEBUG_BOSS = "incube/debug/boss"
 
-# Soil calibration. PLACEHOLDERS until Role 1 writes real values in the shared notes.
-# Works whether the sensor reads high or low when dry: percent 0 = dry, 100 = wet.
-SOIL_RAW_DRY = 3000
-SOIL_RAW_WET = 1200
+# Soil calibration, from firmware/calibration.md (both sensors agree within about 25 counts).
+# 0% = the probe in air (about 3437 and 3430), 100% = the probe in water to its line (about 1471
+# and 1447). Works whether the sensor reads high or low when dry. Still provisional: redo with the
+# real pots (dry soil and freshly watered soil) and put the new numbers here and in calibration.md.
+SOIL_RAW_DRY = 3435
+SOIL_RAW_WET = 1460
 SOIL_DRY_THRESHOLD_PCT = 50   # below this for N readings in a row summons a boss
 SOIL_WET_THRESHOLD_PCT = 55   # above this dismisses a boss (hysteresis)
 SOIL_DRY_READINGS_N = 5

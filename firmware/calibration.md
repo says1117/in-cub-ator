@@ -25,3 +25,7 @@ Between 2000 and 2800 nothing changes (hysteresis), so a pot does not flip back 
 - Readings drift a little while water wicks up the probe, so margins are wide.
 - Keep the probe at the marked line. Water above the line can push the reading far too low and can damage the sensor.
 - Both sensors read about 3430 dry, so they are interchangeable for the dry end.
+
+## How the game uses these numbers
+
+The server (`server/config.py`) turns each raw reading into 0 to 100%: `SOIL_RAW_DRY = 3435` is 0% (probe in air) and `SOIL_RAW_WET = 1460` is 100% (probe in water). A plant is thirsty below 50%, which is a raw reading above about 2450. The firmware's own DRY_THRESHOLD and WET_THRESHOLD above are not used by the game. When this table is redone with the real pots, update both places.

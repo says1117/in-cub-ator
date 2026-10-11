@@ -2,3 +2,5 @@
 // The server runs on the machine that served this page (the Jetson, or this laptop in dev).
 export const SERVER_WS_URL = `ws://${window.location.hostname || "localhost"}:8765`;
 export const RECONNECT_MS = 2000;
+// Live camera frames for the /footage page (server/footage.py).
+export const FOOTAGE_URL = `http://${window.location.hostname || "localhost"}:8090`;

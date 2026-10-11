@@ -51,10 +51,3 @@ def water_decision(plant: str, soil_pct: float, now: float, pumps: Iterable = ()
         return None, BUDGET
     return Command(C.TOPIC_CMD_PUMP.format(plant=plant), str(ms)), None
 
-
-def water_reward(plant: str, soil_pct: float, now: float, last_reward_at: float,
-                 demo: bool = False, tier: int = 1) -> Optional[Command]:
-    """The older single-gap form, kept for callers that only know the last reward time."""
-    pumps = [] if last_reward_at == float("-inf") else [(last_reward_at, 0)]
-    cmd, _ = water_decision(plant, soil_pct, now, pumps, fresh=True, demo=demo, tier=tier)
-    return cmd

@@ -53,9 +53,6 @@ def show_rate_for_tier(tier: int) -> float:
     return C.INTENT_SHOW_RATE[min(max(tier, 1), max(C.INTENT_SHOW_RATE))]
 
 
-BOSS_STATS = boss_for_tier(1)
-
-
 @dataclass(frozen=True)
 class Battle:
     creature: Stats
@@ -115,10 +112,11 @@ def skill_power(b: Battle) -> int:
     return round_half_up(b.creature.atk * skill.get("damage_factor", 0) * k)
 
 
-def start(creature: Stats, boss: Stats = BOSS_STATS, plant: str = "", bench: tuple = (),
+def start(creature: Stats, boss: Optional[Stats] = None, plant: str = "", bench: tuple = (),
           show_rate: float = 0.0) -> Battle:
-    """A new fight. Roll the boss's first move with roll_intent() before the first turn
-    (play_turn does it if you forget)."""
+    """A new fight (against the tier 1 boss unless told otherwise). Roll the boss's first move with
+    roll_intent() before the first turn (play_turn does it if you forget)."""
+    boss = boss or boss_for_tier(1)
     return Battle(creature, boss, creature.hp, boss.hp, plant=plant, bench=tuple(bench),
                   show_rate=show_rate)
 

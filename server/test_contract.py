@@ -172,7 +172,7 @@ class TurnContractTests(unittest.TestCase):
         during = t + C.BATTLE_TURN_SECONDS - 0.1
         snap = e.snapshot(during)["battle"]
         self.assertFalse(snap["accepting_move"])
-        self.assertFalse(snap["awaiting_move"])
+        self.assertNotIn("awaiting_move", snap)
         self.assertIsNone(snap["move_deadline_in_ms"])
         e.on_player_move("guard", during, 1)                   # sent anyway: dropped, not queued
         self.assertEqual(e.battle.turn, 1)
@@ -220,12 +220,34 @@ class TurnContractTests(unittest.TestCase):
         # idle: the next turn comes after AUTO_TURN_SECONDS, not the full player timeout
         e.tick(deadline + 0.01 + C.AUTO_TURN_SECONDS + C.SWAP_EXTRA_SECONDS + 3 * C.UNLEASH_EXTRA_SECONDS_PER_BLOOM + 0.01)
         self.assertEqual(e.battle.turn, 2)
-        # a move message that is rejected (wrong turn) still wakes it
+        # junk is not a person: an invalid move name does not wake it
         now = e.move_ready_at - 0.5
+        for junk in ("", "dance", "ATTACK"):
+            e.on_player_move(junk, now, e.battle.turn)
+        self.assertTrue(e.idle)
+        # a valid move with a wrong turn (here 99) wakes it and is dropped
         e.on_player_move("attack", now, 99)
         self.assertFalse(e.idle)
+        self.assertEqual(e.battle.turn, 2)
         self.assertGreaterEqual(e.move_deadline, now + C.PLAYER_MOVE_TIMEOUT_SECONDS)
         self.assertFalse(e.snapshot(now)["battle"]["autopilot"])
+
+    def test_take_over_press_with_turn_minus_one_during_the_lockout(self):
+        """While its buttons are locked the client sends turn -1: "I'm here, this is not a move"."""
+        e, t = battle_engine()
+        e.tick(e.move_deadline + 0.01)                         # times out: autopilot
+        self.assertTrue(e.idle)
+        during = e.move_ready_at - 0.3                          # inside the lockout
+        message = protocol.parse_client_message('{"action":"move","move":"guard","turn":-1}')
+        main.route(e, message[0], message[1], during)
+        self.assertFalse(e.idle)                                # taken over
+        self.assertEqual(e.battle.turn, 1)                      # but nothing was played
+        self.assertFalse(e.snapshot(during)["battle"]["autopilot"])
+        self.assertGreaterEqual(e.move_deadline, during + C.PLAYER_MOVE_TIMEOUT_SECONDS)
+        e.tick(e.move_ready_at + C.AUTO_TURN_SECONDS)           # no autopilot turn at the fast pace
+        self.assertEqual(e.battle.turn, 1)
+        main.route(e, message[0], json.dumps({"move": "guard", "turn": -1}), e.move_ready_at + 0.1)
+        self.assertEqual(e.battle.turn, 1)                      # -1 never plays, even when unlocked
 
     def test_no_screen_means_autopilot_at_the_auto_pace(self):
         e, t = battle_engine(manual=False)
@@ -311,6 +333,27 @@ class ResultTests(unittest.TestCase):
         self.assertEqual((result["outcome"], result["water_ms"], result["blocked"]), ("won", 0, R.PUMP_RESTING))
         self.assertEqual(result["fight"], e.fight["id"])
 
+    def test_no_demo_while_a_result_is_on_screen(self):
+        for lose in (False, True):
+            e, t = battle_engine()
+            if lose:
+                e.battle = replace(e.battle, creature_hp=1, bench=(), boss_next="attack", intent=None)
+                e.on_player_move("special", t, 0)
+                self.assertEqual(e.game.mode, S.COOLDOWN)       # cooldown, but the fight is still shown
+            else:
+                win_now(e, t)
+                self.assertEqual(e.game.mode, S.REWARD)
+            self.assertFalse(e.snapshot(t)["demo_available"])
+            fid = e.fight["id"]
+            e.on_demo_boss(t + 0.5, "B")
+            self.assertEqual(e.fight["id"], fid)                # the result was not cut short
+            self.assertNotEqual(e.game.mode, S.BOSS)
+            end = t + max(C.RESULT_HOLD_SECONDS, C.REWARD_DISPLAY_SECONDS) + 0.01
+            e.tick(end)
+            self.assertTrue(e.snapshot(end)["demo_available"])
+            e.on_demo_boss(end, "B")
+            self.assertEqual(e.game.mode, S.BOSS)
+
     def test_a_dismissed_fight_says_so(self):
         e, t = battle_engine()
         e.on_esp_status("offline", t)
@@ -341,7 +384,7 @@ class ResultTests(unittest.TestCase):
 class SnapshotTests(unittest.TestCase):
     BATTLE_KEYS = {"id", "turn", "plant", "team", "creature", "creature_hp", "creature_max_hp", "boss_hp",
                    "intent", "blooms", "blooms_max", "skill", "last_move", "manual", "autopilot",
-                   "accepting_move", "awaiting_move", "move_deadline_in_ms", "over"}
+                   "accepting_move", "move_deadline_in_ms", "over"}
 
     def test_the_secret_next_move_is_never_serialized(self):
         for seed in range(40):
@@ -585,6 +628,33 @@ class PersistenceTests(unittest.TestCase):
         e2.set_today("2026-10-12")
         self.assertEqual(e2.snapshot()["stats"]["fights"], 0)
 
+    def test_a_failed_save_keeps_the_pump_until_a_save_succeeds(self):
+        e, t = battle_engine()
+        self.assertEqual(len(win_now(e, t)), 1)
+        self.assertTrue(e.dirty)
+        with mock.patch("persist.save", side_effect=OSError("disk full")):
+            self.assertFalse(main.save_state(e, self.path, t, 1000.0))
+        self.assertTrue(e.dirty)                                # still to be written
+        self.assertTrue(main.save_state(e, self.path, t + 0.2, 1000.2))
+        self.assertFalse(e.dirty)
+        self.assertEqual(persist.load(self.path, 1001.0)["pumps"]["A"][0][1], e.pumps["A"][0][1])
+
+    def test_memory_only_runs_never_write(self):
+        e, t = battle_engine()
+        win_now(e, t)
+        with mock.patch("persist.save") as save:
+            self.assertTrue(main.save_state(e, "", t, 0.0))
+        save.assert_not_called()
+        self.assertFalse(e.dirty)
+
+    def test_simulated_runs_never_touch_the_production_log(self):
+        production = main.state_path_for([])
+        self.assertTrue(production.endswith(os.path.join("var", "pump_log.json")))
+        self.assertEqual(main.state_path_for(["--sim"]), "")
+        self.assertEqual(main.state_path_for(["--offline"]), "")
+        self.assertEqual(main.state_path_for(["--sim", "--state=/tmp/x.json"]), "/tmp/x.json")
+        self.assertEqual(main.state_path_for(["--ws-port=8821"]), production)
+
     def test_the_engine_marks_itself_dirty_when_something_must_be_saved(self):
         e, t = battle_engine()
         e.dirty = False
@@ -640,8 +710,9 @@ class ProtocolTests(unittest.TestCase):
         parse = protocol.parse_client_message
         self.assertEqual(parse('{"action":"demo_boss"}'), (protocol.DEMO_TOPIC, ""))
         topic, payload = parse('{"action":"move","move":"guard","turn":2}')
-        self.assertEqual((topic, protocol.parse_move(payload)), (protocol.MOVE_TOPIC, ("guard", 2, True)))
-        self.assertEqual(protocol.parse_move(parse('{"action":"move","move":"guard"}')[1]), ("guard", None, False))
+        self.assertEqual((topic, protocol.parse_move(payload)), (protocol.MOVE_TOPIC, ("guard", 2)))
+        self.assertEqual(protocol.parse_move(parse('{"action":"move","move":"guard"}')[1]), ("guard", None))
+        self.assertEqual(protocol.parse_move(parse('{"action":"move","move":"guard","turn":-1}')[1]), ("guard", -1))
         self.assertEqual(protocol.parse_move(parse('{"action":"move","move":"guard","turn":"2"}')[1])[1], -1)
         self.assertEqual(protocol.parse_move(parse('{"action":"move","move":7}')[1])[0], "")
         for junk in ("", "nope", "[1,2]", "42", '"move"', "null", '{"action":5}', '{"action":"dance"}', b"\xff"):

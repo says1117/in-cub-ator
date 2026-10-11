@@ -91,8 +91,17 @@ class GameEngine:
         pool = with_creature if len(with_creature) == 1 else list(C.PLANTS)
         return min(pool, key=lambda p: self.soil_pct[p])
 
+    def demo_available(self) -> bool:
+        """A demo boss can be called while walking or cooling down, but not while a finished fight
+        is still on screen (result hold), so a press can never cut a result short."""
+        return self.game.mode in (S.WALKING, S.COOLDOWN) and self.battle is None
+
     def on_demo_boss(self, now: float, plant: Optional[str] = None) -> list:
         """Demo button (WebSocket) or the optional laptop topic."""
+        if not self.demo_available():
+            log.info("demo boss ignored, mode is %s%s", self.game.mode,
+                     " (result on screen)" if self.battle is not None else "")
+            return self.tick(now)
         plant = plant or self.pick_demo_plant()
         before = self.game.mode
         tier = max(1, S.tier_for(self.soil_pct[plant]))
@@ -103,13 +112,14 @@ class GameEngine:
 
     def on_player_move(self, move: str, now: float, turn: Optional[int] = None) -> list:
         """A move from a screen: attack, guard, special or skill, tagged with the turn it answers.
-        Any move message wakes the game from idle. It plays only if the server is accepting a
-        move right now and the turn tag (when given) matches; otherwise it is dropped."""
-        if not self._fight_active() or not self.manual:
+        A valid move name always wakes the game from idle, even when the move itself is dropped
+        (wrong turn, or the lockout). The client uses turn -1 for exactly that: "I'm here, take
+        over", while its buttons are still locked. Only a valid, current, unlocked move plays."""
+        if not self._fight_active() or not self.manual or move not in B.PLAYER_MOVES:
             return []
         self.idle = False
         self.move_deadline = max(self.move_deadline, now + C.PLAYER_MOVE_TIMEOUT_SECONDS)
-        if move not in B.PLAYER_MOVES or now < self.move_ready_at:
+        if now < self.move_ready_at:
             return []
         if turn is not None and turn != self.battle.turn:
             return []
@@ -343,7 +353,6 @@ class GameEngine:
             "manual": self.manual,
             "autopilot": not over and (self.idle or not self.manual),
             "accepting_move": accepting,
-            "awaiting_move": accepting,
             "move_deadline_in_ms": max(0, int(round((self.move_deadline - now) * 1000))) if accepting else None,
             "over": over,
         }
@@ -378,7 +387,7 @@ class GameEngine:
             "health": int(round(self.health)),
             "condition": self.condition(),
             "tier": self.moisture_tier(),
-            "demo_available": g.mode in (S.WALKING, S.COOLDOWN),
+            "demo_available": self.demo_available(),
             "boss": self._boss_snapshot(),
             "battle": None if b is None else self._battle_snapshot(b, now),
             "result": None if self.result is None else dict(self.result),

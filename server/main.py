@@ -1,8 +1,9 @@
 """Run the game server: python main.py
 
   --sim             made-up soil moisture for both plants instead of real sensors
-  --offline         no Mosquitto needed: an in-process loopback replaces the broker (implies --sim).
-                    The pump log is kept in memory only, unless --state is given.
+  --offline         no Mosquitto needed: an in-process loopback replaces the broker (implies --sim)
+                    With --sim or --offline the pump log is kept in memory only, unless --state is
+                    given: a simulated run never touches the production pump log.
   --ws-port=N       serve the WebSocket on port N instead of config.WS_PORT
   --seed=N          fixed random seed for the game and the simulated soil (repeatable runs)
   --state=PATH      pump log / stats file (default: server/var/pump_log.json)
@@ -44,7 +45,7 @@ def _route(engine, topic, payload, now):
     if topic == C.TOPIC_STATUS_ESP32:
         engine.on_esp_status(payload, now)
     elif topic == protocol.MOVE_TOPIC:
-        move, turn, _ = protocol.parse_move(payload)
+        move, turn = protocol.parse_move(payload)
         return engine.on_player_move(move, now, turn)
     elif topic == protocol.DEMO_TOPIC:
         return engine.on_demo_boss(now)
@@ -72,6 +73,34 @@ def published(info) -> bool:
     return info is None or getattr(info, "rc", 0) == 0
 
 
+def state_path_for(argv) -> str:
+    """Where the pump log lives: --state=PATH, else the production file, except that a simulated
+    run (--sim or --offline) keeps it in memory ("") so it can never touch the real log."""
+    for arg in argv:
+        if arg.startswith("--state="):
+            return arg.split("=", 1)[1]
+    if "--sim" in argv or "--offline" in argv:
+        return ""
+    return os.path.join(HERE, C.PUMP_LOG_FILE)
+
+
+def save_state(engine: GameEngine, path: str, now: float, wall: float) -> bool:
+    """Write the pump log if it changed. `dirty` is cleared only after a successful save, so a
+    failed write is retried on the next tick and a pump that really happened is never forgotten.
+    Returns False when the save failed."""
+    if not engine.dirty:
+        return True
+    if not path:
+        engine.dirty = False      # memory only
+        return True
+    try:
+        persist.save(path, engine.persisted(now), wall)
+    except OSError:
+        return False
+    engine.dirty = False
+    return True
+
+
 def _flag_value(name: str):
     for arg in sys.argv[1:]:
         if arg.startswith(name + "="):
@@ -95,9 +124,8 @@ async def main():
     else:
         client = mqtt_io.connect(loop, queue)
 
-    state_path = _flag_value("--state")
-    if state_path is None and not offline:
-        state_path = os.path.join(HERE, C.PUMP_LOG_FILE)
+    simulated = offline or "--sim" in sys.argv
+    state_path = state_path_for(sys.argv[1:])
     if state_path:
         data = persist.load(state_path, time.time())
         engine.restore(data, time.monotonic())
@@ -107,7 +135,7 @@ async def main():
         log.info("pump log kept in memory only")
 
     sim = None
-    if "--sim" in sys.argv or offline:
+    if simulated:
         # TEMPORARY: made-up moisture for both plants instead of real sensors
         sim = {p: MoistureSim(rng=random.Random(rng.random()), start=rng.uniform(*C.SIM_START_PCT[p]))
                for p in C.PLANTS}
@@ -125,15 +153,15 @@ async def main():
             if cmd.topic == C.TOPIC_CMD_PUMP.format(plant=p):
                 sim[p].watered(int(cmd.payload))
 
+    save_failing = [False]
+
     def save_if_dirty(now):
-        if not (engine.dirty and state_path):
-            engine.dirty = False
-            return
-        engine.dirty = False
-        try:
-            persist.save(state_path, engine.persisted(now), time.time())
-        except OSError:
-            log.exception("could not save the pump log to %s", state_path)
+        ok = save_state(engine, state_path, now, time.time())
+        if not ok and not save_failing[0]:
+            log.error("could not save the pump log to %s, retrying every tick", state_path)
+        elif ok and save_failing[0]:
+            log.info("pump log saved again")
+        save_failing[0] = not ok
 
     async def ticker():
         while True:

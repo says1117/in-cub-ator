@@ -42,8 +42,9 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def parse_move(payload) -> Tuple[str, Optional[int], bool]:
-    """route() payload -> (move, turn, turn_given). A bare move string is accepted too."""
+def parse_move(payload) -> Tuple[str, Optional[int]]:
+    """route() payload -> (move, turn). turn None = untagged; -1 = "I'm here, but this is not a
+    move for any turn" (never matches). A bare move string is accepted too."""
     try:
         data = json.loads(payload) if isinstance(payload, str) else payload
     except ValueError:
@@ -51,8 +52,8 @@ def parse_move(payload) -> Tuple[str, Optional[int], bool]:
     if isinstance(data, dict):
         move = data.get("move") if isinstance(data.get("move"), str) else ""
         turn = data.get("turn")
-        return move, (turn if _is_int(turn) else None), turn is not None
-    return (payload.strip() if isinstance(payload, str) else ""), None, False
+        return move, (turn if _is_int(turn) else None)
+    return (payload.strip() if isinstance(payload, str) else ""), None
 
 
 def stable(snapshot: dict) -> dict:

@@ -108,34 +108,39 @@ class StateMachineTests(unittest.TestCase):
 
 
 class RewardTests(unittest.TestCase):
+    """The basic water rules through rewards.water_decision (the full set is in test_contract)."""
+
+    def decide(self, pct, now=1000.0, last=None, demo=False, tier=1):
+        pumps = [] if last is None else [(last, 2000)]
+        return R.water_decision("A", pct, now, pumps, fresh=True, demo=demo, tier=tier)
+
     def test_dry_soil_gets_bounded_pump(self):
-        cmd = R.water_reward("A", 10.0, 1000.0, float("-inf"))
-        self.assertEqual(cmd.topic, "incube/cmd/pump/A")
+        cmd, blocked = self.decide(10.0)
+        self.assertEqual((cmd.topic, blocked), ("incube/cmd/pump/A", None))
         self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
 
     def test_wet_soil_gets_nothing(self):
-        self.assertIsNone(R.water_reward("A", C.SOIL_WET_THRESHOLD_PCT, 1000.0, float("-inf")))
+        self.assertEqual(self.decide(C.SOIL_WET_THRESHOLD_PCT), (None, R.SOIL_WET))
 
     def test_demo_may_water_wet_soil_but_gap_and_cap_still_apply(self):
-        cmd = R.water_reward("A", 99.0, 1000.0, float("-inf"), demo=True)
+        cmd, _ = self.decide(99.0, demo=True)
         self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
-        self.assertIsNone(R.water_reward("A", 99.0, 100.0, 100.0 - 1, demo=True))
+        self.assertEqual(self.decide(99.0, now=100.0, last=99.0, demo=True), (None, R.PUMP_RESTING))
 
     def test_one_reward_per_cooldown(self):
-        self.assertIsNone(R.water_reward("A", 10.0, 100.0, 100.0 - 1))
+        self.assertEqual(self.decide(10.0, now=100.0, last=99.0), (None, R.PUMP_RESTING))
 
     def test_cap_holds_even_if_config_is_too_big(self):
         old = dict(C.PUMP_MS_BY_TIER)
         C.PUMP_MS_BY_TIER = {t: C.PUMP_MAX_MS * 10 for t in (1, 2, 3)}
         try:
             for tier in (1, 2, 3):
-                cmd = R.water_reward("A", 10.0, 1000.0, float("-inf"), tier=tier)
-                self.assertEqual(int(cmd.payload), C.PUMP_MAX_MS)
+                self.assertEqual(int(self.decide(10.0, tier=tier)[0].payload), C.PUMP_MAX_MS)
         finally:
             C.PUMP_MS_BY_TIER = old
 
     def test_harder_boss_gives_more_water_within_the_cap(self):
-        ms = [int(R.water_reward("A", 10.0, 1000.0, float("-inf"), tier=t).payload) for t in (1, 2, 3)]
+        ms = [int(self.decide(10.0, tier=t)[0].payload) for t in (1, 2, 3)]
         self.assertEqual(ms, sorted(ms))
         self.assertLess(ms[0], ms[2])
         self.assertTrue(all(m <= C.PUMP_MAX_MS for m in ms))

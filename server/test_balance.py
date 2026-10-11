@@ -8,7 +8,11 @@ Player models:
   spam1      always Attack (reported; soft target)
 
 The tier numbers in config.BOSS_TIERS were tuned on 20k fights per tier (see the table there);
-these tests use fewer fights to stay fast, with the bands well inside the measured rates."""
+these tests use fewer fights to stay fast.
+
+Welfare rule: nobody does worse than in the old game (before intents and blooms) by more than one
+point. Old rates: always-Attack 95.4 / 92.9 / 86.9 %, masher 99.4 / 99.2 / 96.3 %. The floors below
+are those minus 1, so any change that makes a plant thirstier for a casual player fails here."""
 import random
 import unittest
 
@@ -16,6 +20,10 @@ import battle as B
 import config as C
 
 FIGHTS = 3000    # per tier and player model
+
+OLD_SPAM1 = {1: 0.954, 2: 0.929, 3: 0.869}
+OLD_MASHER = {1: 0.994, 2: 0.992, 3: 0.963}
+FLOOR = 0.01     # at most one point worse than the old game
 
 
 def masher(b, rng):
@@ -71,9 +79,13 @@ def rates(tier, policy):
 
 
 class BalanceBandTests(unittest.TestCase):
-    def test_masher_bands(self):
-        for tier, band in {1: 0.96, 2: 0.93, 3: 0.88}.items():
-            self.assertGreaterEqual(rates(tier, masher)[0], band, f"tier {tier}")
+    def test_a_masher_does_no_worse_than_in_the_old_game(self):
+        for tier, old in OLD_MASHER.items():
+            self.assertGreaterEqual(rates(tier, masher)[0], old - FLOOR, f"tier {tier}")
+
+    def test_always_attack_does_no_worse_than_in_the_old_game(self):
+        for tier, old in OLD_SPAM1.items():
+            self.assertGreaterEqual(rates(tier, spam1)[0], old - FLOOR, f"tier {tier}")
 
     def test_autopilot_wins_almost_always(self):
         for tier in (1, 2, 3):
@@ -82,7 +94,7 @@ class BalanceBandTests(unittest.TestCase):
     def test_a_reader_wins_and_wins_fast(self):
         for tier in (1, 2, 3):
             win, turns = rates(tier, reader)
-            self.assertGreaterEqual(win, 0.995, f"tier {tier}")
+            self.assertGreaterEqual(win, 0.999, f"tier {tier}")
             self.assertGreaterEqual(turns, 4.5, f"tier {tier}")
             self.assertLessEqual(turns, 7.5, f"tier {tier}")
 
@@ -90,16 +102,13 @@ class BalanceBandTests(unittest.TestCase):
         for tier in (1, 2, 3):
             self.assertLessEqual(rates(tier, reader)[1], 0.6 * rates(tier, masher)[1], f"tier {tier}")
 
-    def test_soft_target_always_attack_still_wins_tier_3_mostly(self):
-        self.assertGreaterEqual(rates(3, spam1)[0], 0.80)
-
     def test_tiers_get_harder(self):
         hp = [B.boss_for_tier(t).hp for t in (1, 2, 3)]
         atk = [B.boss_for_tier(t).atk for t in (1, 2, 3)]
         self.assertEqual(hp, sorted(hp))
         self.assertEqual(atk, sorted(atk))
-        masher_wins = [rates(t, masher)[0] for t in (1, 2, 3)]
-        self.assertEqual(masher_wins, sorted(masher_wins, reverse=True))
+        spam_wins = [rates(t, spam1)[0] for t in (1, 2, 3)]
+        self.assertEqual(spam_wins, sorted(spam_wins, reverse=True))
         self.assertEqual([C.INTENT_SHOW_RATE[t] for t in (1, 2, 3)],
                          sorted(C.INTENT_SHOW_RATE.values(), reverse=True))
 

@@ -104,19 +104,20 @@ SKILLS = {
 # Moisture tiers: how dry the plant is decides how strong the boss is.
 #   moisture 50 and above: no boss
 #   under 50: tier 1   under 25: tier 2   0 (at or below 1): tier 3
-# Every tier must stay winnable, since a win waters the plant. Tuned against the band tests in
-# test_balance.py (20k seeded fights per tier, both lead orders):
-#   tier  masher  autopilot  reader (turns)  always-Attack
-#   1     98.7%   99.97%     100% (5.2)      90.8%
-#   2     96.8%   99.8%      100% (6.3)      86.1%
-#   3     95.8%   99.6%      100% (6.8)      82.5%
+# Every tier must stay winnable, since a win waters the plant. Rule: nobody does worse than in the
+# old game (always-Attack 95.4/92.9/86.9%, masher 99.4/99.2/96.3%), minus at most 1 point. Tuned
+# against test_balance.py (20k seeded fights per tier, both lead orders):
+#   tier  always-Attack  masher  autopilot  reader (turns)  reader/masher turns
+#   1     95.7%          99.75%  100%       100% (4.8)      0.36
+#   2     94.3%          99.6%   99.98%     100% (5.6)      0.40
+#   3     88.2%          98.3%   99.86%     100% (6.7)      0.43
 # masher = random move + skill whenever ready; reader = counters shown intents, cashes blooms in.
 TIER2_BELOW_PCT = 25
 TIER3_AT_OR_BELOW_PCT = 1
 BOSS_TIERS = {            # tier: (name, hp, attack)
-    1: ("Drought Chomper", 34, 7),
-    2: ("Parched Brute", 36, 8),
-    3: ("Desert Dragon", 38, 8),
+    1: ("Drought Chomper", 30, 6),
+    2: ("Parched Brute", 34, 6),
+    3: ("Desert Dragon", 38, 7),
 }
 
 # Overall health fades while the plant is dry and recovers when it is not (percent per second).

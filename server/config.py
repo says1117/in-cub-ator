@@ -37,11 +37,11 @@ ESP32_STALE_SECONDS = 30.0
 
 # Reward safety.
 # PUMP_MAX_MS is the hard cap on any pump command. It must never be higher than the firmware's
-# PUMP_MAX_RUN_MS (1000 ms, set by Role 1 after bench testing). Raise it only with Role 1.
-# A harder boss gives more water, but always inside the cap. Runs are short: 3 s flooded the pots.
-PUMP_MAX_MS = 1000
-PUMP_MS_PER_WIN = 400
-PUMP_MS_BY_TIER = {1: 400, 2: 600, 3: 800}
+# PUMP_MAX_RUN_MS (2000 ms, set by Role 1 after bench testing). Raise it only with Role 1.
+# A harder boss may give more water, but always inside the cap. Every tier is 2 s for now.
+PUMP_MAX_MS = 2000
+PUMP_MS_PER_WIN = 2000
+PUMP_MS_BY_TIER = {1: 2000, 2: 2000, 3: 2000}  # 2 s per win: under 1 s did not reach the pot
 REWARD_MIN_GAP_SECONDS = COOLDOWN_SECONDS
 
 # Demo button: the client sends {"action": "demo_boss"} over the WebSocket

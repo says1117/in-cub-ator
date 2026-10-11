@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # firmware/tests/integration/phase4_check.sh: Guided Phase 4 test of the real ESP32 against a broker (Jetson or a laptop). Owner: Role 1 (firmware).
 # Checks status, soil, pads, then pump safety (with you watching), then the offline last will.
-# Pump runs are capped at 1 s by the firmware (config.h PUMP_MAX_RUN_MS).
+# Pump runs are capped at 2 s by the firmware (config.h PUMP_MAX_RUN_MS).
 # Needs mosquitto_sub and mosquitto_pub (brew install mosquitto). Results are saved to a log file.
 #
 # Usage:   firmware/tests/integration/phase4_check.sh <broker address> [port]
@@ -172,9 +172,9 @@ else
   fi
 
   wait_seconds 35 "for the 30 s gap to pass"
-  say "  Sending 60000 to pump A (asks for 60 s; the firmware must cap it to 1 s). Time it."
+  say "  Sending 60000 to pump A (asks for 60 s; the firmware must cap it to 2 s). Time it."
   if pump A 60000; then
-    if ask_yes "Did pump A run about 1 second and stop (not 60)?"; then result PASS "long command capped"; else result FAIL "long command NOT capped"; fi
+    if ask_yes "Did pump A run about 2 seconds and stop (not 60)?"; then result PASS "long command capped"; else result FAIL "long command NOT capped"; fi
   else
     result FAIL "command could not be sent"
   fi

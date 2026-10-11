@@ -11,6 +11,8 @@ import { preloadHeroArt, ensureHeroBackTexture, setHeroWalking, setHeroMood, her
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 import { audio } from "../audio.js";
 import { addBattleForest } from "../theme/enchantedForest.js";
+import { createBadgeArt } from "../render/badgeArt.js";
+import { FONT } from "../ui/font.js";
 
 const ENEMY_HEIGHT = 250;   // how tall the tier 1 boss is drawn here, roots included: it stands far off, so much smaller than the team
 
@@ -961,7 +963,13 @@ export default class BossScene extends Phaser.Scene {
       this.time.delayedCall(won ? 900 : 300, () => {
         this.resultPanel = this.hud.result(won, won ? "The drought boss has retreated." : "No water this time.");
         audio.play(won ? "victory" : "defeat");
-        if (won) { this.confetti(); this.showReward(this.serverState && this.serverState.reward); }
+        if (won) {
+          this.confetti();
+          // A new badge is announced first; the watering message follows once the popup is gone.
+          const badge = this.serverState && this.serverState.last_badge;
+          if (badge) this.showBadgePopup(badge, () => this.showReward(this.serverState && this.serverState.reward));
+          else this.showReward(this.serverState && this.serverState.reward);
+        }
       });
     });
   }
@@ -994,20 +1002,51 @@ export default class BossScene extends Phaser.Scene {
     this.kit.burst(640, 120, { count: 70, colors: [0xffd867, 0x8dff9b, 0x7fd0ff, 0xff8f9c, 0xffffff], shape: "sq", speed: [200, 760], angle: Math.PI / 2, spread: 3.4, size: [8, 14], life: [1400, 2400], gravity: 420, drag: 0.97, spin: [-10, 10], stretch: 1.8 });
   }
 
+  // "Achievement unlocked": the badge this win earned, before the watering message.
+  showBadgePopup(badge, done) {
+    const POPUP_MS = 2800;
+    this.badgePopupUntil = this.time.now + POPUP_MS;
+    const box = this.add.container(400, 205).setDepth(5000).setScale(0.6).setAlpha(0);
+    const g = this.add.graphics();
+    g.fillStyle(0x0c1126, 0.94).fillRoundedRect(-170, -112, 340, 224, 10);
+    g.lineStyle(3, Phaser.Display.Color.HexStringToColor(badge.color).color, 1).strokeRoundedRect(-170, -112, 340, 224, 10);
+    const shine = this.add.graphics();
+    shine.fillStyle(0xffffff, 0.08);
+    for (let i = 0; i < 10; i++) shine.slice(0, -18, 160, Phaser.Math.DegToRad(i * 36), Phaser.Math.DegToRad(i * 36 + 14)).fillPath();
+    box.add([g, shine]);
+    const label = (y, text, size, color) => box.add(this.add.text(0, y, text, { fontFamily: FONT, fontSize: `${size}px`, color }).setOrigin(0.5));
+    label(-92, "ACHIEVEMENT UNLOCKED", 18, "#ffd77a");
+    const medal = createBadgeArt(this, 0, -24, badge, box, 0.2);
+    label(42, badge.name, 20, badge.color);
+    const boss = { chomper: "Drought Chomper", sporelings: "Sporeling Trio" }[badge.boss] || "the boss";
+    label(68, `Badge #${badge.number} · for defeating ${boss}`, 14, "#f6ecd2");
+    label(90, "See it in BADGES", 12, "#8f9bc4");
+    audio.play("charged");
+    this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 320, ease: "Back.easeOut" });
+    this.tweens.add({ targets: medal, scale: 1.15, duration: 520, delay: 120, ease: "Back.easeOut" });
+    this.tweens.add({ targets: shine, angle: 360, duration: POPUP_MS, ease: "Linear" });
+    this.kit.burst(400, 180, { count: 26, colors: [0xffffff, 0xffd867, 0xa5f5ff], shape: "star", speed: [120, 420], size: [6, 14], life: [500, 1000], gravity: -40, add: true });
+    this.time.delayedCall(POPUP_MS - 300, () => {
+      this.tweens.add({ targets: box, alpha: 0, scale: 0.85, duration: 300, onComplete: () => box.destroy() });
+    });
+    this.time.delayedCall(POPUP_MS, () => { this.badgePopupUntil = 0; done(); });
+  }
+
   showReward(reward) {
     if (!this.resultPanel) return;
-    const badge = this.serverState && this.serverState.last_badge;
-    const earned = badge ? ` · Badge: ${badge.name}` : "";
-    if (!reward) { this.resultPanel.setLine(`No water sent: the pot is wet, or the cube is offline.${earned}`); return; }
+    if (this.badgePopupUntil && this.time.now < this.badgePopupUntil) return;   // the badge popup is still up
+    if (!reward) { this.resultPanel.setLine("No water sent: the pot is wet, or the cube is offline."); return; }
     if (!this.waterPlayed) { this.waterPlayed = true; this.time.delayedCall(1300, () => audio.play("water", reward.size / 1000)); }
     const seconds = (reward.size / 1000).toFixed(1);
-    this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s${earned}`);
+    this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s`);
     this.resultPanel.reward(`Watering plant ${reward.plant}`, reward.size);
   }
 
   leaveWhenReady() {
     if (this.leaving) return;
-    const remaining = this.result ? 2500 - (this.time.now - this.resultShownAt) : 0;
+    // Stay long enough for the result, and for a badge popup and the watering message after it.
+    const stay = 2500 + (this.result === "win" && this.serverState && this.serverState.last_badge ? 2800 : 0);
+    const remaining = this.result ? stay - (this.time.now - this.resultShownAt) : 0;
     if (remaining > 0) {
       this.time.delayedCall(remaining, () => this.leaveWhenReady());
       return;

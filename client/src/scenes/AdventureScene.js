@@ -330,12 +330,6 @@ export default class AdventureScene extends Phaser.Scene {
       }
       if ((mode === "walking" || mode === "cooldown") && !this.inBattleScene) this.music("forest");
     }
-    // The existing plant API has no game-mode feed. Finish the visual entrance locally;
-    // combat still uses the original plant-backed rules in BossScene.
-    if (mode === "boss" && this.entrance.isDone() && !this.cutting) {
-      this.registry.set("serverState", { ...state, mode: "battle" });
-      this.cutToBattle();
-    }
     if (mode === "battle" && !this.inBattleScene && !this.cutting) {
       // Page opened mid-fight: go straight in. Otherwise wait for the arrival to finish.
       // On a slow machine the arrival can fall behind the server: once the fight has been on for a

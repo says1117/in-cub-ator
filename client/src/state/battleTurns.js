@@ -72,8 +72,12 @@ export function describeTurn(prev, move) {
 export function resultWords(result, plantName) {
   const who = plantName || `Plant ${result.plant}`;
   if (result.outcome === "won") {
+    if (result.simulated && result.increase > 0) {
+      return { title: "VICTORY!", line: `${who} received simulated water`,
+        detail: `+${result.increase}% moisture · now ${Math.round(result.soilMoisture)}% · updated through WebSocket`, water: true };
+    }
     if (result.water_ms > 0) {
-      return { title: "VICTORY!", line: `${who} is drinking`, detail: `Pump ${result.plant} · ${(result.water_ms / 1000).toFixed(1)} s of real water`, water: true };
+      return { title: "VICTORY!", line: `${who} · pump command sent`, detail: `Pump ${result.plant} · ${(result.water_ms / 1000).toFixed(1)} s requested · awaiting soil sensor`, water: true };
     }
     const why = {
       pump_resting: "It was watered moments ago, so the pump is resting.",

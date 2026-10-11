@@ -39,7 +39,7 @@ export async function waterPlant(scene) {
   const current = () => scene.sys.isActive() && scene.wateringGeneration === generation;
   scene.wateringBusy = true;
   scene.waterButton?.disableInteractive();
-  scene.wateringStatus.setText("Requesting simulated water…");
+  scene.wateringStatus.setText(scene.registry.get("serverState")?.simulatedWatering === false ? "Requesting pump water…" : "Requesting simulated water…");
   playCareSound(scene, "water");
   let request = pending.get(plantId);
   if (!request) {
@@ -50,9 +50,11 @@ export async function waterPlant(scene) {
   try {
     const result = await request;
     if (!current()) return;
-    scene.wateringStatus.setText(result.increase > 0
-      ? `Simulated water added +${result.increase}% · readings update through WebSocket`
-      : "Soil moisture is already 100%");
+    scene.wateringStatus.setText(result.simulated === false
+      ? result.commandSent ? "Pump command sent · waiting for soil sensor through WebSocket"
+        : `Water unavailable · ${result.blocked || "pump did not answer"}`
+      : result.increase > 0 ? `Simulated water added +${result.increase}% · readings update through WebSocket`
+        : "Soil moisture is already 100%");
     scene.particleBurst("💧", 0x4fc7fa);
     // The existing store subscription refreshes the moisture meter from WebSocket.
   } catch (error) {

@@ -171,7 +171,7 @@ export default class BossScene extends Phaser.Scene {
 
   fitEnemy(tier) {
     const art = bossArt(tier, this.bossId());
-    const height = ENEMY.height * Math.min(1.1, art.height / bossArt(1, this.bossId()).height);
+    const height = ENEMY.height * ({ 1: 1, 2: 1.08, 3: 1.16 }[tier] || 1);
     if (this.enemy.isBossRig) { this.enemy.setHeight(height); return; }
     const picture = this.textures.get(art.key).getSourceImage();
     this.enemy.setTexture(art.key).setDisplaySize(height * (picture.width / picture.height), height);
@@ -219,7 +219,7 @@ export default class BossScene extends Phaser.Scene {
 
   plantName(id, battle = this.state && this.state.battle) {
     const team = (battle && battle.team) || {};
-    return (team[id] && team[id].name) || PLANTS[id].name;
+    return (team[id] && team[id].name) || PLANTS[id]?.name || "Plant";
   }
 
   // ================================================================ server state -> events
@@ -412,7 +412,8 @@ export default class BossScene extends Phaser.Scene {
   skillBlurb(b) {
     const plant = b && PLANTS[b.plant];
     if (!plant || !b.skill) return null;
-    return plantMove(plant, "skill", b.skill.name).blurb || null;
+    if (b.skill.heal) return `heal ${b.skill.heal}${b.skill.power ? ` + hit ${b.skill.power}` : ""}`;
+    return `${b.skill.kind === "shield" ? "block + " : ""}hit ${b.skill.power || 0} · blooms boost`;
   }
 
   setPlantPanel(b, hp, opts) {
@@ -424,7 +425,7 @@ export default class BossScene extends Phaser.Scene {
     if (!b || b.over || !b.intent) { this.hud.hideIntent(); this.enemySetIntent(null); return; }
     const move = intentOf(b);
     const teach = b.turn < 2;
-    this.hud.showIntent(move, { teach });
+    this.hud.showIntent(move, { teach, ...b.intent });
     this.enemySetIntent(move);
     this.bossRing.setColor(MOVE_COLORS[move] || 0xff9868);
     if (move !== "?") this.sfx("reveal", { gain: 0.5 });
@@ -452,7 +453,9 @@ export default class BossScene extends Phaser.Scene {
     const bossName = boss.name || "The boss";
     const plantName = prev.creature || this.plantName(actorId, prev);
     const mine = plantMove(actor.plant, move.creature, move.skill);
-    const theirs = bossMove(this.tier(), move.boss, this.bossId());
+    const theirs = move.laser
+      ? { name: "Overcharge Laser", fx: "ray" }
+      : bossMove(this.tier(), move.boss, this.bossId());
     const palette = bossPalette(this.tier(), this.bossId());
     const final = next.boss_hp <= 0;
     const lastStand = !d.swap && next.creature_hp <= 0;
@@ -465,10 +468,17 @@ export default class BossScene extends Phaser.Scene {
     this.hud.setButtons(false, prev.skill);
     this.hud.setAuto(false);
 
-    let t = 0;
+    let t = 1700;
     const at = (ms, fn) => this.time.delayedCall(ms, fn);
     const pressed = d.skillName ? "skill" : d.playerMove;
     if (d.auto && next.manual) { this.hud.ghostPress(pressed); this.sfx("ui_select", { gain: 0.6 }); t += 240; }
+
+    at(0, () => this.callout("left", plantName, mine.name, actor.plant.glow));
+    at(850, () => {
+      this.callout("right", bossName, theirs.name, palette.main);
+      this.sfx(move.laser ? "boss_laser_charge" : "boss_roar", { gain: 0.55 });
+    });
+    at(1700, () => this.hud.banner(move.outcome || (d.verdict === "win" ? "CRITICAL HIT" : d.verdict === "lose" ? "WEAK HIT" : "CLASH"), "#ffdfa3", { y: 220, hold: 750 }));
 
     // Reveal
     at(t, () => {
@@ -532,9 +542,10 @@ export default class BossScene extends Phaser.Scene {
     };
     // The boss's move starts now; returns when its blow arrives.
     const bossGoes = (blocked, meet = null) => {
-      this.callout("right", bossName, theirs.name, palette.main);
       this.sfx(move.boss === "attack" ? "boss_bite" : move.boss === "special" ? "boss_orb" : "clang", { gain: d.bossLands ? 1 : 0.6 });
-      return playBossFx(theirs.fx, this.bossCtx(actor, d.bossLands, blocked, meet));
+      const ctx = this.bossCtx(actor, d.bossLands, blocked, meet);
+      if (move.laser) { ctx.power = 1.6; at(500, () => this.sfx("boss_laser")); }
+      return playBossFx(theirs.fx, ctx);
     };
     const reach = () => {
       if (!d.plantLands) return 0.42;
@@ -545,7 +556,6 @@ export default class BossScene extends Phaser.Scene {
     at(t, () => {
       let length;
       try {
-        this.callout("left", plantName, mine.name, actor.plant.glow);
         this.sfx("whoosh", { gain: 0.6 });
         if (shielded) {
           // the boss comes first; the shield goes up just in time
@@ -570,6 +580,7 @@ export default class BossScene extends Phaser.Scene {
             const mid = { x: (FIGHTER.x + ENEMY.x) / 2 + 30, y: FIGHTER.y - 240 };
             const blow = bossGoes(false, mid);
             const meet = Math.max(hitAt, blow);
+            if (d.taken > 0) at(meet, onPlantHurt);
             at(meet, () => {
               this.kit.impact(mid.x, mid.y, { power: 1.1, color: 0xd7e3ff });
               this.word(move.creature === "guard" ? "STANDOFF" : "CLASH!", "#d7e3ff", mid.x, mid.y - 70);
@@ -597,6 +608,13 @@ export default class BossScene extends Phaser.Scene {
       else if (lastStand) at(length - 60, () => { actor.setMood("fainted"); this.sfx("faint"); });
 
       // words for the log, and the next sign once the dust has settled
+      if (move.enraged) {
+        at(Math.max(0, length - 100), () => {
+          this.hud.banner("ENRAGED!", "#ff8f90", { y: 240 });
+          this.enemy.roar?.(); this.sfx("boss_roar");
+        });
+        length += 1000;
+      }
       at(Math.max(0, length - 200), () => {
         this.hud.setLog(this.turnWords(d, plantName, bossName, mine.name, theirs.name));
         this.hud.setTeam(next.team, { A: PLANTS.A.name, B: PLANTS.B.name });
@@ -618,7 +636,7 @@ export default class BossScene extends Phaser.Scene {
     }
     if (d.verdict === "win") return `${mine} beats ${theirs}! ${plant} hits for ${d.dealt}.${d.bloomGain ? " A bloom opens." : ""}`;
     if (d.verdict === "lose") return `${theirs} beats ${mine}. ${plant} takes ${d.taken}.${d.bloomsWiped ? " Blooms lost!" : ""}`;
-    return `${mine} meets ${theirs}. A tie: nobody is hurt.`;
+    return `${mine} meets ${theirs}. CLASH${d.taken ? ` · ${plant} takes ${d.taken}` : ""}.`;
   }
 
   // ================================================================ result
@@ -654,7 +672,7 @@ export default class BossScene extends Phaser.Scene {
     this.time.delayedCall(won ? 650 : 350, () => {
       this.hud.showResult(words, { waterMs: result.water_ms || 0 });
       if (won) this.confetti();
-      if (words.water) this.sfx("victory_water", { durationMs: result.water_ms });
+      if (words.water) this.sfx("victory_water", { durationMs: result.water_ms || 1600 });
     });
     this.time.delayedCall(RESULT_SECONDS * 1000, () => this.leave());
     return RESULT_SECONDS * 1000 + 1000;
@@ -668,6 +686,7 @@ export default class BossScene extends Phaser.Scene {
       this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
         const adventure = this.scene.get("AdventureScene");
         this.scene.stop();
+        if (window.location.pathname === "/boss") window.history.replaceState({}, "", "/adventure");
         if (adventure && adventure.scene.isSleeping()) this.scene.wake("AdventureScene");
         else if (adventure && !adventure.scene.isActive()) this.scene.start("AdventureScene");
       });

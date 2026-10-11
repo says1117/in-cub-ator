@@ -1,0 +1,14 @@
+[Unit]
+Description=In-cube-ator game screen (static files)
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__/server
+ExecStart=/usr/bin/python3 __DIR__/server/serve_client.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

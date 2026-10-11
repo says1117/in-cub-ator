@@ -1,0 +1,15 @@
+[Unit]
+Description=In-cube-ator soil bridge (ESP32 over USB to MQTT)
+After=mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__/server
+ExecStart=__DIR__/server/.venv/bin/python -u serial_bridge.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

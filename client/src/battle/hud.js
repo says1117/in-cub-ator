@@ -192,7 +192,8 @@ export class BattleHud {
 
   // ------------------------------------------------------------ what the panels say
   setFight({ title, subtitle, bossName, tierLabel }) {
-    this.titleText.setText(title);
+    this.titleText.setText(title).setScale(1 / this.s);
+    if (this.titleText.displayWidth > 410) this.titleText.setScale((1 / this.s) * 410 / this.titleText.displayWidth);
     this.subText.setText(subtitle);
     this.bossName.setText(bossName);
     this.bossTier.setText(tierLabel);
@@ -217,7 +218,8 @@ export class BattleHud {
       const info = team && team[id];
       const ui = this.team[id];
       const alpha = !info ? 0.35 : info.state === "down" ? 0.55 : 1;
-      ui.name.setText(((info && info.name) || names[id] || id).toUpperCase()).setAlpha(alpha);
+      ui.name.setText(((info && info.name) || names[id] || id).toUpperCase()).setAlpha(alpha).setScale(1 / this.s);
+      if (ui.name.displayWidth > 66) ui.name.setScale((1 / this.s) * 66 / ui.name.displayWidth);
       ui.tag.setText(info ? tags[info.state] || "" : "").setColor(info ? colors[info.state] || "#cbd4ff" : "#cbd4ff");
       this.teamBars[id].fill.setAlpha(alpha);
       this.setBar(this.teamBars[id], info ? info.hp / info.max_hp : 0);
@@ -248,13 +250,16 @@ export class BattleHud {
   }
 
   // ------------------------------------------------------------ the boss's sign
-  showIntent(move, { teach = false } = {}) {
+  showIntent(move, { teach = false, grade = "sure", chance = 1, bluff = null, heavy = false, laser = false } = {}) {
     const m = move || "?";
     const c = this.intent;
     c.icon.setTexture(iconFor(m));
     c.bubble.setStrokeStyle(4, MOVE_COLORS[m], 1);
     c.label.setText(m === "?" ? "???" : MOVE_NAMES[m]).setColor(MOVE_CSS[m]);
-    this.intentCaption.setText(m === "?" ? "hiding its move" : `${COUNTER[m].toUpperCase()} beats it`).setColor(m === "?" ? "#c9cbe0" : MOVE_CSS[COUNTER[m]]);
+    const confidence = `${grade.toUpperCase()} ${Math.round(chance * 100)}%`;
+    this.intentCaption.setText(m === "?" ? "hiding its move" :
+      `${confidence}${heavy ? " · HEAVY" : ""}${laser ? " · LASER" : ""}\n${COUNTER[m].toUpperCase()} beats it${bluff ? ` · may bluff ${bluff.toUpperCase()}` : ""}`)
+      .setColor("#ffe1a3");
     c.setVisible(true).setScale(0.2).setAlpha(0);
     this.intentCaption.setVisible(true).setAlpha(0);
     this.scene.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 260, ease: "Back.easeOut" });
@@ -314,7 +319,7 @@ export class BattleHud {
     if (skill) {
       s.name.setText(skill.name.toUpperCase());
       const what = blurb ? blurb.toLowerCase() : skill.kind === "heal" ? `heals ${skill.power}` : skill.kind === "shield" ? `blocks · ${skill.power} back` : `${skill.power} damage`;
-      s.sub.setText(skill.ready ? `always hits · ${what}` : `recharging · ${skill.ready_in} turn${skill.ready_in === 1 ? "" : "s"}`);
+      s.sub.setText(skill.ready ? `always hits · ${what}` : `charge ${skill.charge}/${skill.need} · win ${skill.ready_in} more`);
     } else {
       s.name.setText("SKILL");
       s.sub.setText("no skill");

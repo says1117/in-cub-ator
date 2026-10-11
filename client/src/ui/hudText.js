@@ -31,7 +31,7 @@ export function seconds(ms) {
 // Top-left line: today's watering, or the title before the first fight.
 export function statsLine(state) {
   const stats = state && state.stats;
-  if (!stats || !(stats.fights > 0)) return DEFAULT_TITLE;
+  if (!stats || !(stats.fights > 0)) return state?.health != null ? `${String(state.condition || "healthy").toUpperCase()} · health ${Math.round(state.health)}%` : DEFAULT_TITLE;
   const times = Math.max(0, Math.round(Number(stats.waterings) || 0));
   return `Watered ${times}× today · ${seconds(stats.water_ms)} s of water`;
 }
@@ -71,7 +71,8 @@ export function resultCaption(state, fallbackNames = {}) {
   if (result && result.plant) {
     const name = `{${plantName(state, result.plant, fallbackNames[result.plant])}}`;
     if (result.outcome === "won") {
-      if (result.water_ms > 0) return `${name} won → the real pump gave it ${seconds(result.water_ms)} s of water`;
+      if (result.simulated && result.increase > 0) return `${name} won → simulated water +${result.increase}%`;
+      if (result.water_ms > 0) return `${name} won → pump command ${seconds(result.water_ms)} s · awaiting sensor`;
       return `${name} won · ${BLOCKED[result.blocked] || "no water this time"}`;
     }
     if (result.outcome === "lost") return `${name} lost · it stays thirsty until the next fight`;

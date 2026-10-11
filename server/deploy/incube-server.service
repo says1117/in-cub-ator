@@ -1,1 +1,16 @@
-# server/deploy/incube-server.service: systemd unit that runs the server on the Jetson. Owner: Role 2 (server).
+[Unit]
+Description=In-cub-ator plant API and game engine
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__/server
+EnvironmentFile=-__DIR__/server/.env.jetson
+ExecStart=__DIR__/server/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

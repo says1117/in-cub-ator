@@ -1,1 +1,2 @@
-// client/src/config.js: Client tunables: server URL, mock toggle, timings. Owner: Role 3 (client, art, demo).
+// Production kiosk connects to the backend on the same host; explicit env wins.
+export const API_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`;

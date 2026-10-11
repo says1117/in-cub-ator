@@ -557,6 +557,69 @@ export function createBossEntrance(scene, onStep = () => {}) {
     });
   }
 
+  // What the scream looks like: a dark red aura. The forest dims and reddens, jagged shards of
+  // shadow and dull red flare up behind the boss like black flame, thin red cracks flicker in the
+  // air and specks of ash drift up. All of it is kept faint: a mood, not a flash.
+  function screamAura() {
+    const baseY = LAND.y + 4;
+    const veil = keep(scene.add.rectangle(400, 225, 800, 450, 0x12000a, 0).setDepth(BOSS_DEPTH - 0.3));
+    const flames = keep(scene.add.graphics().setDepth(BOSS_DEPTH - 0.2));               // behind the boss, so it stays clear
+    const air = keep(scene.add.graphics().setDepth(18.6).setBlendMode(Phaser.BlendModes.ADD));
+    const wash = keep(scene.add.rectangle(400, 225, 800, 450, 0x7a0012, 0).setDepth(18.5));
+    const ash = [];
+    for (let i = 0; i < 26; i++) {
+      ash.push({ x: LAND_X + Phaser.Math.Between(-210, 210), y: baseY - Phaser.Math.Between(0, 150), rise: Phaser.Math.Between(40, 120), size: Phaser.Math.Between(1, 3), late: Math.random() * 0.4 });
+    }
+    // the jagged edge and the cracks are drawn again every few frames, so they flicker
+    let rolled = -1, edges = [], cracks = [];
+    const roll = () => {
+      // three sheets of flame, back to front: wide and dark, then narrower and redder
+      edges = [[250, 190, 0x14000a, 0.5], [190, 150, 0x5a0010, 0.34], [120, 104, 0xc81428, 0.16]].map(([half, tall, color, alpha]) => {
+        const points = [{ x: LAND_X - half, y: baseY }];
+        const teeth = 15;
+        for (let i = 0; i <= teeth; i++) {
+          const u = i / teeth;
+          const hill = Math.pow(Math.sin(Math.PI * u), 0.8);              // tallest in the middle
+          const x = LAND_X - half + u * half * 2 + Phaser.Math.Between(-6, 6);
+          points.push({ x, y: baseY - tall * hill * (i % 2 ? Phaser.Math.FloatBetween(0.72, 1.05) : Phaser.Math.FloatBetween(0.3, 0.52)) });
+        }
+        points.push({ x: LAND_X + half, y: baseY });
+        return { points, color, alpha };
+      });
+      cracks = [];
+      for (let i = 0; i < 4; i++) {
+        let x = LAND_X + Phaser.Math.Between(-260, 260), y = baseY - Phaser.Math.Between(120, 230);
+        const line = [{ x, y }];
+        for (let j = 0; j < 6; j++) { x += Phaser.Math.Between(-24, 24); y += Phaser.Math.Between(14, 34); line.push({ x, y }); }
+        cracks.push(line);
+      }
+    };
+    const draw = (k) => {
+      const fade = k < 0.15 ? k / 0.15 : 1 - Math.max(0, (k - 0.55) / 0.45);
+      veil.setFillStyle(0x12000a, 0.42 * fade);
+      wash.setFillStyle(0x7a0012, 0.13 * fade);
+      const step = Math.floor(k * 13);
+      if (step !== rolled) { rolled = step; roll(); }
+      flames.clear();
+      for (const edge of edges) { flames.fillStyle(edge.color, edge.alpha * fade); flames.fillPoints(edge.points, true); }
+      air.clear();
+      for (const line of cracks) {
+        air.lineStyle(1, 0xff3040, 0.3 * fade);
+        air.strokePoints(line, false);
+      }
+      for (const p of ash) {
+        const t = Math.max(0, k - p.late);
+        air.fillStyle(0xff4a50, 0.3 * fade);
+        air.fillRect(p.x, p.y - p.rise * t, p.size, p.size);
+      }
+    };
+    const clock = { k: 0 };
+    tween({
+      targets: clock, k: 1, duration: 1000, ease: "Linear", onUpdate: () => draw(clock.k),
+      onComplete: () => { flames.clear(); air.clear(); veil.setFillStyle(0x12000a, 0); wash.setFillStyle(0x7a0012, 0); },
+    });
+  }
+
   function faceOff(state, fullScale) {
     onStep("faceoff", state);
     // cinema bars
@@ -609,7 +672,13 @@ export function createBossEntrance(scene, onStep = () => {}) {
       const dread = keep(scene.add.rectangle(400, 225, 800, 450, 0x2a0410, 0).setDepth(18.5));
       tween({ targets: dread, fillAlpha: 0.34, duration: 160, yoyo: true, hold: 420 });
       scene.cameras.main.shake(roarDelay ? 680 : 300, roarDelay ? 0.011 : 0.006);
-      audio.play("roar");
+      // no generated roar here any more: the recorded scream below is the roar
+    });
+    // The scream (a recorded clip, see CLIPS in audio.js) starts as its mouth begins to open, not once
+    // it is wide. The recording opens with a shout, so it starts 0.95 s in, where the scream itself is.
+    after(60, () => {
+      audio.clip("bossScream", { vol: 0.05, from: 0.95, seconds: 0.75, fade: 0.2 });
+      screamAura();
     });
 
     // the dragon braces: a small hop toward it
@@ -660,10 +729,11 @@ export function createBossEntrance(scene, onStep = () => {}) {
 
     spotted(fullScale);
     onStep("spotted", state);
+    audio.preloadClip("bossScream");   // fetched now so it starts the instant the roar does
     after(560, () => leap(fullScale, () => {
       impact(fullScale);
-      after(950, () => faceOff(state, fullScale));
-      after(2500, () => { done = true; });
+      after(720, () => faceOff(state, fullScale));   // straight after the dragon has turned to face it (700 ms in)
+      after(2100, () => { done = true; });
     }));
   }
 

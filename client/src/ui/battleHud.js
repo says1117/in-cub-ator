@@ -50,6 +50,12 @@ function plate(g, x, y, w, h, o = {}) {
     { x: x + w - cut + dx + grow, y: y + h + dy + grow }, { x: x + cut + dx - grow, y: y + h + dy + grow },
     { x: x + dx - grow, y: y + h - cut + dy + grow }, { x: x + dx - grow, y: y + cut + dy - grow },
   ];
+  if (o.glass) {   // see-through: one thin tint and an outline, so the picture behind shows
+    g.fillStyle(o.fill ?? PLATE, o.alpha ?? 0.3); g.fillPoints(shape(0, 0, 0), true);
+    g.fillStyle(o.low ?? PLATE_LOW, (o.alpha ?? 0.3) * 0.5); g.fillRect(x + 1, y + Math.round(h * 0.55), w - 2, Math.floor(h * 0.45) - cut + 2);
+    g.lineStyle(1, o.edge ?? EDGE, o.line ?? 0.9); g.strokePoints(shape(0, 0, 0), true);
+    return;
+  }
   if (o.shadow !== false) { g.fillStyle(INK, 0.45); g.fillPoints(shape(2, 3, 1), true); }
   g.fillStyle(o.edge ?? EDGE, o.alpha ?? 1); g.fillPoints(shape(0, 0, 1), true);
   g.fillStyle(o.fill ?? PLATE, o.alpha ?? 1); g.fillPoints(shape(0, 0, 0), true);
@@ -194,6 +200,26 @@ export function createBattleHud(scene, layers) {
   const benchName = text(root, 12, 76, "", {});
   const benchHp = bar(root, 52, 79, 40, 4, 0x5fe36c);
   const benchTag = text(root, 98, 76, "", { color: DIM });
+  // The bench plate is also the swap button: click it (or press 5) on your move to change plants.
+  const benchEdge = gfx(root);
+  let swapOk = false;
+  const benchZone = scene.add.zone(6, 73, 140, 16).setOrigin(0).setInteractive({ useHandCursor: true });
+  root.add(benchZone);
+  benchZone.on("pointerdown", () => { if (swapOk && api.onPick) api.onPick("swap"); });
+
+  // The health potion, under the bench plate: click it (or press 6) on your move. It does not use the turn.
+  plate(back, 6, 92, 140, 16, { cut: 3 });
+  const potionIcon = gfx(root);
+  potionIcon.fillStyle(0xffffff, 1); potionIcon.fillRect(15, 95, 3, 3);                 // the neck
+  potionIcon.fillStyle(0xff6b8a, 1); potionIcon.fillRect(13, 98, 7, 7);                 // the flask
+  potionIcon.fillStyle(0xffffff, 0.7); potionIcon.fillRect(14, 99, 2, 2);
+  const potionName = text(root, 25, 95, "POTION", {});
+  const potionTag = text(root, 140, 95, "", { ox: 1, color: "#9dffb0" });
+  const potionEdge = gfx(root);
+  let potionOk = false;
+  const potionZone = scene.add.zone(6, 92, 140, 16).setOrigin(0).setInteractive({ useHandCursor: true });
+  root.add(potionZone);
+  potionZone.on("pointerdown", () => { if (api.onPotion) api.onPotion(); });
 
   // ---------------------------------------------------------------- the boss's plate (top right)
   plate(back, 536, 6, 258, 44);
@@ -235,6 +261,7 @@ export function createBattleHud(scene, layers) {
     tellHead.setText(t.heavy ? "HEAVY WIND-UP! X2" : "WINDING UP").setColor(t.heavy ? "#ff8f6b" : DIM);
     tellGrade.setText(t.grade === "sure" ? grade.label : `${grade.label} ${Math.round(t.chance * 100)}%`).setColor(grade.color);
     tellMove.setText(t.name.toUpperCase()).setColor(hex(type.color));
+    tellMove.setScale(Math.min(1, (TELL.w - 16) / tellMove.width));   // a long name shrinks to fit the panel
     tellKind.setText(type.label).setColor(hex(type.color));
     tellAlt.setText(t.alt ? `OR ${t.alt.name.toUpperCase()} ${Math.round((1 - t.chance) * 100)}%` : "");
     tellBack.clear();
@@ -260,15 +287,15 @@ export function createBattleHud(scene, layers) {
   // ---------------------------------------------------------------- the dock along the bottom
   // no bar across the bottom any more: the field shows through. The log is a small plate on the
   // left, and the four move cards float on the right, a little see-through.
-  plate(back, 6, 386, 290, 58, { shadow: false, alpha: 0.88 });
-  const log = text(root, 13, 391, "", { wrap: 276, spacing: 3 });
+  plate(back, 6, 386, 290, 58, { glass: true, alpha: 0.12, line: 0.35 });
+  const log = text(root, 13, 391, "", { wrap: 276, spacing: 3, stroke: "#05070f", thick: 3 });
   // the rule of the game, always in view
   let ruleX = 13;
   for (const [word, color] of [["ATK", TYPES.attack.color], [">", null], ["SPC", TYPES.special.color], [">", null], ["GRD", TYPES.guard.color], [">", null], ["ATK", TYPES.attack.color]]) {
-    const t = text(root, ruleX, 431, word, { color: color ? hex(color) : DIM, bold: Boolean(color) });
+    const t = text(root, ruleX, 431, word, { color: color ? hex(color) : "#b4bfe6", bold: Boolean(color), stroke: "#05070f", thick: 3 });
     ruleX += t.width + 3;
   }
-  text(root, 289, 431, "BEATS", { color: DIM, ox: 1 });
+  text(root, 289, 431, "BEATS", { color: "#b4bfe6", ox: 1, stroke: "#05070f", thick: 3 });
 
   const cards = [];
   const CARD = { w: 130, h: 72 };   // the four cards sit in a square on the right, two by two
@@ -279,13 +306,13 @@ export function createBattleHud(scene, layers) {
     root.add(card);
     const g = gfx(card);
     const icon = gfx(card);
-    const title = text(card, 43, 8, "", { bold: true, wrap: 70, spacing: 1 });
-    const kind = text(card, 43, 30, type.label, { color: hex(type.color) });
-    const line1 = text(card, 8, 48, "", { color: "#c9d2f2" });
-    const line1b = text(card, 8, 48, "", { bold: true });
-    const line2 = text(card, 8, 60, "", { color: "#6f7aa6" });
+    const title = text(card, 42, 6, "", { bold: true, size: 10, wrap: 74, spacing: 0, stroke: "#05070f", thick: 4 });
+    const kind = text(card, 42, 35, type.label, { color: hex(type.color), bold: true, stroke: "#05070f", thick: 3 });
+    const line1 = text(card, 8, 48, "", { color: "#eef2ff", stroke: "#05070f", thick: 3 });
+    const line1b = text(card, 8, 48, "", { bold: true, stroke: "#05070f", thick: 3 });
+    const line2 = text(card, 8, 60, "", { color: "#b4bfe6", stroke: "#05070f", thick: 3 });
     const pips = gfx(card);
-    text(card, CARD.w - 11, 9, String(index + 1), { color: hex(type.color), ox: 0.5 });
+    text(card, CARD.w - 11, 9, String(index + 1), { color: hex(type.color), ox: 0.5, bold: true, stroke: "#05070f", thick: 3 });
     const glow = box(card, 0, 0, CARD.w, CARD.h, type.color, 0).setBlendMode(Phaser.BlendModes.ADD);
     const zone = scene.add.zone(0, 0, CARD.w, CARD.h).setOrigin(0).setInteractive({ useHandCursor: true });
     card.add(zone);
@@ -293,9 +320,9 @@ export function createBattleHud(scene, layers) {
     const paint = () => {
       g.clear();
       const lit = entry.hover && entry.enabled;
-      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE, alpha: 0.66 });
+      plate(g, 0, 0, CARD.w, CARD.h, { edge: entry.chosen ? 0xffffff : lit ? type.color : shade(type.color, 0.55), fill: lit ? 0x1b2550 : PLATE, alpha: lit ? 0.34 : 0.13, line: lit || entry.chosen ? 0.95 : 0.5, glass: true });
       g.fillStyle(type.color, 1); g.fillRect(4, 1, CARD.w - 8, 2);
-      g.fillStyle(shade(type.color, 0.32), 1); g.fillRect(7, 8, 30, 30);
+      g.fillStyle(shade(type.color, 0.32), 0.3); g.fillRect(7, 8, 30, 30);
       g.fillStyle(type.color, 1); g.fillRect(7, 8, 30, 1); g.fillRect(7, 37, 30, 1); g.fillRect(7, 8, 1, 30); g.fillRect(36, 8, 1, 30);
       g.fillStyle(EDGE, 0.7); g.fillRect(8, 44, CARD.w - 16, 1);
       g.fillStyle(INK, 0.8); g.fillRect(CARD.w - 17, 7, 12, 12);
@@ -325,10 +352,10 @@ export function createBattleHud(scene, layers) {
       const need = skill ? skill.need : 2;
       const charge = skill ? Math.min(need, skill.charge) : 0;
       const left = need - charge;
-      entry.line1.setText(skill ? move.blurb || "ALWAYS WORKS" : "NO SKILL").setColor("#c9d2f2");
+      entry.line1.setText(skill ? move.blurb || "ALWAYS WORKS" : "NO SKILL").setColor("#eef2ff");
       entry.line1b.setText("");
       let line = !skill ? "" : skill.ready ? "READY!" : `WIN ${left} TURN${left === 1 ? "" : "S"}`;
-      let color = skill && skill.ready ? hex(GOLD) : "#6f7aa6";
+      let color = skill && skill.ready ? hex(GOLD) : "#b4bfe6";
       if (skill && skill.ready && hint) { line = hint === "attack" ? "IT HITS BACK" : "SAFE NOW!"; color = hint === "attack" ? "#ff8f6b" : "#8dff9b"; }
       entry.line2.setText(line).setColor(color);
       for (let i = 0; i < need; i++) {
@@ -344,7 +371,7 @@ export function createBattleHud(scene, layers) {
       if (hint === entry.type.beats) entry.line2.setText("WINS THIS TURN").setColor("#8dff9b");
       else if (hint === entry.type.loses) entry.line2.setText("LOSES THIS TURN").setColor("#ff8f6b");
       else if (hint) entry.line2.setText("CLASH: SMALL HIT").setColor("#ffd867");
-      else entry.line2.setText(`LOSES TO ${loses.label}`).setColor("#6f7aa6");
+      else entry.line2.setText(`LOSES TO ${loses.label}`).setColor("#b4bfe6");
       entry.glow.setVisible(false);
     }
     if (entry.enabled !== enabled || entry.chosen !== chosen) {
@@ -353,7 +380,7 @@ export function createBattleHud(scene, layers) {
       entry.paint();
       if (!enabled) scene.tweens.add({ targets: entry.card, y: entry.home.y, duration: 100 });
     }
-    entry.card.setAlpha(enabled || chosen ? 1 : 0.6);
+    entry.card.setAlpha(enabled || chosen ? 1 : 0.72);
   }
 
   let shownFighter = null;
@@ -361,6 +388,7 @@ export function createBattleHud(scene, layers) {
 
   const api = {
     onPick: null,
+    onPotion: null,   // the potion plate was clicked
     onTell: null,   // called when a new wind-up appears
     portraits,
 
@@ -371,7 +399,7 @@ export function createBattleHud(scene, layers) {
     //   skill: { ready, charge, need } or null
     //   tell: { name, type, grade, chance, alt: { name } or null, heavy } or null: the boss's wind-up
     //   tellKey (changes when the wind-up does),   hints (true: the cards say how they do against it)
-    //   canPick (true when a card may be clicked),   chosen (the move just sent, or null),   seconds (left to choose, or null)
+    //   canSwap (true when the bench plate may be clicked to change plants),   canPick (true when a card may be clicked),   chosen (the move just sent, or null),   seconds (left to choose, or null)
     // }
     update(view) {
       const f = view.fighter;
@@ -401,7 +429,20 @@ export function createBattleHud(scene, layers) {
       benchName.setText(b ? b.name.toUpperCase() : "NO BACKUP").setColor(b && b.state !== "down" ? WHITE : DIM);
       benchHp.setVisible(Boolean(b));
       if (b) benchHp.set(b.hp / b.max, hpColor(b.hp / b.max));
-      benchTag.setText(b ? (b.state === "down" ? "DOWN" : "READY") : "").setColor(b && b.state === "down" ? "#ff8f90" : "#9dffb0");
+      const p = view.potion;
+      potionOk = Boolean(p && p.ready && view.canPick && f.hp < f.max);
+      potionName.setColor(p && p.ready ? WHITE : DIM);
+      potionTag.setText(!p ? "" : p.ready ? (f.hp >= f.max ? "FULL HP" : `+${p.heal} HP  6`) : `${p.seconds_left}S`)
+        .setColor(!p || !p.ready ? "#ff8f90" : potionOk ? "#ffd867" : "#9dffb0");
+      potionEdge.clear();
+      if (potionOk) { potionEdge.lineStyle(1, GOLD, 0.95); potionEdge.strokeRect(5.5, 91.5, 141, 17); }
+
+      swapOk = Boolean(view.canSwap && b && b.state !== "down");
+      const swapping = view.chosen === "swap";
+      benchTag.setText(b ? (b.state === "down" ? "DOWN" : swapOk || swapping ? "SWAP 5" : "READY") : "")
+        .setColor(b && b.state === "down" ? "#ff8f90" : swapOk || swapping ? "#ffd867" : "#9dffb0");
+      benchEdge.clear();
+      if (swapOk || swapping) { benchEdge.lineStyle(1, swapping ? 0xffffff : GOLD, 0.95); benchEdge.strokeRect(5.5, 72.5, 141, 17); }
 
       bossName.setText(view.boss.name.toUpperCase());
       bossAccent.fillColor = view.boss.colour;
@@ -437,7 +478,7 @@ export function createBattleHud(scene, layers) {
 
     // A banner that slides in from one side to call out a move.
     callout(side, who, move, color) {
-      const c = scene.add.container(0, 96);
+      const c = scene.add.container(0, 114);   // below the bench and potion plates
       over.add(c);
       const g = gfx(c);
       const small = text(c, 0, 4, who.toUpperCase(), { color: hex(color) });

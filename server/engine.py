@@ -51,6 +51,8 @@ class GameEngine:
         # After a lost fight the battle stays in the state message for a moment, so the screen
         # can play the last blow. {"plant", "tier", "source", "until"} or None.
         self.lost: Optional[dict] = None
+        self.potion_ready_at = 0.0   # when the health potion may be drunk again
+        self.potions_used = 0        # in this fight: the screen plays the heal when it goes up
         self.boss_kind: Optional[str] = None   # which kind of boss is here now: see config.BOSS_KINDS
 
     def _set(self, new: S.Game):
@@ -215,8 +217,29 @@ class GameEngine:
         category = B.category_of(self.battle.creature, move)  # "attack" or the plant's own move id
         if category is None or now < self.move_ready_at:
             return []
+        if category == B.SWAP and not B.can_swap(self.battle):
+            return []   # nobody to swap to: the turn is not spent
         self.battle = B.play_turn(self.battle, self.rng, category)
         return self._after_turn(now)
+
+    def potion_heal(self) -> int:
+        """What a potion gives the plant that is fighting: a share of its full HP, at least 1."""
+        return max(1, int(self.battle.creature.hp * C.POTION_HEAL_SHARE + 0.5)) if self.battle else 0   # halves round up
+
+    def on_potion(self, now: float) -> bool:
+        """The player drinks the health potion. Only on their own move, and it does not use the turn.
+        Refused while it is cooling down, or when the plant is already at full HP (so none is wasted)."""
+        b = self.battle
+        if not self.manual or self.game.mode != S.BATTLE or b is None or B.winner(b) is not None:
+            return False
+        if now < self.move_ready_at or now < self.potion_ready_at or b.creature_hp >= b.creature.hp:
+            return False
+        healed = min(self.potion_heal(), b.creature.hp - b.creature_hp)
+        self.battle = replace(b, creature_hp=b.creature_hp + healed)
+        self.potion_ready_at = now + C.POTION_COOLDOWN_SECONDS
+        self.potions_used += 1
+        log.info("potion: %s +%d hp (now %d)", b.creature.name, healed, self.battle.creature_hp)
+        return True
 
     def on_debug_boss(self, payload: str, now: float) -> list:
         p = payload.strip().upper()
@@ -323,6 +346,8 @@ class GameEngine:
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
         self.move_ready_at = now + 0.5
         self.move_deadline = now + C.PLAYER_MOVE_TIMEOUT_SECONDS
+        self.potion_ready_at = now   # every fight starts with a potion ready
+        self.potions_used = 0
 
     def _after_turn(self, now: float) -> list:
         self.next_turn_at = now + C.BATTLE_TURN_SECONDS
@@ -333,7 +358,8 @@ class GameEngine:
         log.info("turn %d: %s vs %s (shown %s), hit=%s, plant %d hp, boss %d hp", self.battle.turn,
                  last.get("skill") or last.get("creature"), last.get("boss"), last.get("shown"),
                  last.get("hit"), self.battle.creature_hp, self.battle.boss_hp)
-        extra = (C.SWAP_EXTRA_SECONDS if last.get("swap") else 0.0) + (C.ENRAGE_EXTRA_SECONDS if last.get("enraged") else 0.0)
+        extra = ((C.SWAP_EXTRA_SECONDS if last.get("swap") else 0.0) + (C.SWAP_EXTRA_SECONDS if last.get("back") else 0.0)
+                 + (C.ENRAGE_EXTRA_SECONDS if last.get("enraged") else 0.0))
         if extra:   # a plant fainted and the next one comes in, or the boss stops to roar
             self.next_turn_at += extra
             self.move_ready_at += extra
@@ -446,7 +472,9 @@ class GameEngine:
         left = min(C.PLAYER_MOVE_TIMEOUT_SECONDS, max(0.0, self.move_deadline - (self._last_tick or 0.0)))
         team = {b.plant: {"name": b.creature.name, "hp": b.creature_hp, "max_hp": b.creature.hp,
                           "state": "fighting"}}
-        team.update({p: {"name": s.name, "hp": s.hp, "max_hp": s.hp, "state": "ready"} for p, s in b.bench})
+        for p, s in b.bench:   # a waiting plant keeps the health it left the fight with
+            kept = B.bench_hp(b, p)
+            team[p] = {"name": s.name, "hp": s.hp if kept is None else kept, "max_hp": s.hp, "state": "ready"}
         team.update({p: {"name": s.name, "hp": 0, "max_hp": s.hp, "state": "down"} for p, s in b.fallen})
         return {
             "turn": b.turn,
@@ -469,6 +497,13 @@ class GameEngine:
                 "charge": b.charge,                 # turns won so far
                 "need": C.SKILL_CHARGE_NEED,        # turns to win before it can be used
             },
+            "potion": {
+                "ready": (self._last_tick or 0.0) >= self.potion_ready_at,
+                "seconds_left": max(0, int(self.potion_ready_at - (self._last_tick or 0.0) + 0.999)),
+                "heal": self.potion_heal(),     # HP it gives the plant that is fighting now
+                "used": self.potions_used,      # how many have been drunk in this fight
+            },
+            "can_swap": B.can_swap(b),   # there is another plant to change to (it takes the turn)
             "manual": self.manual,
             # false while the last turn is still being shown: a move sent then would be thrown away
             "awaiting_move": (self.manual and B.winner(b) is None

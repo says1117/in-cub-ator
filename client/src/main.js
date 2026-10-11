@@ -62,7 +62,7 @@ if (import.meta.env.DEV) {
       team: { A: { name: "Ember", hp: 30, max_hp: 30, state: "fighting" }, B: { name: "Zest", hp: 34, max_hp: 34, state: "ready" } },
       intent: { move: "attack", grade: "likely", chance: 0.75, bluff: "special", heavy: false },
       enraged: false, enrage_hp: 22, hints: true, skill: { name: "Inferno Bloom", ready: true, charge: 2, need: 2 },
-      manual: true, awaiting_move: true, move_seconds_left: 10,
+      manual: true, awaiting_move: true, move_seconds_left: 10, can_swap: true, potion: { ready: true, seconds_left: 0, heal: 5, used: 0 },
     };
     game.registry.set("serverState", {
       mode: "battle", present: { A: true, B: true }, creatures: { A: null, B: null }, meters: { water: { A: 20, B: 80 }, stale: false },
@@ -125,7 +125,6 @@ let server;
 const hud = mountStatusBar(document.getElementById("app"), {
   onDemoBoss: () => server && server.sendDemoBoss(),
   onStorage: () => navigate("/storage"),
-  onSimPad: (plant) => server && server.sendSimPad(plant),
 });
 let latest = null;
 const thirst = mountThirstNotifier(document.getElementById("app"), (plant) =>
@@ -141,3 +140,4 @@ server = connectWsSource(
   (connected) => hud.setConnected(connected)
 );
 game.registry.set("sendMove", (move) => server && server.sendMove(move));
+game.registry.set("sendPotion", () => server && server.sendPotion());

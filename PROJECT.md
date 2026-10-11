@@ -117,6 +117,10 @@ It checks five times a second. The screen sends two kinds of message back:
 - `battle.hints` is true on tier 1: the move cards may say outright how they do against the tell.
 - When a plant faints and the other steps in, that turn's `last_move` also carries
   `"swap": {"out": "A", "in": "B", "name": "Zest"}`.
+- The player may also send `{"action": "move", "move": "swap"}` to change plants. That turn's
+  `last_move` has `"creature": "swap"`, `"swap": {..., "chosen": true}` and `took` (what the boss's
+  move cost the plant that came in). If that knocks it out, `"back": {"out", "in", "name"}` says who
+  returned. `battle.can_swap` is true while there is a plant to change to.
 - After a **lost** fight, `boss` and `battle` stay in the message for 6 seconds (the mode is
   already `cooldown`) so the screen can play the last blow.
 - `reward` is the reward for the fight just won, or `null` if no pump command was sent. It
@@ -256,7 +260,15 @@ the shown move is the safe play: a graze if it was real, a hit for you if it was
 
 - The dragon does not fight. It sends in a plant. **The thirsty plant goes first**: the one
   whose dry soil called the boss.
-- **If it faints, the other plant steps in**, once, at full HP and with its skill charged.
+- **You can swap plants on any of your moves** (click the bench plate under the name, or press 5).
+  It is your whole turn: the boss's move lands on the plant coming in, whatever it was. Each plant
+  keeps its own HP and skill charge while it waits. A plant that has fainted cannot come back.
+- **A health potion in every fight** (click the potion plate, or press 6 or P). It gives the plant
+  that is fighting 15% of its full HP, on your own move, and does not use the turn. One is ready when
+  the fight starts; after each there is a 25 second wait. It is refused at full HP, so none is wasted.
+  The client sends `{"action": "potion"}`; `battle.potion` has `ready`, `seconds_left`, `heal` and `used`.
+- **If it faints, the other plant steps in** by itself, with the HP it has left. One that has not
+  fought yet arrives with its skill charged; swapped in by choice, it has the normal starting charge.
   The boss keeps whatever HP it had left. The fight is lost only when both plants are down.
 - Whichever plant lands the last hit, the water goes to the plant that called the boss.
 - Your fourth button is the fighting plant's **skill** (next section).
@@ -295,8 +307,8 @@ it is never watered. Set it back down and it returns. A plant that is lifted whi
 plant on the cube there is no boss at all, the demo button does nothing and the status panel is empty.
 The state message has `present` (`{"A": true, "B": false}`) and `meters.water` is `null` for a plant that
 is not there. On screen the plants follow the dragon only while present, and poof away and back
-(`render/petParade.js`). With `--sim` both plants start on the cube, and the screen shows "Lift Ember" and
-"Lift Zest" buttons that stand in for the pads. Set `PLANTS_NEED_PADS = False` for a cube whose pads
+(`render/petParade.js`). With `--sim` both plants start on the cube. To lift one without hardware, publish an empty
+message to `incube/pad/A` (or `B`), and a tag such as `SIM-A` to set it down again. Set `PLANTS_NEED_PADS = False` for a cube whose pads
 are not wired up: both plants then always count.
 
 An NFC-tagged figure on a pad counts as a plant too. A tag listed in `server/creatures.json`
@@ -409,7 +421,8 @@ soil. It is for showing the project on stage.
 - The boss's tier follows that plant's real moisture, with tier 1 as the minimum.
 - It is ignored while a boss, fight or reward is already active.
 - After the boss appears, everything is the normal flow. Winning runs the pump, even on wet
-  soil, but the 60 second gap and the pump cap still apply.
+  soil. The pump cap still applies. There is no wait between waterings any more
+  (`REWARD_MIN_GAP_SECONDS = 0` in `config.py`): every win waters, so repeated demo wins can overwater a pot.
 
 A laptop can do the same by publishing `A` or `B` to `incube/debug/boss`.
 

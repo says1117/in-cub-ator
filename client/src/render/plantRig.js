@@ -11,6 +11,7 @@
 //   plant.play("strike", { ... })  a one-off action on top of that: see ACTIONS. Returns its length in ms.
 //   plant.emote("alert")           a little mark above its head: see EMOTES
 //   plant.point("fist")            where a spot is on screen right now, for effects (see `points` in data/plantRigs.js)
+//   plant.setTurn(0.8)             turned part way toward the boss (0 faces us, 1 is as far as it goes)
 //   plant.pose.lift = 0.1          the same dials the actions use, for a scene to drive by hand
 //
 // ADDING A MOVE LATER
@@ -308,6 +309,7 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
 
   // How far something at height `at` slides when the leaves bend: nothing at the rim, most at the top.
   let bend = 0;
+  let turned = 0;                                                // 0 faces us, 1 is turned toward the boss
   const slide = (at) => bend * crown * Math.pow(clamp01((rig.rim - at) / crown), 1.6);
 
   const frame = (name, row, rows) => {
@@ -365,10 +367,12 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   let faceShown = "";
 
   function drawFace(mode, blinking) {
-    const key = `${blinking ? "blink" : mode}:${Math.round(bend * 200)}`;
+    const away = turned > 0.5;                 // turned toward the boss: we see the side of its face
+    const key = `${blinking ? "blink" : mode}:${Math.round(bend * 200)}:${away}`;
     if (key === faceShown) return;
     faceShown = key;
     face.clear();
+    if (away) { drawSideFace(mode, blinking); return; }
     if (mode === "open" && !blinking) return;
     rig.eyes.forEach(([ex, ey, rx, ry], index) => {
       const cx = ex + slide(ey);
@@ -405,6 +409,32 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
         line(-0.6, -0.55, 0.6, 0.55); line(-0.6, 0.55, 0.6, -0.55);
       }
     });
+  }
+
+  // Turned away from us, most of the face is out of sight. The painted eyes and mouth are covered
+  // and one eye is drawn at the far edge of the face, looking where the plant is facing.
+  function drawSideFace(mode, blinking) {
+    const [[ax, ay, arx, ary], [bx, , brx]] = rig.eyes;
+    const leftEdge = ax - arx, rightEdge = bx + brx;
+    const midX = (leftEdge + rightEdge) / 2, wide = rightEdge - leftEdge;
+    const mouth = rig.mouth || [midX, ay + ary * 1.2];
+    const cover = (cx, cy, w, h) => { face.fillStyle(plant.lid, 1); face.fillEllipse(cx + slide(cy), cy, w, h); };
+    cover(midX, ay, wide + 5, ary * 2 + 5);                       // both painted eyes
+    cover(mouth[0], mouth[1], wide * 0.7, ary * 1.5);             // and the mouth
+
+    const rx = arx * 0.62, ry = ary * 0.92;                       // an eye seen from the side is narrow
+    const ex = rightEdge - rx * 0.5 + slide(ay), ey = ay;
+    const thick = Math.max(1, arx * 0.34);
+    const line = (x0, y0, x1, y1) => { face.lineStyle(thick, DARK, 1); face.lineBetween(ex + x0 * rx, ey + y0 * ry, ex + x1 * rx, ey + y1 * ry); };
+    if (blinking || mode === "happy") { line(-1, 0.2, 0, -0.3); line(0, -0.3, 1, 0.2); return; }
+    if (mode === "hurt") { line(-0.8, -0.6, 0.6, 0); line(0.6, 0, -0.8, 0.6); return; }
+    if (mode === "fainted") { line(-0.8, -0.6, 0.8, 0.6); line(-0.8, 0.6, 0.8, -0.6); return; }
+    const big = mode === "shock" ? 1.3 : 1;
+    face.fillStyle(DARK, 1); face.fillEllipse(ex, ey, rx * 2.3 * big, ry * 2.25 * big);
+    face.fillStyle(0xffffff, 1); face.fillEllipse(ex, ey, rx * 1.7 * big, ry * 1.75 * big);
+    face.fillStyle(DARK, 1); face.fillEllipse(ex + rx * 0.45, ey, rx * (mode === "shock" ? 0.6 : 0.95), ry * (mode === "shock" ? 0.6 : 1.1));   // the pupil looks ahead
+    if (mode === "angry") line(-1.5, -1.5, 1.4, -0.55);          // a brow, low at the front
+    if (mode === "sad") line(-1.5, -0.6, 1.4, -1.4);
   }
 
   // ---- state ----
@@ -475,9 +505,12 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
     const grow = Math.max(0, 1 + pose.scale);
     body.x = (pose.x + 0.008 * tremble * sin(time * 0.09)) * H;
     body.y = -(pose.lift + mood.tip * 0.085) * H;
-    body.rotation = pose.lean + mood.lean - mood.tip * 1.42 + 0.012 * sin(t * 0.9) * mood.sway;
+    // Turned toward the boss: the picture only has a front, so the turn is faked. It is drawn
+    // narrower, tips forward, its leaves sweep that way and the far side is drawn smaller.
+    const turn = turned * (1 - mood.tip);
+    body.rotation = pose.lean + mood.lean - mood.tip * 1.42 + 0.012 * sin(t * 0.9) * mood.sway + 0.07 * turn;
     body.scaleY = (1 + stretch) * grow;
-    body.scaleX = (1 - stretch * 0.55) * grow;
+    body.scaleX = (1 - stretch * 0.55) * grow * (1 - 0.3 * turn);
 
     // how fast it is moving, in heights per second: this is what makes everything loose trail behind
     const scale = root.scaleX || 1;
@@ -493,7 +526,7 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
 
     // the leaves bend: a slow drift, whatever the actions ask for, and they lag behind a sideways move
     const wind = (0.035 * sin(t * 0.8) + 0.018 * sin(t * 1.9 + 1.3)) * mood.sway;
-    const bendTo = clamp(wind + pose.bend - velX * 0.045 - pose.lean * 0.12, -0.22, 0.22);
+    const bendTo = clamp(wind + pose.bend - velX * 0.045 - pose.lean * 0.12 + 0.09 * turn, -0.22, 0.26);
     bendSpeed += ((bendTo - bend) * 70 - bendSpeed * 9) * dt;
     bend += bendSpeed * dt;
     for (const strip of strips) strip.image.x = left + slide(strip.at);
@@ -510,7 +543,10 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
       piece.speed += ((trailTo - piece.lag) * 95 - piece.speed * 7.5) * dt;
       piece.lag += piece.speed * dt;
       piece.node.rotation = turn + piece.lag;
-      if (!piece.spec.parent) piece.node.x = piece.spec.x + slide(piece.spec.y);
+      if (!piece.spec.parent) {
+        piece.node.x = piece.spec.x + slide(piece.spec.y);
+        piece.node.setScale(1 + (piece.spec.x > 0 ? -0.2 : 0.1) * turn);   // the far side is smaller, the near side bigger
+      }
     }
 
     // the face
@@ -549,6 +585,7 @@ export function createPlantRig(scene, plant, x, y, height, options = {}) {
   root.plant = plant;
   root.pose = manual;
   root.setHeight = (value) => { root.setScale(value / H); return root; };
+  root.setTurn = (value) => { turned = clamp01(value); return root; };
   root.getHeight = () => root.scaleY * H;
 
   root.setMood = (name, instant = false) => {

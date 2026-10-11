@@ -122,13 +122,26 @@ class RewardTests(unittest.TestCase):
     def test_wet_soil_gets_nothing(self):
         self.assertIsNone(R.water_reward("A", C.SOIL_WET_THRESHOLD_PCT, 1000.0, float("-inf")))
 
-    def test_demo_may_water_wet_soil_but_gap_and_cap_still_apply(self):
+    def test_demo_may_water_wet_soil_but_the_cap_still_applies(self):
         cmd = R.water_reward("A", 99.0, 1000.0, float("-inf"), demo=True)
         self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
-        self.assertIsNone(R.water_reward("A", 99.0, 100.0, 100.0 - 1, demo=True))
 
-    def test_one_reward_per_cooldown(self):
-        self.assertIsNone(R.water_reward("A", 10.0, 100.0, 100.0 - 1))
+    def test_no_wait_between_waterings(self):
+        """The owner removed the wait: a win one second after the last watering waters again."""
+        self.assertEqual(C.REWARD_MIN_GAP_SECONDS, 0.0)
+        for demo in (False, True):
+            cmd = R.water_reward("A", 10.0, 100.0, 100.0 - 1, demo=demo)
+            self.assertIsNotNone(cmd)
+            self.assertLessEqual(int(cmd.payload), C.PUMP_MAX_MS)
+
+    def test_a_wait_can_be_set_again(self):
+        old = C.REWARD_MIN_GAP_SECONDS
+        C.REWARD_MIN_GAP_SECONDS = 60.0
+        try:
+            self.assertIsNone(R.water_reward("A", 10.0, 100.0, 100.0 - 1))
+            self.assertIsNone(R.water_reward("A", 99.0, 100.0, 100.0 - 1, demo=True))
+        finally:
+            C.REWARD_MIN_GAP_SECONDS = old
 
     def test_cap_holds_even_if_config_is_too_big(self):
         old = dict(C.PUMP_MS_BY_TIER)
@@ -1234,6 +1247,177 @@ class PresenceTests(unittest.TestCase):
         self.assertTrue(e.present("A"))
         e.on_sim_pad("Z")
         self.assertEqual(e.present_plants(), ("A", "B"))
+
+
+class SwapTests(unittest.TestCase):
+    """On your move you may change plants. It is the whole turn and the boss's move lands."""
+
+    def fight(self, seed=4, tier=1):
+        rng = random.Random(seed)
+        a, z = B.plant_fighter("A"), B.plant_fighter("B")
+        return B.start(a, plant="A", bench=[("B", z)], tier=tier, rng=rng), rng
+
+    def test_swap_brings_in_the_other_plant_and_costs_the_turn(self):
+        b, rng = self.fight()
+        boss_hp, hit = b.boss_hp, B.boss_hit(b, b.boss_next)
+        after = B.play_turn(b, rng, B.SWAP)
+        self.assertEqual(after.plant, "B")
+        self.assertEqual(after.turn, b.turn + 1)
+        self.assertEqual(after.boss_hp, boss_hp)                       # no blow struck
+        self.assertEqual(after.creature_hp, B.plant_fighter("B").hp - hit)   # the boss's move landed
+        self.assertEqual([p for p, _ in after.bench], ["A"])
+        self.assertEqual(after.last_move["creature"], B.SWAP)
+        self.assertTrue(after.last_move["swap"]["chosen"])
+        self.assertIsNotNone(after.intent)                             # the boss winds up again
+
+    def test_each_plant_keeps_its_own_health_and_charge(self):
+        b, rng = self.fight()
+        b = replace(b, creature_hp=11, charge=2)
+        b = B.play_turn(b, rng, B.SWAP)
+        self.assertEqual(B.bench_hp(b, "A"), 11)
+        self.assertEqual(b.charge, C.SKILL_CHARGE_START)               # B has not earned a full skill by swapping
+        b = replace(b, creature_hp=30)                                 # keep B standing for the swap back
+        b = B.play_turn(b, rng, B.SWAP)
+        self.assertEqual(b.plant, "A")
+        self.assertLessEqual(b.creature_hp, 11)
+        self.assertEqual(b.charge, 2)
+        self.assertEqual(B.bench_hp(b, "B") is not None, True)
+
+    def test_swap_with_nobody_waiting_is_a_plain_attack(self):
+        rng = random.Random(4)
+        b = B.start(B.plant_fighter("A"), plant="A", rng=rng)
+        self.assertFalse(B.can_swap(b))
+        after = B.play_turn(b, rng, B.SWAP)
+        self.assertEqual(after.plant, "A")
+        self.assertEqual(after.last_move["creature"], "attack")
+
+    def test_a_fallen_plant_cannot_be_swapped_to(self):
+        b, rng = self.fight()
+        b = replace(b, creature_hp=1, intent={"move": "attack", "grade": "sure", "chance": 1.0, "heavy": False, "bluff": None}, boss_next="attack")
+        b = B.resolve_turn(b, "special", "attack")                     # A loses the turn and faints
+        self.assertEqual(b.plant, "B")
+        self.assertEqual([p for p, _ in b.fallen], ["A"])
+        self.assertFalse(B.can_swap(b))
+
+    def test_swapping_a_weak_plant_into_a_hit_sends_the_other_back(self):
+        b, rng = self.fight()
+        b = B.play_turn(b, rng, B.SWAP)                                # B is in, A waits
+        b = replace(b, creature_hp=30, rested=(("A", 1, 0),))           # A is nearly gone
+        b = replace(b, intent={"move": "attack", "grade": "sure", "chance": 1.0, "heavy": False, "bluff": None}, boss_next="attack")
+        b = B.resolve_turn(b, B.SWAP, "attack")                        # A comes in and is knocked out
+        self.assertEqual(b.plant, "B")
+        self.assertEqual([p for p, _ in b.fallen], ["A"])
+        self.assertEqual(b.last_move["back"]["in"], "B")
+        self.assertEqual(b.creature_hp, 30)
+        self.assertIsNone(B.winner(b))
+
+    def test_both_down_after_a_swap_loses_the_fight(self):
+        b, rng = self.fight()
+        b = replace(b, creature_hp=1)
+        b = B.play_turn(b, rng, B.SWAP)                                # B in, A waits on 1
+        b = replace(b, creature_hp=1, intent={"move": "attack", "grade": "sure", "chance": 1.0, "heavy": False, "bluff": None}, boss_next="attack")
+        b = B.resolve_turn(b, "special", "attack")                     # B faints, A returns on 1
+        self.assertEqual((b.plant, b.creature_hp), ("A", 1))
+        b = replace(b, intent={"move": "attack", "grade": "sure", "chance": 1.0, "heavy": False, "bluff": None}, boss_next="attack")
+        b = B.resolve_turn(b, "special", "attack")
+        self.assertEqual(B.winner(b), "boss")
+
+    def test_engine_takes_a_swap_and_reports_the_bench(self):
+        e = talking(GameEngine(rng=random.Random(2)))
+        e.manual = True
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            e.on_soil_raw("A", DRY_RAW, 0.0)
+        t = 0.0
+        while e.game.mode != S.BATTLE:
+            t += 0.5
+            e.tick(t)
+        snap = e.snapshot()["battle"]
+        self.assertTrue(snap["can_swap"])
+        self.assertEqual(snap["plant"], "A")
+        e.on_player_move("swap", t + 1.0)
+        snap = e.snapshot()["battle"]
+        self.assertEqual(snap["plant"], "B")
+        self.assertEqual(snap["team"]["A"]["state"], "ready")
+        self.assertEqual(snap["team"]["A"]["hp"], B.plant_fighter("A").hp)
+
+    def test_engine_ignores_a_swap_with_one_plant(self):
+        e = talking(GameEngine(rng=random.Random(2), need_pads=True))
+        e.manual = True
+        e.on_pad("A", "TAG-A")
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            e.on_soil_raw("A", DRY_RAW, 0.0)
+        t = 0.0
+        while e.game.mode != S.BATTLE:
+            t += 0.5
+            e.tick(t)
+        turn = e.battle.turn
+        self.assertEqual(e.on_player_move("swap", t + 1.0), [])
+        self.assertEqual(e.battle.turn, turn)                          # the turn was not spent
+        self.assertFalse(e.snapshot()["battle"]["can_swap"])
+
+
+class PotionTests(unittest.TestCase):
+    """A health potion in every fight: 15% of full HP, no turn spent, 25 seconds between them."""
+
+    def in_battle(self):
+        e = talking(GameEngine(rng=random.Random(2)))
+        e.manual = True
+        for _ in range(C.SOIL_DRY_READINGS_N):
+            e.on_soil_raw("A", DRY_RAW, 0.0)
+        t = 0.0
+        while e.game.mode != S.BATTLE:
+            t += 0.5
+            e.tick(t)
+        return e, t + 1.0   # past the short wait before the first move
+
+    def test_heals_15_percent_and_spends_no_turn(self):
+        e, t = self.in_battle()
+        e.battle = replace(e.battle, creature_hp=10)
+        turn = e.battle.turn
+        self.assertTrue(e.on_potion(t))
+        self.assertEqual(e.battle.creature_hp, 10 + 5)   # 15% of 30 is 4.5, rounded up
+        self.assertEqual(e.battle.turn, turn)
+        self.assertEqual(e.snapshot()["battle"]["potion"]["used"], 1)
+
+    def test_cooldown_is_25_seconds(self):
+        e, t = self.in_battle()
+        e.battle = replace(e.battle, creature_hp=5)
+        self.assertTrue(e.on_potion(t))
+        self.assertFalse(e.on_potion(t + 24.0))
+        e.move_deadline = float("inf")   # nobody plays a turn while the clock runs
+        e.tick(t + 10.0)
+        potion = e.snapshot()["battle"]["potion"]
+        self.assertFalse(potion["ready"])
+        self.assertEqual(potion["seconds_left"], 15)
+        e.move_ready_at = 0.0   # the cooldown alone is being tested
+        self.assertTrue(e.on_potion(t + 25.0))
+
+    def test_never_heals_past_full_and_is_not_wasted_at_full(self):
+        e, t = self.in_battle()
+        self.assertFalse(e.on_potion(t))                 # already full: kept for later
+        self.assertTrue(e.snapshot()["battle"]["potion"]["ready"])
+        e.battle = replace(e.battle, creature_hp=29)
+        self.assertTrue(e.on_potion(t))
+        self.assertEqual(e.battle.creature_hp, 30)
+
+    def test_every_fight_starts_with_one_ready(self):
+        e, t = self.in_battle()
+        e.battle = replace(e.battle, creature_hp=5)
+        self.assertTrue(e.on_potion(t))
+        e._start_battle(t + 1.0)                         # the next fight
+        e.tick(t + 1.0)
+        self.assertTrue(e.snapshot()["battle"]["potion"]["ready"])
+        self.assertEqual(e.potions_used, 0)
+
+    def test_not_outside_a_fight_or_while_a_turn_plays(self):
+        e = talking(GameEngine(rng=random.Random(2)))
+        e.manual = True
+        self.assertFalse(e.on_potion(1.0))
+        e, t = self.in_battle()
+        e.battle = replace(e.battle, creature_hp=5)
+        e.on_player_move("attack", t)                    # the turn is now being shown
+        if e.battle and B.winner(e.battle) is None:
+            self.assertFalse(e.on_potion(t + 0.1))
 
 
 if __name__ == "__main__":

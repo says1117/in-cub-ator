@@ -33,10 +33,10 @@ export function connectWsSource(onState, onConnection = () => {}) {
         socket.send(JSON.stringify({ action: "demo_boss" }));
       }
     },
-    // Test only (the server's --sim): lift plant "A" or "B" off the cube, or set it down again.
-    sendSimPad(plant) {
+    // Drink the health potion (in a fight, on your own move).
+    sendPotion() {
       if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ action: "sim_pad", plant }));
+        socket.send(JSON.stringify({ action: "potion" }));
       }
     },
     // move is one of: attack, guard, special, skill

@@ -15,9 +15,11 @@ log = logging.getLogger("engine")
 
 class GameEngine:
     def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None,
-                 plant_db=None, need_pads: Optional[bool] = None):
+                 plant_db=None, need_pads: Optional[bool] = None, auto_play: bool = True):
         """plant_db (a plant_db.PlantDB) turns on NFC summoning: only plants whose tag is on a pad are
-        in the game. Without it, need_pads decides: a plant is in the game while its pad reads any tag."""
+        in the game. Without it, need_pads decides: a plant is in the game while its pad reads any tag.
+        auto_play True lets the game call bosses and play turns with nobody watching (tests and
+        simulations). The live server passes False: only a player's own moves can win water."""
         self.game = S.Game()
         # True: a plant is only in the game while its pad reads a tag (config.PLANTS_NEED_PADS)
         self.need_pads = C.PLANTS_NEED_PADS if need_pads is None else need_pads
@@ -38,7 +40,10 @@ class GameEngine:
         self._last_tick: Optional[float] = None
         # Manual battles: the player picks each move. With nobody connected (or in tests) the game
         # plays the turns itself so a fight never hangs.
-        self.manual = False
+        self.manual = False          # a game screen is connected (main.py sets this every tick)
+        self.auto_play = auto_play
+        self.alone_since: Optional[float] = None   # live play: when the last player left a boss or fight
+        self.soil_heard = set()      # plants with at least one real soil reading
         self.move_ready_at = 0.0     # earliest time the next move is accepted
         self.move_deadline = 0.0     # after this the game picks the move
         self.last_seen: Optional[float] = None  # last time the ESP32 sent a reading
@@ -62,7 +67,9 @@ class GameEngine:
     def on_soil_raw(self, plant: str, raw: int, now: float) -> list:
         self._heard_from_esp32(now)
         self.soil_pct[plant] = S.soil_pct(raw)
-        self._set(S.on_soil(self.game, plant, self.soil_pct[plant], now, self.present_plants()))
+        self.soil_heard.add(plant)
+        self._set(S.on_soil(self.game, plant, self.soil_pct[plant], now, self.present_plants(),
+                            summon=self.auto_play or self.manual))
         return self.tick(now)
 
     def _heard_from_esp32(self, now: float):
@@ -227,7 +234,8 @@ class GameEngine:
             else:
                 self._set(S.on_party_empty(self.game, now))
 
-        if self.game.mode == S.BATTLE and self.battle is not None:
+        self._check_abandoned(now)
+        if self.game.mode == S.BATTLE and self.battle is not None and self.auto_play:
             if self.manual:
                 if now >= self.move_deadline:  # nobody picked, the game does
                     self.battle = B.play_turn(self.battle, self.rng)
@@ -235,6 +243,7 @@ class GameEngine:
             elif now >= self.next_turn_at:
                 self.battle = B.play_turn(self.battle, self.rng)
                 commands = self._after_turn(now)
+        # Without auto_play a turn is only ever played by on_player_move: the player's own move.
 
         if self.lost and (now >= self.lost["until"] or self.game.mode in (S.BOSS, S.BATTLE)):
             self.lost = None
@@ -246,6 +255,28 @@ class GameEngine:
         """The boss's numbers come from how dry it is, its name from which kind it is."""
         stats = B.boss_for_tier(tier)
         return replace(stats, name=C.BOSS_KINDS[self.boss_kind]) if self.boss_kind else stats
+
+    def _check_abandoned(self, now: float):
+        """Live play: with no player connected a boss or fight waits, then leaves without water."""
+        if self.auto_play or self.manual or self.game.mode not in (S.BOSS, S.BATTLE):
+            self.alone_since = None
+            return
+        if self.alone_since is None:
+            self.alone_since = now
+            log.info("nobody is playing: the boss waits up to %.0fs", C.BOSS_ABANDON_SECONDS)
+        elif now - self.alone_since >= C.BOSS_ABANDON_SECONDS:
+            log.info("nobody came back: the boss leaves, no water")
+            self.alone_since = None
+            self.battle = None
+            self._set(S.on_abandon(self.game))
+
+    def thirsty(self) -> dict:
+        """Plants that need water now: on the cube, a real reading, and dry for long enough to call
+        a boss. The screen turns this into a notification."""
+        g = self.game
+        return {p: (self.present(p) and p in self.soil_heard and not g.stale
+                    and self.soil_pct[p] < C.SOIL_DRY_THRESHOLD_PCT
+                    and g.dry_streak[p] >= C.SOIL_DRY_READINGS_N) for p in C.PLANTS}
 
     def fighter(self, plant: str) -> Optional[B.Stats]:
         """A pad's fighting numbers. With the plant database: the summoned plant at its level, or
@@ -421,7 +452,7 @@ class GameEngine:
             # false while the last turn is still being shown: a move sent then would be thrown away
             "awaiting_move": (self.manual and B.winner(b) is None
                               and (self._last_tick or 0.0) >= self.move_ready_at),
-            "move_seconds_left": int(left + 0.999) if self.manual else None,
+            "move_seconds_left": int(left + 0.999) if (self.manual and self.auto_play) else None,
         }
 
     # schema 2: plant database additions ---------------------------------
@@ -517,6 +548,11 @@ class GameEngine:
             },
             "battle": None if b is None else self._battle_snapshot(b),
             "reward": self.last_reward,
+            # Every plant's latest soil reading, on the cube or not (None before the first one):
+            # the Storage screens show it as a live moisture meter.
+            "soil": {p: round(self.soil_pct[p], 1) if p in self.soil_heard else None for p in C.PLANTS},
+            "thirsty": self.thirsty(),
+            "auto_play": self.auto_play,
         }
         snap["schema_version"] = 1 if self.plant_db is None else 2
         if self.plant_db is not None:

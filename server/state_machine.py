@@ -64,8 +64,10 @@ def _to_walking(g: Game) -> Game:
     return replace(g, mode=WALKING, boss_plant=None, source=None, tier=0)
 
 
-def on_soil(g: Game, plant: str, pct: float, now: float, present: tuple = C.PLANTS) -> Game:
-    """`present` are the plants that are actually on the cube: only they can call a boss."""
+def on_soil(g: Game, plant: str, pct: float, now: float, present: tuple = C.PLANTS,
+            summon: bool = True) -> Game:
+    """`present` are the plants that are actually on the cube: only they can call a boss.
+    summon is False while nobody is playing: the dry count still builds, but no boss comes."""
     streaks = dict(g.dry_streak)
     streaks[plant] = streaks[plant] + 1 if pct < C.SOIL_DRY_THRESHOLD_PCT and plant in present else 0
     seen = dict(g.last_pct)
@@ -75,7 +77,7 @@ def on_soil(g: Game, plant: str, pct: float, now: float, present: tuple = C.PLAN
     if g.mode in (WALKING, COOLDOWN):
         if all(tier_for(seen[p]) == 0 for p in present):
             g = replace(g, last_tier=0)  # every plant is fine, the next dip starts fresh
-        if now < g.quiet_until:
+        if now < g.quiet_until or not summon:
             return g  # a fight has only just ended: a breather before anyone calls a boss
         # Any dry plant may call a boss. A harder tier than the last boss may skip the cooldown.
         ready = [
@@ -145,6 +147,13 @@ def on_status(g: Game, online: bool) -> Game:
     g = replace(g, stale=not online)
     if not online and g.mode in (BOSS, BATTLE):
         g = _to_walking(g)
+    return g
+
+
+def on_abandon(g: Game) -> Game:
+    """Nobody came back to the fight: the boss leaves. No reward and no cooldown."""
+    if g.mode in (BOSS, BATTLE):
+        return _to_walking(g)
     return g
 
 

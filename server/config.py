@@ -73,7 +73,10 @@ PLANT_FIGHTERS = {
 WS_ACTION_MOVE = "move"
 WS_ACTION_SIM_PAD = "sim_pad"   # only with --sim: lifts or sets down plant A or B, standing in for the NFC pad
 # If nobody picks a move in this time the game picks one, so a fight can never hang on stage.
-PLAYER_MOVE_TIMEOUT_SECONDS = 10.0
+PLAYER_MOVE_TIMEOUT_SECONDS = 10.0   # only used when the game may play itself (tests, auto_play)
+# Live play: a fight only moves when the player picks a move. If every game screen closes during a
+# boss or a fight, it waits this long for a player to come back, then the boss leaves (no water).
+BOSS_ABANDON_SECONDS = 120.0
 
 # Signature skills. Each creature has one. Every turn won with a plain move adds one charge.
 # At SKILL_CHARGE_NEED charges the skill is lit: it lands whatever the boss does, then empties.

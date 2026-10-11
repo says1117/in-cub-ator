@@ -55,7 +55,8 @@ def load_plant_db():
 
 
 def make_engine() -> GameEngine:
-    return GameEngine(creatures=battle.load_creatures(), plant_db=load_plant_db())
+    # auto_play=False: the game never fights by itself. Only a player's own moves win water.
+    return GameEngine(creatures=battle.load_creatures(), plant_db=load_plant_db(), auto_play=False)
 
 
 async def main():

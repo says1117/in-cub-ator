@@ -527,10 +527,8 @@ export default class StorageScene extends Phaser.Scene {
       return "I don't feel well!";
     }
 
-    if (
-      Number.isFinite(plant.soilMoisture) &&
-      plant.soilMoisture < 40
-    ) {
+    // Same rule as the game: thirsty once the soil has been dry long enough to call a boss.
+    if (plant.thirsty) {
       return "I need more water!";
     }
 

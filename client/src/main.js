@@ -10,6 +10,7 @@ import "@fontsource/silkscreen/700.css";
 import "@fontsource/press-start-2p/400.css";
 import { connectWsSource } from "./state/wsSource.js";
 import { feedPlants } from "./state/plantFeed.js";
+import { mountThirstNotifier } from "./ui/notify.js";
 import { mountStatusBar } from "./ui/statusBar.js";
 
 const routes = {
@@ -126,11 +127,16 @@ const hud = mountStatusBar(document.getElementById("app"), {
   onStorage: () => navigate("/storage"),
   onSimPad: (plant) => server && server.sendSimPad(plant),
 });
+let latest = null;
+const thirst = mountThirstNotifier(document.getElementById("app"), (plant) =>
+  (latest && latest.fighters && latest.fighters[plant] && latest.fighters[plant].name) || `Plant ${plant}`);
 server = connectWsSource(
   (state) => {
+    latest = state;
     game.registry.set("serverState", state);
     feedPlants(state);
     hud.render(state);
+    thirst.update(state);
   },
   (connected) => hud.setConnected(connected)
 );

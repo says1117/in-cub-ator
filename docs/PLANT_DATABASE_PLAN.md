@@ -4,7 +4,7 @@
 
 **Goal:** each real plant has an NFC tag. A plant whose tag is on a pad is summoned: it walks behind the trainer and can fight. A plant whose tag is off the pads is not in the game. Each plant has its own level, XP, fighting type, moves, and animations for those moves.
 
-**Rule zero:** the pumps must keep working exactly as they do today. Nothing in this plan may change when or how long a pump runs.
+**Rule zero:** the pumps must keep working exactly as they do today. The watering rules do not change: a won fight waters the pot that was dry, for the length set by the boss tier (at most 3000 ms), only if the soil is dry and the cube is online, and never more often than the reward gap. The one thing that can move is *timing*: levelled-up plants win sooner, so the watering after a fight can come a little earlier. If the team wants identical timing, set `HP_PER_LEVEL = 0` and a very large `ATK_LEVELS_PER_POINT` in `server/config.py` (levels then show but do not change stats). Tests prove both: identical commands with growth off, and every command following the rules with growth on.
 
 **Branch for this work:** `plant-db-tests` (firmware + Role 2 server and client, from `hardware-jetson`).
 

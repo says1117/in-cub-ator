@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { paintEnchantedForest, addForestAmbience } from "../theme/enchantedForest.js";
 import { createBossEntrance } from "../render/bossEntrance.js";
-import { ensureDragonBackTexture } from "../render/dragonBack.js";
+import { preloadHeroArt, ensureHeroTexture, setHeroWalking, setHeroMood, HERO_BODY_SHARE } from "../render/heroSprite.js";
 import { preloadBossArt } from "../data/bosses.js";
 import { preloadPlantArt } from "../data/plants.js";
 import { createPetParade } from "../render/petParade.js";
@@ -14,10 +14,7 @@ export default class AdventureScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image(
-      "characterPhoto",
-      "/assets/characters/IMG_4990.png"
-    );
+    preloadHeroArt(this);
     preloadBossArt(this);
     preloadPlantArt(this);
   }
@@ -131,7 +128,7 @@ export default class AdventureScene extends Phaser.Scene {
 
     // The shadow the dragon throws: its own outline laid on the ground (render/castShadow.js)
     const dragonPicture = this.textures.get("plantHero").getSourceImage();
-    this.castShadow = createCastShadow(this, outlineOfPicture(this, "plantHero"), { size: 115 / dragonPicture.height });
+    this.castShadow = createCastShadow(this, outlineOfPicture(this, "plantHero"), { size: Math.round(128 / HERO_BODY_SHARE) / dragonPicture.height });
     this.castShadow.setPosition(190, 358).setDepth(8.1);
 
     // CHARACTER
@@ -143,7 +140,7 @@ export default class AdventureScene extends Phaser.Scene {
     this.player.setDepth(10);
     this.player.setFlipX(false);
 
-    this.characterHeight = 115;
+    this.characterHeight = Math.round(128 / HERO_BODY_SHARE);   // the dragon stands 128 tall; its picture is taller, with room above for it to fly up into
 
     this.player.setDisplaySize(
       this.characterHeight *
@@ -158,7 +155,9 @@ export default class AdventureScene extends Phaser.Scene {
     // LEGS: the picture is cut at legCutY. Everything above it is the body,
     // everything below it is the left and right foot, which step in turns.
     // The body no longer includes the flat legs, only the moving feet are drawn there.
-    const legCutY = 0.78;
+    // The dragon steps with its own legs inside its picture (render/heroSprite.js), so nothing is cut
+    // off for the feet any more: the two foot pictures are empty and only kept for the code that moves them.
+    const legCutY = 1;
     const frameW = this.player.width;
     const frameH = this.player.height;
     this.player.setCrop(0, 0, frameW, frameH * legCutY);
@@ -168,7 +167,7 @@ export default class AdventureScene extends Phaser.Scene {
 
     // Where the feet are cut apart: the middle of the black gap between the legs.
     // That is a bit right of the picture's centre (column 51 of 88).
-    const splitX = frameW * 0.58;
+    const splitX = frameW * 0.5;
 
     const makeFoot = (cropX, cropW) => {
       const foot = this.add.image(
@@ -226,7 +225,7 @@ export default class AdventureScene extends Phaser.Scene {
         this.cameras.main.fadeIn(300, 7, 5, 26);
         return;
       }
-      ensureDragonBackTexture(this);
+      ensureHeroTexture(this);
       this.inBattleScene = true;
       this.scene.launch("BossScene");
       this.scene.sleep();
@@ -247,135 +246,10 @@ export default class AdventureScene extends Phaser.Scene {
   // CHARACTER PHOTO PROCESSING
   // ==========================================
 
+  // The dragon: a moving picture made every frame from its cut-out layers (render/heroSprite.js).
   createCharacterTexture() {
-    const source = this.textures
-      .get("characterPhoto")
-      .getSourceImage();
-
-    const cropX = Math.floor(source.width * 0.075);
-    const cropY = Math.floor(source.height * 0.045);
-    const cropW = Math.floor(source.width * 0.89);
-    const cropH = Math.floor(source.height * 0.94);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = cropW;
-    canvas.height = cropH;
-
-    const ctx = canvas.getContext("2d", {
-      willReadFrequently: true
-    });
-
-    ctx.drawImage(
-      source,
-      cropX, cropY, cropW, cropH,
-      0, 0, cropW, cropH
-    );
-
-    const imageData = ctx.getImageData(
-      0, 0, cropW, cropH
-    );
-
-    const pixels = imageData.data;
-    const visited = new Uint8Array(cropW * cropH);
-    const queue = new Int32Array(cropW * cropH);
-
-    let head = 0;
-    let tail = 0;
-
-    const isBackground = (index) => {
-      const p = index * 4;
-
-      const r = pixels[p];
-      const g = pixels[p + 1];
-      const b = pixels[p + 2];
-
-      return (
-        Math.min(r, g, b) > 115 &&
-        Math.max(r, g, b) - Math.min(r, g, b) < 38
-      );
-    };
-
-    const addPixel = (x, y) => {
-      if (
-        x < 0 || y < 0 ||
-        x >= cropW || y >= cropH
-      ) return;
-
-      const index = y * cropW + x;
-
-      if (visited[index] || !isBackground(index)) {
-        return;
-      }
-
-      visited[index] = 1;
-      queue[tail++] = index;
-    };
-
-    for (let x = 0; x < cropW; x++) {
-      addPixel(x, 0);
-      addPixel(x, cropH - 1);
-    }
-
-    for (let y = 0; y < cropH; y++) {
-      addPixel(0, y);
-      addPixel(cropW - 1, y);
-    }
-
-    while (head < tail) {
-      const index = queue[head++];
-
-      pixels[index * 4 + 3] = 0;
-
-      const x = index % cropW;
-      const y = Math.floor(index / cropW);
-
-      addPixel(x - 1, y);
-      addPixel(x + 1, y);
-      addPixel(x, y - 1);
-      addPixel(x, y + 1);
-    }
-
-    ctx.putImageData(imageData, 0, 0);
-
-    // Remove leftover background pixels near the feet
-    const cleanData = ctx.getImageData(0, 0, cropW, cropH);
-    const data = cleanData.data;
-
-    const startY = Math.floor(cropH * 0.90);
-
-    for (let y = startY; y < cropH; y++) {
-      for (let x = 0; x < cropW; x++) {
-        const i = (y * cropW + x) * 4;
-
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-
-        // Remove neutral gray pixels
-        const isGray =
-          Math.abs(r - g) < 22 &&
-          Math.abs(g - b) < 22 &&
-          r > 65 &&
-          r < 210;
-
-        if (isGray) {
-          data[i + 3] = 0;
-        }
-      }
-    }
-
-    ctx.putImageData(cleanData, 0, 0);    
-
-    const pixelCanvas = document.createElement("canvas");
-    pixelCanvas.width = 88;
-    pixelCanvas.height = 160;
-
-    const pixelCtx = pixelCanvas.getContext("2d");
-    pixelCtx.imageSmoothingEnabled = false;
-
-    pixelCtx.drawImage(canvas, 0, 0, 88, 160);
-
-    this.textures.addCanvas("plantHero", pixelCanvas);
+    ensureHeroTexture(this);
+    setHeroMood(null);   // back from a fight: it chooses its own face again
   }
 
   // ==========================================
@@ -1947,6 +1821,7 @@ export default class AdventureScene extends Phaser.Scene {
     }
 
     // CHARACTER
+    setHeroWalking(this.walking);   // its legs, arms, tail and wing follow (render/heroSprite.js)
     this.animateCharacter(time);
   }
 }

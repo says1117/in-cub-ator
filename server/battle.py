@@ -134,6 +134,11 @@ def plan(b: Battle, rng: random.Random) -> Battle:
     return replace(b, intent=intent, boss_next=real)
 
 
+def plant_hit(b: Battle, factor: float = 1.0) -> int:
+    """What the plant's hit takes off the boss: its attack, times the player's standing buff."""
+    return int(b.creature.atk * factor * C.PLAYER_DAMAGE_BUFF + 0.5)
+
+
 def plain_hit(b: Battle) -> int:
     """A plain boss hit: its attack, plus the bonus once it is enraged."""
     return b.boss.atk + (C.ENRAGE_ATK_BONUS[b.tier] if b.enraged else 0)
@@ -205,7 +210,7 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
     took = 0  # what the plant loses this turn
 
     if use_skill:
-        damage = round(b.creature.atk * skill.get("damage_factor", 0))
+        damage = plant_hit(b, skill.get("damage_factor", 0))
         heal = min(skill.get("heal", 0), b.creature.hp - c_hp)
         b_hp -= damage
         c_hp += heal
@@ -218,9 +223,9 @@ def resolve_turn(b: Battle, creature_move: str, boss_move: str) -> Battle:
         log.update(skill=skill["name"], damage=damage, healed=heal)
     else:
         if BEATS[creature_move] == boss_move:
-            b_hp, who = b_hp - b.creature.atk, "creature"
+            b_hp, who = b_hp - plant_hit(b), "creature"
             charge = min(C.SKILL_CHARGE_NEED, charge + 1)
-            log["damage"] = b.creature.atk
+            log["damage"] = plant_hit(b)
         elif BEATS[boss_move] == creature_move:
             took, who = boss_hit(b, boss_move), "boss"
         else:

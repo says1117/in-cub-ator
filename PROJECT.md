@@ -423,6 +423,8 @@ soil. It is for showing the project on stage.
 - After the boss appears, everything is the normal flow. Winning runs the pump, even on wet
   soil. The pump cap still applies. There is no wait between waterings any more
   (`REWARD_MIN_GAP_SECONDS = 0` in `config.py`): every win waters, so repeated demo wins can overwater a pot.
+- The player's plant always hits 1.3 times as hard (`PLAYER_DAMAGE_BUFF = 1.3` in `config.py`). The boss is not buffed.
+  The rule tests run with the buff at 1.0; at 1.3 a player who mashes one move can sometimes win (`BalanceTests.test_one_key_loses` fails).
 
 A laptop can do the same by publishing `A` or `B` to `incube/debug/boss`.
 
@@ -668,7 +670,7 @@ are given the time as a number, which is why they can be tested quickly.
 | `theme/enchantedForest.js` | paints the forest |
 | `render/bossEntrance.js` | the boss's arrival |
 | `render/bossRig.js`, `data/chomperRig.js` | the moving boss |
-| `render/dragonBack.js` | the dragon seen from behind, drawn pixel by pixel |
+| `render/heroSprite.js` | the dragon who walks the forest: nine cut-out layers (`public/assets/characters/dragon`) put together every frame, so its tail, wing, hat, head, arms and legs all move. Its face is drawn in code, so it has moods (`setHeroMood`), and it can take fright and fly (`heroStartle`). Also makes the back view shown when it turns to face a boss |
 | `data/bosses.js` | which picture each tier uses, what it calls its moves, and its colours |
 | `data/plants.js` | the two plants: looks, arm poses, and the name, action and effect of each move |
 | `data/plantRigs.js` | where each moving piece of the plants sits (made by a script from the pictures) |

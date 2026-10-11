@@ -196,28 +196,61 @@ export function createBattleHud(scene, layers) {
   const vigorText = text(root, 215, 47, "", { color: DIM });
 
   // the plant waiting on the bench
-  plate(back, 6, 73, 140, 16, { cut: 3 });
-  const benchName = text(root, 12, 76, "", {});
-  const benchHp = bar(root, 52, 79, 40, 4, 0x5fe36c);
-  const benchTag = text(root, 98, 76, "", { color: DIM });
+  plate(back, 6, 73, 140, 28, { cut: 3 });
+  text(root, 12, 76, "BACKUP", { color: DIM, size: 6 });
+  const benchName = text(root, 12, 84, "", { bold: true });
+  const benchHp = bar(root, 12, 95, 62, 3, 0x5fe36c);
   // The bench plate is also the swap button: click it (or press 5) on your move to change plants.
+  // The button lights up gold and beats when a swap is allowed, and a marker stands over the
+  // waiting plant itself, which can be clicked too.
   const benchEdge = gfx(root);
+  const benchButton = gfx(root);
+  const benchTag = text(root, 112, 82, "", { ox: 0.5, size: 10, bold: true });
   let swapOk = false;
-  const benchZone = scene.add.zone(6, 73, 140, 16).setOrigin(0).setInteractive({ useHandCursor: true });
+  const pickSwap = () => { if (swapOk && api.onPick) api.onPick("swap"); };
+  const benchZone = scene.add.zone(6, 73, 140, 28).setOrigin(0).setInteractive({ useHandCursor: true });
   root.add(benchZone);
-  benchZone.on("pointerdown", () => { if (swapOk && api.onPick) api.onPick("swap"); });
+  benchZone.on("pointerdown", pickSwap);
+  const beat = { v: 0 };
+  scene.tweens.add({ targets: beat, v: 1, duration: 520, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+
+  // the marker over the waiting plant: a ring at its feet and a bobbing tag above it
+  const mark = scene.add.container(0, 0).setVisible(false);
+  root.add(mark);
+  const markRing = gfx(mark);
+  const markTag = scene.add.container(0, 0);   // sits over the plant's head
+  mark.add(markTag);
+  const markBob = scene.add.container(0, 0);   // and bobs there
+  markTag.add(markBob);
+  const markPlate = gfx(markBob);
+  markPlate.fillStyle(INK, 0.9); markPlate.fillRect(-25, -15, 50, 15); markPlate.fillTriangle(-5, 0, 5, 0, 0, 6);
+  markPlate.fillStyle(GOLD, 1); markPlate.fillRect(-24, -14, 48, 13); markPlate.fillTriangle(-4, -1, 4, -1, 0, 4);
+  text(markBob, 0, -12, "SWAP", { ox: 0.5, size: 9, bold: true, color: "#1a1204", shadow: false });
+  scene.tweens.add({ targets: markBob, y: -5, duration: 460, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  const markZone = scene.add.zone(0, 0, 60, 80).setOrigin(0.5, 1).setInteractive({ useHandCursor: true });
+  mark.add(markZone);
+  markZone.on("pointerdown", pickSwap);
+  let markSize = { w: 30 };
+  scene.events.on("update", () => {
+    if (!mark.visible) return;
+    markRing.clear();
+    markRing.lineStyle(2, GOLD, 0.35 + 0.55 * beat.v);
+    markRing.strokeEllipse(0, 0, markSize.w * (1.5 + 0.2 * beat.v), 9 + 2 * beat.v);
+    markRing.lineStyle(1, 0xffffff, 0.5 * (1 - beat.v));
+    markRing.strokeEllipse(0, 0, markSize.w * (1.9 + 0.5 * beat.v), 12 + 3 * beat.v);
+  });
 
   // The health potion, under the bench plate: click it (or press 6) on your move. It does not use the turn.
-  plate(back, 6, 92, 140, 16, { cut: 3 });
+  plate(back, 6, 104, 140, 16, { cut: 3 });
   const potionIcon = gfx(root);
-  potionIcon.fillStyle(0xffffff, 1); potionIcon.fillRect(15, 95, 3, 3);                 // the neck
-  potionIcon.fillStyle(0xff6b8a, 1); potionIcon.fillRect(13, 98, 7, 7);                 // the flask
-  potionIcon.fillStyle(0xffffff, 0.7); potionIcon.fillRect(14, 99, 2, 2);
-  const potionName = text(root, 25, 95, "POTION", {});
-  const potionTag = text(root, 140, 95, "", { ox: 1, color: "#9dffb0" });
+  potionIcon.fillStyle(0xffffff, 1); potionIcon.fillRect(15, 107, 3, 3);                // the neck
+  potionIcon.fillStyle(0xff6b8a, 1); potionIcon.fillRect(13, 110, 7, 7);                // the flask
+  potionIcon.fillStyle(0xffffff, 0.7); potionIcon.fillRect(14, 111, 2, 2);
+  const potionName = text(root, 25, 107, "POTION", {});
+  const potionTag = text(root, 140, 107, "", { ox: 1, color: "#9dffb0" });
   const potionEdge = gfx(root);
   let potionOk = false;
-  const potionZone = scene.add.zone(6, 92, 140, 16).setOrigin(0).setInteractive({ useHandCursor: true });
+  const potionZone = scene.add.zone(6, 104, 140, 16).setOrigin(0).setInteractive({ useHandCursor: true });
   root.add(potionZone);
   potionZone.on("pointerdown", () => { if (api.onPotion) api.onPotion(); });
 
@@ -435,14 +468,25 @@ export function createBattleHud(scene, layers) {
       potionTag.setText(!p ? "" : p.ready ? (f.hp >= f.max ? "FULL HP" : `+${p.heal} HP  6`) : `${p.seconds_left}S`)
         .setColor(!p || !p.ready ? "#ff8f90" : potionOk ? "#ffd867" : "#9dffb0");
       potionEdge.clear();
-      if (potionOk) { potionEdge.lineStyle(1, GOLD, 0.95); potionEdge.strokeRect(5.5, 91.5, 141, 17); }
+      if (potionOk) { potionEdge.lineStyle(1, GOLD, 0.95); potionEdge.strokeRect(5.5, 103.5, 141, 17); }
 
       swapOk = Boolean(view.canSwap && b && b.state !== "down");
       const swapping = view.chosen === "swap";
-      benchTag.setText(b ? (b.state === "down" ? "DOWN" : swapOk || swapping ? "SWAP 5" : "READY") : "")
-        .setColor(b && b.state === "down" ? "#ff8f90" : swapOk || swapping ? "#ffd867" : "#9dffb0");
+      const down = Boolean(b && b.state === "down");
+      benchTag.setText(b ? (down ? "DOWN" : swapping ? "GO!" : swapOk ? "SWAP 5" : "SWAP") : "")
+        .setColor(down ? "#ff8f90" : swapOk || swapping ? "#1a1204" : DIM).setShadow(1, 1, "#05070f", 0, false, !(swapOk || swapping));
+      benchButton.clear();
+      if (b && !down) {
+        benchButton.fillStyle(INK, 0.6); benchButton.fillRect(80, 76, 63, 23);
+        benchButton.fillStyle(swapping ? 0xffffff : swapOk ? GOLD : TRACK, 1); benchButton.fillRect(81, 77, 61, 21);
+        if (swapOk) { benchButton.fillStyle(0xffffff, 0.35); benchButton.fillRect(81, 77, 61, 3); }
+      }
       benchEdge.clear();
-      if (swapOk || swapping) { benchEdge.lineStyle(1, swapping ? 0xffffff : GOLD, 0.95); benchEdge.strokeRect(5.5, 72.5, 141, 17); }
+      if (swapOk || swapping) { benchEdge.lineStyle(2, swapping ? 0xffffff : GOLD, 0.95); benchEdge.strokeRect(5, 72, 142, 30); }
+      // the marker over the plant itself
+      const at = view.benchAt;
+      mark.setVisible(Boolean(swapOk && at));
+      if (at) { mark.setPosition(at.x, at.y); markTag.y = -at.h - 8; markSize = { w: at.w }; markZone.setSize(at.w * 2, at.h); }
 
       bossName.setText(view.boss.name.toUpperCase());
       bossAccent.fillColor = view.boss.colour;
@@ -478,7 +522,7 @@ export function createBattleHud(scene, layers) {
 
     // A banner that slides in from one side to call out a move.
     callout(side, who, move, color) {
-      const c = scene.add.container(0, 114);   // below the bench and potion plates
+      const c = scene.add.container(0, 126);   // below the bench and potion plates
       over.add(c);
       const g = gfx(c);
       const small = text(c, 0, 4, who.toUpperCase(), { color: hex(color) });

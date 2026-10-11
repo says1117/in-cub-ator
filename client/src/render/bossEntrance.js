@@ -21,7 +21,7 @@ import { audio } from "../audio.js";
 import Phaser from "phaser";
 import { bossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "./bossRig.js";
-import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "./dragonBack.js";
+import { ensureHeroBackTexture, HERO_BACK_KEY, setHeroMood, heroStartle, showHeroBack } from "./heroSprite.js";
 
 // The three places it touches the ground, from far to near. size is a share of full size.
 const FAR = { x: 458, y: 262, size: 0.14 };   // first seen, deep between the trees
@@ -105,6 +105,8 @@ export function createBossEntrance(scene, onStep = () => {}) {
     }
     debris = [];
     mendTree();
+    showHeroBack(false);
+    setHeroMood(null);
     resetDragon();
     onStep("reset", scene.registry.get("serverState"));
   }
@@ -131,6 +133,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     tween({ targets: mark, scale: 1, duration: 160, ease: "Back.easeOut" });
     tween({ targets: mark, alpha: 0, y: mark.y - 10, delay: 620, duration: 200 });
     tween({ targets: dragonParts(), y: groundY() - 12, duration: 110, yoyo: true, ease: "Quad.easeOut" });
+    setHeroMood("shock", 900);
   }
 
   // One bound from one spot on the ground to the next, closer one.
@@ -193,6 +196,8 @@ export function createBossEntrance(scene, onStep = () => {}) {
 
     // crouch, then the first bound: still far away, so it is small and the thud is small
     tween({ targets: boss, scaleY: boss.scaleY * 0.7, duration: 110, yoyo: true });
+    // the moment it jumps the dragon takes fright and is in the air, flapping, before it knows it
+    after(230, () => heroStartle(1380));
     after(230, () => bound(fullScale, FAR, MID, 500, 190, () => {
       scene.cameras.main.shake(140, 0.003);
       audio.play("bound");
@@ -537,7 +542,9 @@ export function createBossEntrance(scene, onStep = () => {}) {
   function turnAround() {
     const parts = dragonParts();
     const x = homeX - SKID;
-    ensureDragonBackTexture(scene);
+    ensureHeroBackTexture(scene);
+    showHeroBack(true);
+    setHeroMood("brave");   // fright over: it squares up
 
     tween({
       targets: parts,
@@ -546,7 +553,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
       ease: "Quad.easeIn",
       onComplete: () => {
         for (const part of parts) part.setVisible(false);
-        back = keep(scene.add.image(x, groundY(), DRAGON_BACK_KEY).setOrigin(0.5, 1).setDepth(10));
+        back = keep(scene.add.image(x, groundY(), HERO_BACK_KEY).setOrigin(0.5, 1).setDepth(10));
         // a touch bigger than the side view: it is the one closest to us
         const scale = (scene.baseHeight * 1.06) / back.height;
         back.setScale(0, scale);
@@ -723,7 +730,7 @@ export function createBossEntrance(scene, onStep = () => {}) {
     done = false;
     homeX = scene.player.x;
 
-    ensureDragonBackTexture(scene);
+    ensureHeroBackTexture(scene);
     boss = keep(scene.add.image(FAR.x, FAR.y, art.key).setOrigin(0.5, 0.93));
     const fullScale = art.height / boss.height;
 

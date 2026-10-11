@@ -7,7 +7,7 @@ import { playBattleFx } from "../render/battleFx.js";
 import { playBossFx } from "../render/bossFx.js";
 import { createFxKit } from "../render/fxKit.js";
 import { createBattleHud } from "../ui/battleHud.js";
-import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
+import { preloadHeroArt, ensureHeroBackTexture, setHeroWalking, setHeroMood, heroFlutter, HERO_BACK_KEY, HERO_BODY_SHARE } from "../render/heroSprite.js";
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 import { audio } from "../audio.js";
 import { addBattleForest } from "../theme/enchantedForest.js";
@@ -16,8 +16,8 @@ const ENEMY_HEIGHT = 250;   // how tall the tier 1 boss is drawn here, roots inc
 
 // Where everyone stands on the 1280 x 720 stage. size is a share of the plant picture's own size.
 const FIGHTER = { x: 330, y: 664, size: 2.0 };     // the plant that is fighting: right in front of us, the biggest thing on the field
-const BENCH = { x: 150, y: 600, size: 0.62 };      // the plant waiting its turn, or resting after it fainted: behind the fighter
-const TRAINER = { x: 58, y: 596, height: 180 };    // the dragon, who sends the plants in
+const BENCH = { x: 216, y: 566, size: 0.8 };      // the plant waiting its turn, or resting after it fainted: behind the fighter
+const TRAINER = { x: 78, y: 640, height: Math.round(170 / HERO_BODY_SHARE) };    // the dragon, who sends the plants in
 const BOSS = { x: 742, y: 534 };                   // the spot the boss stands on. It must be ON THE DARK PATH (stage y 490 to 600), in the gap between our plant and the move cards (stage x 620 to 850): higher is the hazy backdrop, where it looks as if it is flying
 
 const CALL = 800;         // ms a line such as "EMBER used VINE HAYMAKER!" is up before the move starts
@@ -32,6 +32,7 @@ export default class BossScene extends Phaser.Scene {
   preload() {
     preloadBossArt(this);
     preloadPlantArt(this);
+    preloadHeroArt(this);
   }
 
   create() {
@@ -207,8 +208,10 @@ export default class BossScene extends Phaser.Scene {
     // The dragon no longer fights. It stands at the back, facing us, and sends the plants in.
     // Its usual picture is made by the forest scene; if the page was opened straight on the
     // battle, that picture does not exist yet and the view from behind is used.
-    ensureDragonBackTexture(this);
-    const trainerKey = this.textures.exists("plantHero") ? "plantHero" : DRAGON_BACK_KEY;
+    ensureHeroBackTexture(this);
+    setHeroWalking(false);   // in a fight it stands and watches,
+    setHeroMood("brave");    // with its brave face on
+    const trainerKey = this.textures.exists("plantHero") ? "plantHero" : HERO_BACK_KEY;
     this.textures.get(trainerKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
     this.trainer = this.add.image(TRAINER.x, TRAINER.y, trainerKey).setOrigin(0.5, 1);
     this.trainer.setScale(TRAINER.height / this.trainer.height);
@@ -287,6 +290,7 @@ export default class BossScene extends Phaser.Scene {
 
   // The dragon throws an arm forward: "go!"
   trainerCall() {
+    setHeroMood("shout", 520);
     this.tweens.add({ targets: this.trainer, angle: 9, x: TRAINER.x + 12, duration: 120, yoyo: true, ease: "Quad.easeOut" });
   }
 
@@ -409,6 +413,10 @@ export default class BossScene extends Phaser.Scene {
         hp: hold ? hold.hp : battle.creature_hp, max: hold ? hold.max : battle.creature_max_hp,
       },
       bench,
+      benchAt: benchId && this.fighters[benchId] ? {
+        x: this.root.x + BENCH.x * this.root.scaleX, y: this.root.y + BENCH.y * this.root.scaleY,
+        w: 34, h: PLANTS[benchId].rig.height * BENCH.size * this.root.scaleY,
+      } : null,
       boss: {
         name: boss.name, hp: hold ? hold.bossHp : battle.boss_hp, max: boss.max_hp, tier: boss.tier, demo: boss.source === "demo",
         colour: bossPalette(boss).main, enraged: hold ? hold.enraged : battle.enraged,
@@ -711,6 +719,7 @@ export default class BossScene extends Phaser.Scene {
       this.hold.hp = swap ? 0 : battle.creature_hp;
       this.refreshHud();
       actor.play("hurt", { force: 1.3 });
+      setHeroMood("worry", 900);
       this.flash(actor);
       audio.play(move.heavy || playerLoss >= 12 ? "crit" : "hurt");
       if (enemy.emote) enemy.emote("smug", 1000, 120);
@@ -888,6 +897,7 @@ export default class BossScene extends Phaser.Scene {
         this.hold.hp = Math.max(0, before - loss);
         this.refreshHud();
         actor.play("hurt", { force: 1.3 });
+        setHeroMood("worry", 900);
         this.flash(actor);
         audio.play(move.heavy || loss >= 12 ? "crit" : "hurt");
         if (enemy.emote) enemy.emote("smug", 1000, 120);
@@ -926,6 +936,8 @@ export default class BossScene extends Phaser.Scene {
   showResult(won, state) {
     if (this.result) { if (won && state.reward) this.showReward(state.reward); return; }
     this.result = won ? "win" : "loss";
+    setHeroMood(won ? "cheer" : "sad");
+    if (won) for (const ms of [200, 1100, 2000]) this.time.delayedCall(ms, () => heroFlutter(700, 34));
     // the last blow plays out before anything is announced
     const wait = Math.max(0, this.busyUntil - this.time.now);
     this.resultShownAt = this.time.now + wait + (won ? 900 : 300);

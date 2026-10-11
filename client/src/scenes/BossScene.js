@@ -35,7 +35,6 @@ export default class BossScene extends Phaser.Scene {
     this.resultShownAt = 0;
     this.result = null;
     this.leaving = false;
-    this.rewardTimer = null;
     this.resultText = null;   // left over from the last fight otherwise: this scene object is reused
     this.rewardBar = null;
     this.rewardLabel = null;
@@ -70,7 +69,6 @@ export default class BossScene extends Phaser.Scene {
     this.scale.on("resize", this.onResize, this);
     this.stateListener = (_parent, state) => this.applyServerState(state);
     this.registry.events.on("changedata-serverState", this.stateListener);
-    this.keys = this.input.keyboard.addKeys("ONE,TWO,THREE,FOUR");
     this.keyListener = (event) => {
       const moves = { Digit1: "attack", Digit2: "guard", Digit3: "special", Digit4: "skill" };
       if (moves[event.code]) this.pickMove(moves[event.code]);
@@ -80,7 +78,6 @@ export default class BossScene extends Phaser.Scene {
       this.scale.off("resize", this.onResize, this);
       this.registry.events.off("changedata-serverState", this.stateListener);
       this.input.keyboard.off("keydown", this.keyListener);
-      if (this.rewardTimer) this.rewardTimer.remove(false);
     });
 
     this.onResize();
@@ -1538,45 +1535,6 @@ drawAncientArch(x, y, scale = 1) {
   }
 
   // --------------------------------------------------
-  // CHARACTERS
-  // --------------------------------------------------
-
-
-
-  makeMinty(x, y) {
-    const c = this.add.container(x, y);
-
-    const e = (dx, dy, w, h, color, rot = 0) => {
-      const s = this.add.ellipse(dx, dy, w, h, color);
-      s.rotation = rot;
-      c.add(s);
-    };
-
-    e(0, 74, 65, 175, 0x6bdc8b);
-    e(-60, 45, 92, 42, 0x3abf88, -0.5);
-    e(60, 45, 92, 42, 0x3abf88, 0.5);
-
-    for (let i = 0; i < 9; i++) {
-      const a = i * Math.PI * 2 / 9;
-
-      e(
-        Math.cos(a) * 73,
-        Math.sin(a) * 62 - 40,
-        85, 38,
-        i % 2 ? 0x36b98a : 0x65e5a4,
-        a
-      );
-    }
-
-    e(0, -35, 155, 143, 0x8af3b0);
-    e(-30, -44, 14, 20, 0x173e36);
-    e(30, -44, 14, 20, 0x173e36);
-    e(0, -6, 18, 8, 0xd96c91);
-
-    return c;
-  }
-
-  // --------------------------------------------------
   // BATTLE UI
   // --------------------------------------------------
 
@@ -1604,13 +1562,6 @@ drawAncientArch(x, y, scale = 1) {
     );
 
     return { fill, maxWidth: w - 8 };
-  }
-
-  setBar(bar, ratio) {
-    bar.fill.width = Math.max(
-      0,
-      bar.maxWidth * Phaser.Math.Clamp(ratio, 0, 1)
-    );
   }
 
   buildHUD() {
@@ -1745,12 +1696,9 @@ drawAncientArch(x, y, scale = 1) {
     if (hasBossRig(this, bossArt(1))) {
       // made of moving pieces: it sways on its own
       this.enemySprite = createBossRig(this, bossArt(1), 905, 458, ENEMY_HEIGHT, { light: BATTLE_LIGHT });
-    } else if (this.textures.exists(bossArt(1).key)) {
+    } else {
       this.enemySprite = this.add.image(905, 458, bossArt(1).key).setOrigin(0.5, 0.93);
       this.fitEnemy(1);
-    } else {
-      this.enemySprite = this.makeCaterpillar(915, 355);
-      this.enemySprite.setScale(0.85);
     }
     this.actorLayer.add(this.enemySprite);
 

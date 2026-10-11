@@ -1,4 +1,9 @@
-"""Run the game server: python main.py"""
+"""Run the game server: python main.py
+
+  --sim             made-up soil moisture for both plants instead of real sensors
+  --offline         no Mosquitto needed: an in-process loopback replaces the broker (implies --sim)
+  --ws-port=N       serve the WebSocket on port N instead of config.WS_PORT
+"""
 import asyncio
 import logging
 import random
@@ -37,15 +42,29 @@ def route(engine: GameEngine, topic: str, payload: str, now: float) -> list:
     return []
 
 
+def _flag_value(name: str):
+    for arg in sys.argv[1:]:
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 async def main():
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     engine = GameEngine(creatures=battle.load_creatures())
+    if _flag_value("--ws-port"):
+        C.WS_PORT = int(_flag_value("--ws-port"))
     feed = api.Feed(engine, queue)
-    client = mqtt_io.connect(loop, queue)
+    offline = "--offline" in sys.argv
+    if offline:
+        client = mqtt_io.LoopbackBus(loop, queue)
+        log.info("OFFLINE: no broker, messages loop back inside the server")
+    else:
+        client = mqtt_io.connect(loop, queue)
 
     sim = None
-    if "--sim" in sys.argv:
+    if "--sim" in sys.argv or offline:
         # TEMPORARY: made-up moisture for both plants instead of real sensors
         sim = {p: MoistureSim(start=random.uniform(*C.SIM_START_PCT[p])) for p in C.PLANTS}
         C.COOLDOWN_SECONDS = C.SIM_COOLDOWN_SECONDS

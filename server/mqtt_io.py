@@ -1,12 +1,15 @@
-"""MQTT glue. paho runs in its own thread, so messages are handed to asyncio safely."""
-import asyncio
+"""MQTT glue. paho runs in its own thread, so messages are handed to asyncio safely.
 
-import paho.mqtt.client as mqtt
+`LoopbackBus` stands in for the broker in `--offline` mode: whatever is published is handed
+straight back to the server's own queue, so the simulator and the game run with no Mosquitto."""
+import asyncio
 
 import config as C
 
 
-def connect(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> mqtt.Client:
+def connect(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+    import paho.mqtt.client as mqtt  # only needed when a real broker is used
+
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
     def on_connect(c, userdata, flags, rc, props=None):
@@ -25,3 +28,15 @@ def connect(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> mqtt.Clien
     client.connect(C.MQTT_HOST, C.MQTT_PORT)
     client.loop_start()
     return client
+
+
+class LoopbackBus:
+    """A broker in a box: publish() delivers to this process's own queue, on the event loop."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+        self.loop = loop
+        self.queue = queue
+
+    def publish(self, topic: str, payload, qos: int = 0):
+        self.loop.call_soon(self.queue.put_nowait, (topic, str(payload)))
+        return None

@@ -92,6 +92,8 @@ export default class BossScene extends Phaser.Scene {
       this.input.keyboard.off("keydown", this.keyListener);
       this.tweens.timeScale = 1;
       this.time.timeScale = 1;
+      this.audio("setIntensity", 0);
+      this.audio("setHeartbeat", false);
     });
 
     this.cameras.main.fadeIn(300, 7, 5, 26);
@@ -871,5 +873,19 @@ export default class BossScene extends Phaser.Scene {
     }
     const secs = this.hud.updateTimer(performance.now());
     if (secs != null && secs <= 3 && secs > 0) this.sfx("tick", { pitch: 1 + (3 - secs) * 0.12 });
+    // The music grows tense in the last seconds to pick or when the boss is nearly beaten, and a
+    // heartbeat comes in when the plant is low. Only told to the audio module when it changes.
+    const b = this.shown;
+    if (b && !this.resultQueued) {
+      const bossMax = (this.fightBoss && this.fightBoss.max_hp) || b.boss_hp || 1;
+      const urgent = this.hud.deadline != null && this.hud.lastTick != null && this.hud.lastTick <= 3;
+      const tense = urgent || b.boss_hp / bossMax < 0.25 ? 1 : 0;
+      const low = b.creature_max_hp ? b.creature_hp / b.creature_max_hp < 0.3 : false;
+      if (tense !== this.musicTense) { this.musicTense = tense; this.audio("setIntensity", tense); }
+      if (low !== this.musicLow) { this.musicLow = low; this.audio("setHeartbeat", low); }
+    } else if (this.musicLow) {
+      this.musicLow = false;
+      this.audio("setHeartbeat", false);
+    }
   }
 }

@@ -21,7 +21,7 @@ class MoveTests(unittest.TestCase):
     def plant(self, power=100):
         return B.Stats(name="P", hp=30, atk=8, skill="thorn_burst", plant_id="p",
                        moves=(("attack", "p-jab", power), ("guard", "p-wall", 100),
-                              ("special", "p-flare", power), ("skill", "thorn-burst", 100)))
+                              ("special", "p-flare", power), ("skill", "inferno-bloom", 100)))
 
     def test_power_100_hits_exactly_like_before(self):
         old = B.resolve_turn(B.start(B.Stats(atk=8)), "attack", "special")
@@ -36,7 +36,7 @@ class MoveTests(unittest.TestCase):
         b = B.resolve_turn(B.start(self.plant()), "special", "guard")
         self.assertEqual(b.last_move["move_id"], "p-flare")
         b = B.resolve_turn(B.start(self.plant()), "skill", "guard")
-        self.assertEqual(b.last_move["move_id"], "thorn-burst")
+        self.assertEqual(b.last_move["move_id"], "inferno-bloom")
 
     def test_a_skill_that_is_not_ready_logs_the_attack_move(self):
         b = replace(B.start(self.plant()), skill_ready_in=2)
@@ -51,7 +51,7 @@ class MoveTests(unittest.TestCase):
     def test_move_ids_map_to_categories(self):
         self.assertEqual(B.category_of(self.plant(), "p-jab"), "attack")
         self.assertEqual(B.category_of(self.plant(), "guard"), "guard")
-        self.assertIsNone(B.category_of(self.plant(), "zest-leaf-slap"))  # not this plant's move
+        self.assertIsNone(B.category_of(self.plant(), "zest-blade-rush"))  # not this plant's move
 
 
 WEAK_BOSS = {1: ("Weak", 1, 0), 2: ("Weak", 1, 0), 3: ("Weak", 1, 0)}       # the plants always win
@@ -102,20 +102,20 @@ class PlayerMoveTests(Fixture):
 
     def test_the_player_can_send_the_plants_own_move(self):
         e, t = self.into_battle()
-        e.on_player_move("ember-petal-flare", t)
+        e.on_player_move("ember-flamingo-flare", t)
         self.assertEqual(e.battle.turn, 1)
         self.assertEqual(e.battle.last_move["creature"], "special")
-        self.assertEqual(e.battle.last_move["move_id"], "ember-petal-flare")
+        self.assertEqual(e.battle.last_move["move_id"], "ember-flamingo-flare")
 
     def test_another_plants_move_is_refused(self):
         e, t = self.into_battle()
-        self.assertEqual(e.on_player_move("zest-leaf-slap", t), [])
+        self.assertEqual(e.on_player_move("zest-blade-rush", t), [])
         self.assertEqual(e.battle.turn, 0)
 
     def test_the_old_category_names_still_work(self):
         e, t = self.into_battle()
         e.on_player_move("guard", t)
-        self.assertEqual(e.battle.last_move["move_id"], "ember-bark-wall")
+        self.assertEqual(e.battle.last_move["move_id"], "ember-petal-aegis")
 
 
 class XpTests(Fixture):

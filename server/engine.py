@@ -334,6 +334,7 @@ class GameEngine:
                 "name": skill["name"],
                 "ready": b.skill_ready_in == 0,
                 "ready_in": b.skill_ready_in,
+                "recharge": C.SKILL_COOLDOWN_TURNS,   # turns a used skill takes to come back
             },
             "manual": self.manual,
             "awaiting_move": self.manual and B.winner(b) is None,

@@ -9,8 +9,13 @@
       "type": "sun",
       "base_hp": 30,
       "base_atk": 8,
-      "skill": "thorn_burst",
-      "moves": {"attack": "ember-jab", "guard": "ember-bark-wall", "special": "ember-petal-flare", "skill": "thorn-burst"},
+      "skill": "inferno_bloom",
+      "moves": {
+        "attack": "ember-vine-haymaker",
+        "guard": "ember-petal-aegis",
+        "special": "ember-flamingo-flare",
+        "skill": "inferno-bloom"
+      },
       "sprite_key": "plant-ember",
       "animation_set_key": "ember"
     },
@@ -22,8 +27,13 @@
       "type": "leaf",
       "base_hp": 34,
       "base_atk": 7,
-      "skill": "photosynthesis",
-      "moves": {"attack": "zest-leaf-slap", "guard": "zest-vine-guard", "special": "zest-spore-cloud", "skill": "photosynthesis"},
+      "skill": "sunburst",
+      "moves": {
+        "attack": "zest-blade-rush",
+        "guard": "zest-stripe-wall",
+        "special": "zest-citrus-volt",
+        "skill": "sunburst"
+      },
       "sprite_key": "plant-zest",
       "animation_set_key": "zest"
     }

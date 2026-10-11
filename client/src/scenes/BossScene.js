@@ -1,9 +1,12 @@
 import Phaser from "phaser";
-import { bossArt, preloadBossArt } from "../data/bosses.js";
+import { bossArt, bossMove, bossPalette, preloadBossArt } from "../data/bosses.js";
 import { createBossRig, hasBossRig } from "../render/bossRig.js";
 import { PLANTS, PLANT_IDS, plantMove, preloadPlantArt } from "../data/plants.js";
 import { createPlantRig } from "../render/plantRig.js";
 import { playBattleFx } from "../render/battleFx.js";
+import { playBossFx } from "../render/bossFx.js";
+import { createFxKit } from "../render/fxKit.js";
+import { createBattleHud } from "../ui/battleHud.js";
 import { ensureDragonBackTexture, DRAGON_BACK_KEY } from "../render/dragonBack.js";
 import { createCastShadow, outlineOfPicture, BATTLE_LIGHT } from "../render/castShadow.js";
 
@@ -13,6 +16,10 @@ const ENEMY_HEIGHT = 330;   // how tall the tier 1 boss is drawn here, roots inc
 const FIGHTER = { x: 405, y: 550, size: 1.5 };     // the plant that is fighting
 const BENCH = { x: 228, y: 562, size: 0.62 };      // the plant waiting its turn, or resting after it fainted
 const TRAINER = { x: 98, y: 568, height: 196 };    // the dragon, who sends the plants in
+const BOSS = { x: 905, y: 458 };                   // the spot the boss stands on
+
+const START = 140;        // ms before the plant moves, so its banner is read first
+const BOSS_BLOW = 620;    // about how long the boss's move takes to arrive
 
 export default class BossScene extends Phaser.Scene {
   constructor() {
@@ -41,6 +48,10 @@ export default class BossScene extends Phaser.Scene {
     this.rewardLabel = null;
     this.activeId = null;     // which plant is up front
     this.busyUntil = 0;       // no new move is sent while a turn is still playing out
+    this.hold = null;         // the health shown while a turn plays out: see refreshHud()
+    this.chosen = null;       // the move just sent, until the server answers
+    this.resultPanel = null;
+    this.enemyTier = null;
 
     // One root container controls scaling.
     this.root = this.add.container(0, 0);
@@ -62,10 +73,13 @@ export default class BossScene extends Phaser.Scene {
 
     this.buildWorld();
     this.buildActors();
-    this.buildHUD();
-    this.buildMoves();
-
-    this.message("Waiting for a boss...");
+    // effects are drawn behind the fighters (over the world) and in front of everything
+    this.kit = createFxKit(this, { back: this.auraLayer, front: this.effectLayer });
+    this.hud = createBattleHud(this, { ui: this.uiLayer, fx: this.effectLayer, scale: this.W / this.scale.width });
+    this.hud.onPick = (move) => this.pickMove(move);
+    this.hud.log("Waiting for a boss...");
+    // the forest's own meters and button stay out of the way while the battle screen is up
+    document.getElementById("hud")?.classList.add("in-battle");
 
     this.scale.on("resize", this.onResize, this);
     this.stateListener = (_parent, state) => this.applyServerState(state);
@@ -81,6 +95,7 @@ export default class BossScene extends Phaser.Scene {
       this.registry.events.off("changedata-serverState", this.stateListener);
       this.input.keyboard.off("keydown", this.keyListener);
       if (this.rewardTimer) this.rewardTimer.remove(false);
+      document.getElementById("hud")?.classList.remove("in-battle");
     });
 
     this.onResize();
@@ -630,6 +645,7 @@ drawForestPath(rng) {
 drawBattleAura(x, y, color = 0x8ef5a5, scale = 1) {
   const aura = this.add.container(x, y);
   this.auraLayer.add(aura);
+  aura.setAlpha(0.45);      // a faint mark on the field: the fighters leave it when they move
 
   const g = this.add.graphics();
   aura.add(g);
@@ -720,7 +736,7 @@ drawBattleAura(x, y, color = 0x8ef5a5, scale = 1) {
     targets: aura,
     scaleX: scale * 1.045,
     scaleY: scale * 1.045,
-    alpha: 0.85,
+    alpha: 0.32,
     duration: 1600,
     yoyo: true,
     repeat: -1,
@@ -1577,147 +1593,14 @@ drawAncientArch(x, y, scale = 1) {
   }
 
   // --------------------------------------------------
-  // BATTLE UI
+  // THE FIGHTERS
   // --------------------------------------------------
-
-  panel(x, y, w, h, edge = 0x50618d) {
-    this.rect(
-      x + 5, y + 6, w, h,
-      0x111322, 0.5, 0, this.uiLayer
-    );
-
-    this.rect(
-      x, y, w, h,
-      0x151d37, 1, edge, this.uiLayer
-    );
-  }
-
-  bar(x, y, w, h, color) {
-    this.rect(
-      x, y, w, h,
-      0x080f23, 1, 0x67718c, this.uiLayer
-    );
-
-    const fill = this.rect(
-      x + 4, y + 4, w - 8, h - 8,
-      color, 1, 0, this.uiLayer
-    );
-
-    return { fill, maxWidth: w - 8 };
-  }
-
-  setBar(bar, ratio) {
-    bar.fill.width = Math.max(
-      0,
-      bar.maxWidth * Phaser.Math.Clamp(ratio, 0, 1)
-    );
-  }
-
-  buildHUD() {
-    this.panel(760, 28, 492, 104, 0xf17b80);
-    this.enemyNameText = this.text(787, 49, "Waiting...", 27);
-    this.enemyMetaText = this.text(1080, 51, "TIER", 18, "#cbd4ff");
-    this.text(784, 94, "HP", 20, "#ff7777");
-    this.enemyHP = this.bar(848, 96, 260, 24, 0x63e67c);
-    this.enemyHPText = this.text(1122, 96, "-/-", 18);
-
-    this.panel(24, 575, 350, 129, 0x79dcb0);
-    this.playerNameText = this.text(48, 580, "Plant", 28);
-    this.playerMetaText = this.text(272, 585, "", 15, "#cbd4ff");
-    this.text(49, 622, "HP", 18, "#ff7878");
-    this.playerHP = this.bar(125, 622, 190, 18, 0x6bea86);
-    this.playerHPText = this.text(321, 618, "-/-", 17);
-    this.text(49, 650, "HEALTH", 16, "#68cfff");
-    this.playerWater = this.bar(125, 650, 190, 17, 0x51c7ff);
-    this.waterText = this.text(321, 646, "-", 17);
-    this.text(49, 678, "SOIL", 16, "#ffe077");
-    this.playerSoil = this.bar(125, 678, 190, 17, 0xffd85e);
-    this.soilText = this.text(321, 674, "-", 17);
-
-    this.panel(23, 20, 420, 74, 0x77b8b0);
-    this.titleText = this.text(42, 31, "DROUGHT BOSS", 27);
-    this.subtitleText = this.text(42, 65, "WAITING FOR A BOSS...", 15, "#c8d7ef");
-
-    // the team: both plants at a glance
-    this.panel(23, 104, 420, 42, 0x77b8b0);
-    this.teamUI = {};
-    PLANT_IDS.forEach((id, i) => {
-      const x = 38 + i * 207;
-      this.teamUI[id] = {
-        name: this.text(x, 115, PLANTS[id].name.toUpperCase(), 15),
-        hp: this.bar(x + 76, 116, 72, 17, 0x6bea86),
-        tag: this.text(x + 153, 118, "", 11, "#cbd4ff"),
-      };
-    });
-
-    this.panel(400, 584, 290, 112, 0x5d739e);
-
-    this.logText = this.text(
-      414, 598, "", 15, "#e6f0ff",
-      { wordWrap: { width: 262 } }
-    );
-
-  }
-
-  buildMoves() {
-    const moves = [
-      { name: "ATTACK", sub: "Beats Special", color: 0x236aab, key: "attack" },
-      { name: "GUARD", sub: "Beats Attack", color: 0xa87327, key: "guard" },
-      { name: "SPECIAL", sub: "Beats Guard", color: 0x357e4b, key: "special" },
-      { name: "SKILL", sub: "No skill", color: 0x6c4a93, key: "skill" }
-    ];
-
-    this.moveButtons = [];
-
-    moves.forEach((move, i) => {
-      const x = 710 + (i % 2) * 281;
-      const y = 477 + Math.floor(i / 2) * 111;
-      const w = 272;
-      const h = 99;
-
-      const bg = this.rect(
-        x, y, w, h,
-        move.color, 1, 0x172441, this.uiLayer
-      );
-
-      const label = this.text(x + 19, y + 14, move.name, 22);
-      const sub = this.text(
-        x + 19, y + 56,
-        move.sub, 12, "#f3f2dd",
-        { wordWrap: { width: 235 } }
-      );
-
-      const hit = this.add.zone(x, y, w, h)
-        .setOrigin(0)
-        .setInteractive({ useHandCursor: true });
-
-      this.uiLayer.add(hit);
-
-      hit.on("pointerover", () => {
-        bg.setStrokeStyle(4, 0xffe680);
-      });
-
-      hit.on("pointerout", () => {
-        bg.setStrokeStyle(3, 0x172441);
-      });
-
-      hit.on("pointerdown", () => {
-        this.pickMove(move.key);
-      });
-
-      this.moveButtons.push({ hit, bg, label, sub, move });
-    });
-  }
-
 
   buildActors() {
     this.drawBattleAura(FIGHTER.x, 395, 0x9df6ba, 1.0);
-    this.drawBattleAura(915, 355, 0xff9868, 1.15);
+    this.drawBattleAura(BOSS.x + 10, 355, 0xff9868, 1.15);
 
-    this.ellipse(
-      907, 457, 295, 37,
-      0x10201b, 0.5, this.actorLayer
-    );
+    this.ellipse(BOSS.x + 2, BOSS.y - 1, 295, 37, 0x10201b, 0.5, this.actorLayer);
 
     // The dragon no longer fights. It stands at the back, facing us, and sends the plants in.
     // Its usual picture is made by the forest scene; if the page was opened straight on the
@@ -1733,38 +1616,19 @@ drawAncientArch(x, y, scale = 1) {
         .setPosition(TRAINER.x, TRAINER.y - 3)
     );
     this.actorLayer.add(this.trainer);
-    this.tweens.add({
-      targets: this.trainer,
-      y: TRAINER.y - 5,
-      duration: 1200,
-      yoyo: true,
-      repeat: -1,
-      ease: "Sine.easeInOut"
-    });
+    this.tweens.add({ targets: this.trainer, y: TRAINER.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
     if (hasBossRig(this, bossArt(1))) {
       // made of moving pieces: it sways on its own
-      this.enemySprite = createBossRig(this, bossArt(1), 905, 458, ENEMY_HEIGHT, { light: BATTLE_LIGHT });
+      this.enemySprite = createBossRig(this, bossArt(1), BOSS.x, BOSS.y, ENEMY_HEIGHT, { light: BATTLE_LIGHT });
     } else if (this.textures.exists(bossArt(1).key)) {
-      this.enemySprite = this.add.image(905, 458, bossArt(1).key).setOrigin(0.5, 0.93);
+      this.enemySprite = this.add.image(BOSS.x, BOSS.y, bossArt(1).key).setOrigin(0.5, 0.93);
       this.fitEnemy(1);
     } else {
-      this.enemySprite = this.makeCaterpillar(915, 355);
+      this.enemySprite = this.makeCaterpillar(BOSS.x + 10, 355);
       this.enemySprite.setScale(0.85);
     }
     this.actorLayer.add(this.enemySprite);
-
-    // a boss made of moving pieces sways by itself; a flat picture gets a small bob instead
-    if (!this.enemySprite.isBossRig) {
-      this.tweens.add({
-        targets: this.enemySprite,
-        y: this.enemySprite.y - 5,
-        duration: 1050,
-        yoyo: true,
-        repeat: -1,
-        ease: "Sine.easeInOut"
-      });
-    }
 
     // Both plants (render/plantRig.js). They stay hidden until the server says who is fighting.
     this.fighters = {};
@@ -1776,25 +1640,34 @@ drawAncientArch(x, y, scale = 1) {
     }
   }
 
-  // --------------------------------------------------
-  // THE PLANT TEAM
-  // --------------------------------------------------
-
   // A spot on the screen (what a plant's point() gives) as a spot on the 1280 x 720 stage.
   stagePoint(point) {
     return { x: (point.x - this.root.x) / this.root.scaleX, y: (point.y - this.root.y) / this.root.scaleY };
   }
 
-  // What an effect in render/battleFx.js is given.
-  fxContext(rig, at, lands) {
+  // What a plant's effect in render/battleFx.js is given.
+  plantCtx(rig, at, lands) {
     return {
-      scene: this,
-      layer: this.effectLayer,
-      plant: rig.plant,
-      at,
-      lands,
+      scene: this, kit: this.kit, plant: rig.plant, at, lands,
       from: (name) => this.stagePoint(rig.point(name)),
-      to: { x: this.enemySprite.x - 20, y: this.enemySprite.y - 150 },
+      ground: { x: FIGHTER.x, y: FIGHTER.y },
+      boss: { x: BOSS.x - 20, y: BOSS.y - 150 },
+      bossGround: { x: BOSS.x, y: BOSS.y },
+    };
+  }
+
+  // What the boss's effect in render/bossFx.js is given. rig: the plant it is aimed at.
+  bossCtx(rig, lands, blocked, meet = null) {
+    const enemy = this.enemySprite;
+    return {
+      scene: this, kit: this.kit, palette: bossPalette(this.enemyTier || 1), lands, blocked, meet,
+      mouth: () => (enemy.mouthPoint ? this.stagePoint(enemy.mouthPoint()) : { x: BOSS.x - 40, y: BOSS.y - 230 }),
+      boss: { x: BOSS.x - 20, y: BOSS.y - 150 },
+      bossGround: { x: BOSS.x, y: BOSS.y },
+      target: { x: FIGHTER.x + 10, y: FIGHTER.y - rig.getHeight() * 0.45 },
+      targetGround: { x: FIGHTER.x, y: FIGHTER.y },
+      roar: () => enemy.roar && enemy.roar(),
+      lunge: (dx, ms) => this.lunge(enemy, dx, ms),
     };
   }
 
@@ -1838,7 +1711,8 @@ drawAncientArch(x, y, scale = 1) {
       this.trainerCall();
       rig.play("enter");
       rig.emote("anger", 1100);
-      playBattleFx("arrive", this.fxContext(rig, 60, true));
+      playBattleFx("arrive", this.plantCtx(rig, 60, true));
+      this.hud.callout("left", "GO!", this.plantName(this.activeId), rig.plant.glow);
     }
   }
 
@@ -1853,7 +1727,8 @@ drawAncientArch(x, y, scale = 1) {
     this.time.delayedCall(delay, () => {
       out.setMood("fainted");
       out.emote("sweat", 900);
-      this.message(`${this.plantName(outId)} fainted!`);
+      this.hud.log(`${this.plantName(outId)} fainted!`);
+      this.hud.word("DOWN!", "#ff8f9c", FIGHTER.x, FIGHTER.y - 300);
     });
     this.time.delayedCall(delay + 760, () => {
       this.tweens.add({
@@ -1864,7 +1739,10 @@ drawAncientArch(x, y, scale = 1) {
         },
       });
       this.trainerCall();
-      this.message(`Go, ${this.plantName(inId)}!`);
+      this.hud.log(`Go, ${this.plantName(inId)}!`);
+      this.hud.callout("left", "GO!", this.plantName(inId), next.plant.glow);
+      this.hold = null;                      // the screen now shows the new plant
+      this.refreshHud();
       next.setVisible(true).setAlpha(1).setMood("fierce");
       next.emote("anger", 1000);
       this.actorLayer.bringToTop(next);
@@ -1874,7 +1752,7 @@ drawAncientArch(x, y, scale = 1) {
       this.tweens.add({
         targets: next, x: FIGHTER.x, y: FIGHTER.y, scaleX: FIGHTER.size, scaleY: FIGHTER.size,
         duration: 640, ease: "Sine.easeInOut",
-        onComplete: () => playBattleFx("arrive", this.fxContext(next, 0, true)),
+        onComplete: () => playBattleFx("arrive", this.plantCtx(next, 0, true)),
       });
     });
   }
@@ -1884,63 +1762,59 @@ drawAncientArch(x, y, scale = 1) {
     return (team[id] && team[id].name) || PLANTS[id].name;
   }
 
-  // The little team strip: each plant's name, health and whether it is fighting, ready or down.
-  updateTeamUI(battle) {
+  // --------------------------------------------------
+  // THE SCREEN AND THE SERVER
+  // --------------------------------------------------
+
+  // Redraws the name plates, bars and cards (ui/battleHud.js) from the server's last message.
+  // While a turn is playing out, `this.hold` keeps the health as it was until each blow lands.
+  refreshHud() {
+    const state = this.serverState;
+    if (!state || !state.boss || !state.battle) return;
+    const { boss, battle, meters } = state;
+    const hold = this.hold;
+    const id = hold ? hold.id : this.fightingPlant(state);
+    const plant = PLANTS[id] || PLANTS[PLANT_IDS[0]];
     const team = battle.team || {};
-    const tags = { fighting: "FIGHT", ready: "READY", down: "DOWN" };
-    const colors = { fighting: "#ffe680", ready: "#9dffb0", down: "#ff8f90" };
-    for (const id of PLANT_IDS) {
-      const ui = this.teamUI[id];
-      const info = team[id];
-      const alpha = !info ? 0.3 : info.state === "down" ? 0.5 : 1;
-      ui.name.setText((info ? info.name : PLANTS[id].name).toUpperCase()).setAlpha(alpha);
-      ui.tag.setText(info ? tags[info.state] || "" : "").setColor(info ? colors[info.state] || "#cbd4ff" : "#cbd4ff");
-      ui.hp.fill.setAlpha(alpha);
-      this.tweenBar(ui.hp, info ? info.hp / info.max_hp : 0);
-    }
-  }
-
-
-
-  message(str) {
-    this.logText.setText(str);
-  }
-
-  tweenBar(bar, ratio) {
-    this.tweens.killTweensOf(bar.fill);
-    this.tweens.add({ targets: bar.fill, width: bar.maxWidth * Phaser.Math.Clamp(ratio, 0, 1), duration: 350, ease: "Sine.easeOut" });
-  }
-
-  floating(x, y, label, color = "#ffffff") {
-    const t = this.text(
-      x, y, label, 30, color, {}, this.effectLayer
-    );
-
-    this.tweens.add({
-      targets: t,
-      y: y - 65,
-      alpha: 0,
-      duration: 950,
-      onComplete: () => t.destroy()
+    const benchId = PLANT_IDS.find((other) => other !== id && team[other]);
+    const bench = benchId ? { name: team[benchId].name, hp: team[benchId].hp, max: team[benchId].max_hp, state: team[benchId].state } : null;
+    if (bench && hold && hold.id !== battle.plant && benchId === battle.plant) { bench.hp = bench.max; bench.state = "ready"; }
+    const skill = battle.skill ? { ...battle.skill, total: battle.skill.recharge || 4 } : null;
+    const moves = { ...plant.moves, skill: plantMove(plant, "skill", battle.skill ? battle.skill.name : "") };
+    if (!battle.skill) moves.skill = { name: "Skill", icon: "star" };
+    this.hud.update({
+      fighter: {
+        id, name: hold ? hold.name : battle.creature || plant.name, colour: plant.glow,
+        hp: hold ? hold.hp : battle.creature_hp, max: hold ? hold.max : battle.creature_max_hp,
+      },
+      bench,
+      boss: { name: boss.name, hp: hold ? hold.bossHp : battle.boss_hp, max: boss.max_hp, tier: boss.tier, demo: boss.source === "demo", colour: bossPalette(boss.tier).main },
+      soil: meters && meters.water ? meters.water[boss.plant] : null,
+      vigor: state.health,
+      turn: battle.turn,
+      moves, skill,
+      canPick: Boolean(battle.awaiting_move) && !this.result && this.time.now >= this.busyUntil,
+      chosen: this.chosen,
+      seconds: battle.move_seconds_left,
     });
   }
 
   flash(sprite) {
-    this.tweens.add({
-      targets: sprite,
-      alpha: 0.25,
-      duration: 100,
-      yoyo: true,
-      repeat: 2
-    });
+    this.tweens.add({ targets: sprite, alpha: 0.25, duration: 70, yoyo: true, repeat: 2, onComplete: () => sprite.setAlpha(1) });
+  }
+
+  lunge(sprite, dx, ms = 130) {
+    this.tweens.add({ targets: sprite, x: sprite.x + dx, duration: ms, yoyo: true, ease: "Quad.easeOut" });
   }
 
   pickMove(move) {
     const battle = this.serverState?.battle;
     if (!battle?.awaiting_move || (move === "skill" && !battle.skill?.ready)) return;
-    if (this.time.now < this.busyUntil) return;   // the last turn is still playing out
+    if (this.result || this.time.now < this.busyUntil) return;   // the last turn is still playing out
     this.registry.get("sendMove")?.(move);
-    this.message("Move sent. Waiting for the server...");
+    this.chosen = move;
+    this.hud.log("Here it comes...");
+    this.refreshHud();
   }
 
   applyServerState(state) {
@@ -1950,15 +1824,19 @@ drawAncientArch(x, y, scale = 1) {
     const battle = state.battle;
     if (state.boss && battle) {
       if (this.activeId === null) this.placeTeam(state, true);   // the dragon sends the first plant in
-      this.updateBattleHUD(state, previous);
+      if (state.boss.tier !== this.enemyTier) { this.enemyTier = state.boss.tier; this.fitEnemy(state.boss.tier); }
       if (previous && battle.turn > previous.turn) this.animateTurn(previous, battle, state);
       // a plant change with no turn to show it (the page was opened late): just put them in place
       if (this.fightingPlant(state) !== this.activeId) this.placeTeam(state);
+      this.refreshHud();
+      if ((!previous || previous.turn === battle.turn) && this.time.now >= this.busyUntil && !this.chosen) {
+        this.hud.log(battle.awaiting_move ? "Choose a move." : "The fight is on...");
+      }
       this.lastBattle = { ...battle };
     }
     if (state.mode === "reward") this.showResult(true, state);
     else if (state.mode === "cooldown" && previous && !this.result) this.showResult(previous.boss_hp <= 0, state);
-    else if (state.mode === "walking" && !battle && !this.result) this.message("Waiting for a boss...");
+    else if (state.mode === "walking" && !battle && !this.result) this.hud.log("Waiting for a boss...");
     if ((state.mode === "walking" || state.mode === "cooldown") && (this.result || !battle)) this.leaveWhenReady();
   }
 
@@ -1972,43 +1850,15 @@ drawAncientArch(x, y, scale = 1) {
     this.enemySprite.setTexture(art.key).setDisplaySize(height * (picture.width / picture.height), height);
   }
 
-  updateBattleHUD(state, previous) {
-    const { boss, battle, meters } = state;
-    if (boss.tier !== this.enemyTier) { this.enemyTier = boss.tier; this.fitEnemy(boss.tier); }
-    this.enemyNameText.setText(boss.name);
-    this.enemyMetaText.setText(`TIER ${boss.tier}${boss.source === "demo" ? "  DEMO" : ""}`);
-    this.playerNameText.setText(battle.creature || "Plant");
-    this.playerMetaText.setText(`TURN ${battle.turn}`);
-    this.titleText.setText("DROUGHT BOSS");
-    this.subtitleText.setText(`PLANT ${boss.plant}  •  TURN ${battle.turn}${boss.source === "demo" ? "  •  DEMO" : ""}`);
-    this.playerHPText.setText(`${battle.creature_hp}/${battle.creature_max_hp}`);
-    this.enemyHPText.setText(`${battle.boss_hp}/${boss.max_hp}`);
-    this.waterText.setText(`${state.health}%`);
-    const soil = meters?.water?.[boss.plant];
-    this.soilText.setText(soil == null ? "-" : `${soil}%`);
-    this.tweenBar(this.playerHP, battle.creature_hp / battle.creature_max_hp);
-    this.updateTeamUI(battle);
-    this.tweenBar(this.enemyHP, battle.boss_hp / boss.max_hp);
-    this.tweenBar(this.playerWater, (state.health ?? 0) / 100);
-    this.tweenBar(this.playerSoil, (soil ?? 0) / 100);
-    this.enemyHP.fill.fillColor = battle.boss_hp / boss.max_hp < 0.25 ? 0xf46b65 : 0x63e67c;
-    this.moveButtons.forEach(({ hit, bg, label, sub, move }) => {
-      const skill = battle.skill;
-      const enabled = battle.awaiting_move && (move.key !== "skill" || skill?.ready);
-      if (move.key === "skill") {
-        label.setText(skill ? skill.name.toUpperCase() : "SKILL");
-        sub.setText(skill ? (skill.ready ? "Always works. Ready!" : `Recharging: ${skill.ready_in} turn${skill.ready_in === 1 ? "" : "s"}`) : "No skill");
-      }
-      hit.disableInteractive();
-      if (enabled) hit.setInteractive({ useHandCursor: true });
-      bg.setAlpha(enabled ? 1 : 0.42);
-    });
-    const countdown = battle.awaiting_move && battle.move_seconds_left != null ? `  ${battle.move_seconds_left}s left` : "";
-    if (!previous || previous.turn === battle.turn) this.message(battle.awaiting_move ? `Choose a move.${countdown}` : "Waiting for the server...");
-  }
+  // --------------------------------------------------
+  // ONE TURN
+  // --------------------------------------------------
 
-  // Plays one turn: the plant's move, then the boss's answer, then a change of plant if one fainted.
-  // What each plant does for a move, and the effect that goes with it, is in data/plants.js.
+  // Plays one turn. Both sides always show their move, even the one that lost the turn:
+  //   the plant goes first, then the boss answers;
+  //   unless the plant's guard is what won, then the boss strikes first and breaks on the shield;
+  //   a tie has both go at once and meet in the middle.
+  // What each plant does for a move is in data/plants.js, and the boss's moves are in data/bosses.js.
   animateTurn(previous, battle, state) {
     const move = battle.last_move;
     if (!move) return;
@@ -2016,59 +1866,110 @@ drawAncientArch(x, y, scale = 1) {
     const actorId = swap && this.fighters[swap.out] ? swap.out : this.activeId;
     const actor = this.fighters[actorId];
     const enemy = this.enemySprite;
-    const name = previous.creature || battle.creature;
-    const moveName = move.skill || this.moveName(move.creature);
-    this.message(`${name} used ${moveName}! ${state.boss.name} used ${this.moveName(move.boss)}!`);
+    const who = previous.creature || battle.creature;
+    const mine = plantMove(actor.plant, move.creature, move.skill);
+    const theirs = bossMove(state.boss.tier, move.boss);
+    const palette = bossPalette(state.boss.tier);
 
     const healed = move.healed || 0;
     const bossLoss = previous.boss_hp - battle.boss_hp;
     const before = previous.plant === undefined || previous.plant === actorId ? previous.creature_hp : 0;
     const playerLoss = Math.max(0, (swap ? before : before - battle.creature_hp) + healed);
-    const above = () => ({ x: actor.x - 60, y: actor.y - actor.getHeight() * 0.72 });
+    const plantLands = bossLoss > 0;
+    const bossLands = playerLoss > 0;
+    const tie = move.hit === "tie";
+    const shielded = move.boss === "attack" && !bossLands && mine.body === "guard";
+    const above = () => ({ x: actor.x - 20, y: actor.y - actor.getHeight() * 0.8 });
 
-    // the plant's move
-    const what = plantMove(actor.plant, move.creature, move.skill);
-    const lands = bossLoss > 0;
-    actor.play(what.body, { reach: lands ? 0.85 : 0.4 });
-    const hitAt = actor.hitTime(what.body);
-    playBattleFx(what.fx, this.fxContext(actor, hitAt, lands));
-    if (lands) {
-      this.time.delayedCall(hitAt, () => {
-        this.flash(enemy);
-        this.lunge(enemy, 24);
-        this.floating(875, 240, `-${bossLoss}`, "#fff48e");
-        this.cameras.main.shake(130, 0.005);
-        this.benchCheers();
-      });
-    }
-    if (healed > 0) this.time.delayedCall(hitAt, () => this.floating(above().x, above().y, `+${healed}`, "#8dff9b"));
+    this.chosen = null;
+    this.hold = { id: actorId, name: who, max: previous.creature_max_hp, hp: before, bossHp: previous.boss_hp };
+    this.hud.callout("left", who, mine.name, actor.plant.glow);
+    this.hud.log(`${who} used ${mine.name}!`);
 
-    // the boss's answer
-    const bossAt = Math.max(hitAt + 300, 640);
-    if (playerLoss > 0) {
-      this.time.delayedCall(bossAt, () => {
-        if (enemy.roar) enemy.roar();
-        this.lunge(enemy, -60);
-        this.time.delayedCall(140, () => {
-          actor.play("hurt");
-          this.flash(actor);
-          this.floating(above().x, above().y, `-${playerLoss}`, "#ff8f90");
-          this.cameras.main.shake(160, 0.007);
+    const onBossHurt = () => {
+      this.hold.bossHp = battle.boss_hp;
+      this.refreshHud();
+      this.flash(enemy);
+      this.lunge(enemy, 26);
+      this.hud.number(BOSS.x - 20, BOSS.y - 300, `-${bossLoss}`, "#fff48e", bossLoss >= 9);
+      this.benchCheers();
+    };
+    const onPlantHurt = () => {
+      this.hold.hp = swap ? 0 : battle.creature_hp;
+      this.refreshHud();
+      actor.play("hurt", { force: 1.3 });
+      this.flash(actor);
+      this.hud.number(above().x, above().y, `-${playerLoss}`, "#ff8f90", playerLoss >= 9);
+    };
+    // The boss's move starts now. Returns when its blow arrives.
+    const bossGoes = (blocked, meet = null) => {
+      this.hud.callout("right", state.boss.name, theirs.name, palette.main);
+      this.hud.log(`${state.boss.name} used ${theirs.name}!`);
+      return playBossFx(theirs.fx, this.bossCtx(actor, bossLands, blocked, meet));
+    };
+    const reach = () => {
+      if (!plantLands) return 0.42;
+      return mine.reach === "boss" ? (BOSS.x - 235 - FIGHTER.x) / actor.getHeight() : 0.85;
+    };
+
+    let length;
+    if (shielded) {
+      // the boss comes first; the shield goes up just in time
+      const blow = bossGoes(true);
+      const options = { ms: mine.ms, delay: 0 };
+      options.delay = Math.max(0, blow - actor.hitTime(mine.body, options));
+      actor.play(mine.body, options);
+      const extra = playBattleFx(mine.fx, this.plantCtx(actor, blow, plantLands));
+      this.time.delayedCall(blow, () => { this.hud.word("BLOCKED!", "#bfe6ff", FIGHTER.x + 230, FIGHTER.y - 330); this.lunge(enemy, 40, 160); });
+      if (plantLands) this.time.delayedCall(blow + extra, onBossHurt);
+      length = blow + extra + 700;
+    } else {
+      const options = { ms: mine.ms, delay: START, reach: reach() };
+      actor.play(mine.body, options);
+      const hitAt = actor.hitTime(mine.body, options);
+      const extra = playBattleFx(mine.fx, this.plantCtx(actor, hitAt, plantLands));
+      const landed = hitAt + extra;
+      if (plantLands) this.time.delayedCall(landed, onBossHurt);
+      if (healed > 0) {
+        this.time.delayedCall(hitAt, () => {
+          this.hold.hp = Math.min(this.hold.max, this.hold.hp + healed);
+          this.refreshHud();
+          this.hud.number(above().x, above().y, `+${healed}`, "#8dff9b");
         });
-      });
+      }
+      if (tie) {
+        // both at once: they meet in the middle and nothing gets through
+        const mid = { x: (FIGHTER.x + BOSS.x) / 2 + 30, y: FIGHTER.y - 240 };
+        const blow = bossGoes(false, mid);
+        const meet = Math.max(hitAt, blow);
+        this.time.delayedCall(meet, () => {
+          this.kit.impact(mid.x, mid.y, { power: 1.1, color: 0xd7e3ff });
+          this.hud.word(move.creature === "guard" ? "STANDOFF" : "CLASH!", "#d7e3ff", mid.x, mid.y - 70);
+        });
+        length = meet + 750;
+      } else if (battle.boss_hp <= 0) {
+        length = landed + 520;               // that was the last blow: the boss has no answer
+      } else {
+        const bossStart = landed + (plantLands ? 460 : 260);
+        this.time.delayedCall(bossStart, () => {
+          const blow = bossGoes(false);
+          if (bossLands) this.time.delayedCall(blow, onPlantHurt);
+        });
+        length = bossStart + BOSS_BLOW + (bossLands ? 520 : 200);
+      }
     }
-    if (move.hit === "tie") this.time.delayedCall(hitAt, () => this.floating(615, 400, "TIE", "#d7e3ff"));
-    if (move.hit === "none") this.time.delayedCall(hitAt, () => this.floating(590, 400, "BLOCKED", "#d7e3ff"));
 
     // a plant that runs out of health tips over; if the other one is ready, the dragon sends it in
-    if (swap) this.swapFighter(swap.out, swap.in, bossAt + 460);
-    else if (battle.creature_hp <= 0) this.time.delayedCall(bossAt + 460, () => actor.setMood("fainted"));
+    if (swap) { this.swapFighter(swap.out, swap.in, length - 60); length += 1500; }
+    else if (battle.creature_hp <= 0) this.time.delayedCall(length - 60, () => actor.setMood("fainted"));
 
-    const length = swap ? bossAt + 460 + 1500 : playerLoss > 0 ? bossAt + 560 : hitAt + 420;
     this.busyUntil = this.time.now + length;
+    this.time.delayedCall(length + 20, () => {
+      this.hold = null;
+      this.refreshHud();
+      if (!this.result && this.serverState?.battle?.awaiting_move) this.hud.log("Choose a move.");
+    });
   }
-
-  moveName(move) { return move ? move.charAt(0).toUpperCase() + move.slice(1) : ""; }
 
   // The plant on the bench is glad when its friend lands a hit.
   benchCheers() {
@@ -2078,61 +1979,73 @@ drawAncientArch(x, y, scale = 1) {
     }
   }
 
-  lunge(sprite, dx) {
-    this.tweens.add({ targets: sprite, x: sprite.x + dx, duration: 130, yoyo: true, ease: "Quad.easeOut" });
-  }
+  // --------------------------------------------------
+  // THE END OF THE FIGHT
+  // --------------------------------------------------
 
   showResult(won, state) {
     if (this.result) { if (won && state.reward) this.showReward(state.reward); return; }
     this.result = won ? "win" : "loss";
-    this.resultShownAt = this.time.now;
-    if (won) this.dissolveBoss();
-    // the plants: a win has them bouncing, a loss leaves them flat out
-    PLANT_IDS.forEach((id, i) => {
-      const rig = this.fighters[id];
-      if (!rig.visible) return;
-      if (!won) { rig.setMood("fainted"); return; }
-      if (rig.getMood() === "fainted") return;
-      rig.setMood("proud");
-      rig.emote(i % 2 ? "heart" : "sparkle", 1800);
-      for (let n = 0; n < 3; n++) rig.play("cheer", { delay: 200 + i * 220 + n * 950 });
-    });
-    this.time.delayedCall(won ? 500 : 0, () => {
-      this.rect(0, 0, 1280, 720, 0x050b1c, 0.72, 0, this.effectLayer);
-      const banner = this.text(430, 170, won ? "VICTORY!" : "DEFEAT", 56, won ? "#ffd867" : "#ff9caa", {}, this.effectLayer).setAngle(-8);
-      this.tweens.add({ targets: banner, scaleX: 1.08, scaleY: 1.08, duration: 350, yoyo: true });
-      if (won) this.confetti();
-      this.panelResult(won, state.reward);
+    // the last blow plays out before anything is announced
+    const wait = Math.max(0, this.busyUntil - this.time.now);
+    this.resultShownAt = this.time.now + wait + (won ? 900 : 300);
+    this.refreshHud();
+    this.time.delayedCall(wait, () => {
+      this.hold = null;
+      this.refreshHud();
+      if (won) this.dissolveBoss();
+      else if (this.enemySprite.roar) this.enemySprite.roar();
+      // the plants: a win has them bouncing, a loss leaves them flat out
+      PLANT_IDS.forEach((id, i) => {
+        const rig = this.fighters[id];
+        if (!rig.visible) return;
+        if (!won) { rig.setMood("fainted"); return; }
+        if (rig.getMood() === "fainted") return;
+        rig.setMood("proud");
+        rig.emote(i % 2 ? "heart" : "sparkle", 1800);
+        for (let n = 0; n < 3; n++) rig.play("cheer", { delay: 200 + i * 220 + n * 950 });
+      });
+      this.time.delayedCall(won ? 900 : 300, () => {
+        this.resultPanel = this.hud.result(won, won ? "The drought boss has retreated." : "No water this time.");
+        if (won) { this.confetti(); this.showReward(this.serverState && this.serverState.reward); }
+      });
     });
   }
 
+  // The boss comes apart: it shudders, cracks with light, and bursts.
   dissolveBoss() {
-    const x = this.enemySprite.x, y = this.enemySprite.y - 140;   // about the middle of it
-    this.enemySprite.setVisible(false);
-    for (let i = 0; i < 45; i++) {
-      const p = this.rect(x, y, 7, 7, i % 2 ? 0xf2aa62 : 0xffd676, 1, 0, this.effectLayer);
-      this.tweens.add({ targets: p, x: x + Phaser.Math.Between(-150, 150), y: y + Phaser.Math.Between(-100, 100), alpha: 0, duration: 550 + i * 10, onComplete: () => p.destroy() });
+    const enemy = this.enemySprite;
+    const palette = bossPalette(this.enemyTier || 1);
+    const x = BOSS.x - 20, y = BOSS.y - 150;
+    this.tweens.add({ targets: enemy, x: enemy.x + 7, duration: 45, yoyo: true, repeat: 9 });
+    for (let i = 0; i < 6; i++) {
+      this.kit.at(i * 80, () => {
+        const px = x + this.kit.rand(-90, 90), py = y + this.kit.rand(-130, 120);
+        this.kit.star(px, py, { size: 46, color: 0xffffff, ms: 180 });
+        this.kit.glow(px, py, { r: 70, color: palette.hot, alpha: 0.6, ms: 220 });
+      });
     }
+    this.kit.at(520, () => {
+      enemy.setVisible(false);
+      this.kit.flash(0xffffff, 0.75, 240);
+      this.kit.shake(380, 0.016);
+      this.kit.impact(x, y, { power: 2, color: palette.hot, color2: palette.main, shape: "petal" });
+      this.kit.ring(BOSS.x, BOSS.y, { from: 60, to: 560, squash: 0.3, color: 0xffffff, thick: 12, ms: 560, layer: "back" });
+      this.kit.burst(x, y, { count: 60, colors: [palette.main, palette.hot, 0xf2aa62, 0xffd676], shape: "petal", speed: [200, 900], size: [12, 28], life: [700, 1400], gravity: 700, spin: [-8, 8] });
+      this.kit.burst(x, y, { count: 30, colors: [0xffffff, palette.core, palette.hot], shape: "star", speed: [100, 500], size: [8, 18], life: [600, 1200], gravity: -60, add: true });
+    });
   }
 
-  confetti() { for (let i = 0; i < 36; i++) { const p = this.rect(640, 185, 8, 12, i % 2 ? 0xffd867 : 0x8dff9b, 1, 0, this.effectLayer); this.tweens.add({ targets: p, x: Phaser.Math.Between(250, 1050), y: Phaser.Math.Between(250, 600), angle: 360, alpha: 0, duration: 900 + i * 15, onComplete: () => p.destroy() }); } }
-
-  panelResult(won, reward) {
-    this.rect(330, 270, 620, 210, 0x151d37, 1, won ? 0xf0bf58 : 0xee7789, this.effectLayer);
-    this.resultText = this.text(372, 310, won ? "The drought boss has retreated." : "No water this time.", 22, "#ffffff", {}, this.effectLayer);
-    if (won) this.showReward(reward);
+  confetti() {
+    this.kit.burst(640, 120, { count: 70, colors: [0xffd867, 0x8dff9b, 0x7fd0ff, 0xff8f9c, 0xffffff], shape: "sq", speed: [200, 760], angle: Math.PI / 2, spread: 3.4, size: [8, 14], life: [1400, 2400], gravity: 420, drag: 0.97, spin: [-10, 10], stretch: 1.8 });
   }
 
   showReward(reward) {
-    if (!this.resultText) return;
-    if (!reward) { this.resultText.setText("Soil is already wet, no water needed."); return; }
+    if (!this.resultPanel) return;
+    if (!reward) { this.resultPanel.setLine("Soil is already wet, no water needed."); return; }
     const seconds = (reward.size / 1000).toFixed(1);
-    this.resultText.setText(`Water  •  Pump ${reward.plant}  •  ${seconds} s`);
-    if (this.rewardBar) return;
-    this.rewardBar = this.bar(375, 390, 520, 24, 0x4aa3ff);
-    this.rewardBar.fill.width = 0;
-    this.rewardLabel = this.text(375, 425, `Watering plant ${reward.plant}`, 17, "#cfeaff", {}, this.effectLayer);
-    this.tweens.add({ targets: this.rewardBar.fill, width: this.rewardBar.maxWidth, duration: reward.size, onComplete: () => this.rewardLabel.setText("DONE") });
+    this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s`);
+    this.resultPanel.reward(`Watering plant ${reward.plant}`, reward.size);
   }
 
   leaveWhenReady() {
@@ -2148,8 +2061,6 @@ drawAncientArch(x, y, scale = 1) {
     this.cameras.main.fadeOut(350);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => { this.scene.stop(); this.scene.wake("AdventureScene"); });
   }
-
-
 
   // --------------------------------------------------
   // ANIMATION

@@ -1,22 +1,103 @@
 {
   "_comment": "Move catalog. Each plant lists one move per category. category is attack, guard, special or skill and decides the battle rule (attack beats special, special beats guard, guard beats attack; a skill always works then recharges). power is a percent of the plant's attack (50 to 150) for attack and special. A skill move names a skill_key from config.SKILLS. animation tells the game screen which body action (render/plantRig.js) and effect (render/battleFx.js) to play.",
   "moves": [
-    {"move_id": "ember-jab", "name": "Ember Jab", "category": "attack", "type": "sun", "power": 100,
-     "animation_key": "ember-jab", "animation": {"body": "strike", "fx": "punch"}},
-    {"move_id": "ember-bark-wall", "name": "Bark Wall", "category": "guard", "type": "sun", "power": 100,
-     "animation_key": "ember-bark-wall", "animation": {"body": "guard", "fx": "shield"}},
-    {"move_id": "ember-petal-flare", "name": "Petal Flare", "category": "special", "type": "sun", "power": 100,
-     "animation_key": "ember-petal-flare", "animation": {"body": "cast", "fx": "petals"}},
-    {"move_id": "thorn-burst", "name": "Thorn Burst", "category": "skill", "type": "sun", "power": 100,
-     "skill_key": "thorn_burst", "animation_key": "thorn-burst", "animation": {"body": "strike", "fx": "thorns"}},
-
-    {"move_id": "zest-leaf-slap", "name": "Leaf Slap", "category": "attack", "type": "leaf", "power": 100,
-     "animation_key": "zest-leaf-slap", "animation": {"body": "strike", "fx": "punch"}},
-    {"move_id": "zest-vine-guard", "name": "Vine Guard", "category": "guard", "type": "leaf", "power": 100,
-     "animation_key": "zest-vine-guard", "animation": {"body": "guard", "fx": "shield"}},
-    {"move_id": "zest-spore-cloud", "name": "Spore Cloud", "category": "special", "type": "leaf", "power": 100,
-     "animation_key": "zest-spore-cloud", "animation": {"body": "cast", "fx": "petals"}},
-    {"move_id": "photosynthesis", "name": "Photosynthesis", "category": "skill", "type": "leaf", "power": 100,
-     "skill_key": "photosynthesis", "animation_key": "photosynthesis", "animation": {"body": "cast", "fx": "sunlight"}}
+    {
+      "move_id": "ember-vine-haymaker",
+      "name": "Vine Haymaker",
+      "category": "attack",
+      "type": "sun",
+      "power": 100,
+      "animation_key": "ember-vine-haymaker",
+      "animation": {
+        "body": "strike",
+        "fx": "haymaker"
+      }
+    },
+    {
+      "move_id": "ember-petal-aegis",
+      "name": "Petal Aegis",
+      "category": "guard",
+      "type": "sun",
+      "power": 100,
+      "animation_key": "ember-petal-aegis",
+      "animation": {
+        "body": "guard",
+        "fx": "aegis"
+      }
+    },
+    {
+      "move_id": "ember-flamingo-flare",
+      "name": "Flamingo Flare",
+      "category": "special",
+      "type": "sun",
+      "power": 100,
+      "animation_key": "ember-flamingo-flare",
+      "animation": {
+        "body": "cast",
+        "fx": "flare"
+      }
+    },
+    {
+      "move_id": "inferno-bloom",
+      "name": "Inferno Bloom",
+      "category": "skill",
+      "type": "sun",
+      "power": 100,
+      "skill_key": "inferno_bloom",
+      "animation_key": "inferno-bloom",
+      "animation": {
+        "body": "channel",
+        "fx": "inferno"
+      }
+    },
+    {
+      "move_id": "zest-blade-rush",
+      "name": "Blade Rush",
+      "category": "attack",
+      "type": "leaf",
+      "power": 100,
+      "animation_key": "zest-blade-rush",
+      "animation": {
+        "body": "rush",
+        "fx": "bladeRush"
+      }
+    },
+    {
+      "move_id": "zest-stripe-wall",
+      "name": "Stripe Wall",
+      "category": "guard",
+      "type": "leaf",
+      "power": 100,
+      "animation_key": "zest-stripe-wall",
+      "animation": {
+        "body": "guard",
+        "fx": "stripeWall"
+      }
+    },
+    {
+      "move_id": "zest-citrus-volt",
+      "name": "Citrus Volt",
+      "category": "special",
+      "type": "leaf",
+      "power": 100,
+      "animation_key": "zest-citrus-volt",
+      "animation": {
+        "body": "cast",
+        "fx": "citrusVolt"
+      }
+    },
+    {
+      "move_id": "sunburst",
+      "name": "Sunburst",
+      "category": "skill",
+      "type": "leaf",
+      "power": 100,
+      "skill_key": "sunburst",
+      "animation_key": "sunburst",
+      "animation": {
+        "body": "channel",
+        "fx": "sunburst"
+      }
+    }
   ]
 }

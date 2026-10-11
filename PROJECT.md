@@ -81,7 +81,7 @@ It checks five times a second. The screen sends two kinds of message back:
   "mode": "battle",
   "creatures": {"A": "04:A1:B2:C3", "B": null},
   "meters": {"water": {"A": 31.5, "B": 100.0}, "stale": false},
-  "fighters": {"A": {"name": "Ember", "skill": "Thorn Burst"}, "B": {"name": "Zest", "skill": "Photosynthesis"}},
+  "fighters": {"A": {"name": "Ember", "skill": "Inferno Bloom"}, "B": {"name": "Zest", "skill": "Sunburst"}},
   "health": 72.4,
   "condition": "healthy",
   "tier": 1,
@@ -92,7 +92,7 @@ It checks five times a second. The screen sends two kinds of message back:
                       "B": {"name": "Zest", "hp": 34, "max_hp": 34, "state": "ready"}},
              "creature": "Ember", "creature_hp": 23, "creature_max_hp": 30,
              "boss_hp": 20, "last_move": {"creature": "attack", "boss": "special", "hit": "creature"},
-             "skill": {"name": "Thorn Burst", "ready": true, "ready_in": 0},
+             "skill": {"name": "Inferno Bloom", "ready": true, "ready_in": 0, "recharge": 4},
              "manual": true, "awaiting_move": true, "move_seconds_left": 8},
   "reward": {"type": "water", "plant": "A", "size": 2000, "tier": 1}
 }
@@ -130,7 +130,7 @@ The server is always in exactly one mode.
 | `walking` | The dragon walks. Nothing is wrong. | until the soil dries |
 | `boss` | The boss is arriving. The screen plays the entrance. | 5.2 seconds |
 | `battle` | Turn-based fight. | until someone hits 0 HP |
-| `reward` | You won. The pump runs and the victory panel shows. | 4 seconds |
+| `reward` | You won. The pump runs and the victory panel shows. | 6 seconds |
 | `cooldown` | No new boss for this plant. | 60 seconds after the fight (15 in sim mode) |
 
 Rules worth knowing:
@@ -214,11 +214,11 @@ attack number; a tie does nothing.**
 
 - You have **10 seconds** to pick. If you do not, the game picks for you: the skill if it
   is ready, otherwise a random move. A fight can never hang.
-- After each turn there is a 1.2 second pause before the next move is accepted, so the
-  screen has time to show what happened. A turn where a plant faints adds 1.6 seconds, for
+- After each turn there is a 2.6 second pause before the next move is accepted, so the
+  screen has time to play both moves. A turn where a plant faints adds 1.6 seconds, for
   the other plant to come in.
 - If **no game screen is connected**, the server plays the whole fight by itself, one turn
-  every 1.2 seconds. The plant still gets watered if it wins.
+  every 2.6 seconds. The plant still gets watered if it wins.
 
 ## 7. The two plants and their skills
 
@@ -226,8 +226,8 @@ The fighters are the two plants themselves (`PLANT_FIGHTERS` in `server/config.p
 
 | Plant | Name | Looks like | HP | Attack | Skill |
 | --- | --- | --- | --- | --- | --- |
-| A | Ember | an anthurium with red flowers | 30 | 8 | Thorn Burst |
-| B | Zest | a striped lemon-lime dracaena | 34 | 7 | Photosynthesis |
+| A | Ember | an anthurium with red flowers | 30 | 8 | Inferno Bloom |
+| B | Zest | a striped lemon-lime dracaena | 34 | 7 | Sunburst |
 
 Each plant pad can also hold an NFC-tagged figure. A tag listed in `server/creatures.json`
 replaces that plant's name and numbers for the fight. A tag that is not in the file, or an
@@ -244,9 +244,29 @@ to recharge. Pressing skill while it is recharging counts as a plain attack.
 
 | Skill | What it does | Can the boss still hit you that turn? |
 | --- | --- | --- |
+| Inferno Bloom (Ember) | hits for 1.25 times your attack | yes, if the boss picked attack |
+| Sunburst (Zest) | heals 8 HP and hits for half your attack | yes, if the boss picked attack |
 | Thorn Burst | hits for your full attack | yes, if the boss picked attack |
 | Photosynthesis | heals 8 HP (never above your maximum) | yes, if the boss picked attack |
 | Bark Shield | blocks everything and bounces back half your attack | no |
+
+**What the moves are called and look like**
+
+The rules only know attack, guard, special and skill. Each fighter does them its own way:
+
+| | Attack | Guard | Special | Skill |
+| --- | --- | --- | --- | --- |
+| Ember | Vine Haymaker: runs in and lands a burning fist | Petal Aegis: a wheel of red petals; if it holds they fly back | Flamingo Flare: burning petals corkscrew across | Inferno Bloom: a flower of fire opens under the boss and a pillar comes up |
+| Zest | Blade Rush: darts in and cuts three times | Stripe Wall: striped blades stab up as a fence; if it holds they launch | Citrus Volt: a ball of lightning jumps to the boss | Sunburst: a small sun heals Zest, then spears the boss |
+| Boss | a pair of huge jaws snaps shut | it slams the ground: a crack races over and roots spike up | a ball of heat builds in its mouth, then a beam | none |
+
+The three boss tiers share these moves under their own names and colours (`BOSS_MOVES` and
+`BOSS_PALETTES` in `client/src/data/bosses.js`): red heat for the Chomper, sand and gold
+for the Brute, cold violet fire for the Dragon.
+
+Both sides always show their move, even the one that lost the turn. The plant goes first
+and the boss answers. If the plant's guard is what won, the boss strikes first and breaks
+on the shield. A tie has both go at once and meet in the middle.
 
 **Adding a skill or a move later** takes three small steps, and the first is the only one
 that changes the rules:
@@ -254,12 +274,13 @@ that changes the rules:
 1. The rule: add the skill to `SKILLS` in `server/config.py` and give it to a plant in
    `PLANT_FIGHTERS`. `battle.py` already understands `damage_factor`, `heal` and `block`.
 2. The body: how the plant moves is an "action" in `client/src/render/plantRig.js` (strike,
-   guard, cast, hurt, hop, cheer and so on). An action is one small function that turns a few
+   rush, guard, cast, channel, hurt, hop, cheer and so on). An action is one small function that turns a few
    dials (lift, lean, stretch, arms open, a named arm pose). The notes at the top of that
    file explain how to add one.
-3. The effect: what flies across the screen is a function in `client/src/render/battleFx.js`
-   (punch, shield, petals, thorns, sunlight, bark). `client/src/data/plants.js` says which
-   action and which effect go with each move and each skill, per plant.
+3. The effect: what flies across the screen is a function in `client/src/render/battleFx.js`,
+   built from the paint box in `client/src/render/fxKit.js` (sparks, beams, lightning,
+   slashes, shockwaves, screen flashes). `client/src/data/plants.js` gives each move and
+   skill its name, its action, its effect and the picture on its button, per plant.
 
 ## 8. Rewards and pump safety
 
@@ -336,11 +357,14 @@ health bar, the condition, a "BOSS ALERT" banner, the connection status and the 
 
 - The dragon stands at the back left and waves the plant in. The fighting plant is up front;
   the other waits small beside the dragon and hops when its friend lands a hit.
-- Each move has its own body action and effect: a lunge and punch for attack, a leaf dome
-  for guard, a flurry of petals for special, thorns or sunbeams for the skills.
+- Each move has its own name, body action and effect (the table in section 7).
 - A plant that reaches 0 HP tips over. It is carried to the bench and the other plant bounds
-  in from the bench, growing as it comes forward. A strip under the title shows both plants'
-  HP and whether each is fighting, ready or down.
+  in from the bench, growing as it comes forward.
+- The screen: the fighting plant's plate is top left (its face, HP, the soil it is fighting
+  for, and the plant on the bench under it), the boss's plate is top right, and the four
+  move cards run along the bottom. Each card says what the move beats and loses to. The
+  skill card shows how many turns until it is ready. Health bars only drop when the blow
+  lands, and a banner calls out each move by name. Keys 1 to 4 pick a card.
 
 **How the screen follows the server**
 
@@ -449,7 +473,7 @@ It reads the soil lines the ESP32 prints and passes them to the broker.
 | Command | What it does |
 | --- | --- |
 | `python3 fake_publisher.py` | pretends to be the ESP32: soil A dries until a boss appears. Add `--fast` to hurry it. |
-| `python3 test_server.py` | runs the 86 server tests |
+| `python3 test_server.py` | runs the 90 server tests |
 
 ## 15. File map
 
@@ -482,12 +506,15 @@ are given the time as a number, which is why they can be tested quickly.
 | `render/bossEntrance.js` | the boss's arrival |
 | `render/bossRig.js`, `data/chomperRig.js` | the moving boss |
 | `render/dragonBack.js` | the dragon seen from behind, drawn pixel by pixel |
-| `data/bosses.js` | which picture each tier uses |
-| `data/plants.js` | the two plants: looks, arm poses, and which action and effect each move uses |
+| `data/bosses.js` | which picture each tier uses, what it calls its moves, and its colours |
+| `data/plants.js` | the two plants: looks, arm poses, and the name, action and effect of each move |
 | `data/plantRigs.js` | where each moving piece of the plants sits (made by a script from the pictures) |
 | `render/plantRig.js` | a plant built from moving pieces: sway, springs, face, moods, actions |
 | `render/petParade.js` | the plants hopping behind the dragon and reacting to a boss |
-| `render/battleFx.js` | the effects for each move in the battle |
+| `render/fxKit.js` | the paint box for effects: sparks, beams, lightning, slashes, shockwaves |
+| `render/battleFx.js` | what each plant move looks like |
+| `render/bossFx.js` | what each boss move looks like |
+| `ui/battleHud.js` | everything written on the battle screen: plates, bars, move cards, banners, numbers |
 | `ui/statusBar.js` | the meters and demo button on top of the game |
 | `state/wsSource.js` | the connection to the server |
 

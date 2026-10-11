@@ -92,7 +92,7 @@ class SeedDataTests(TempFiles):
         dup = json.loads(json.dumps(plants)); dup["plants"][1]["tag_uid"] = EMBER_UID; cases.append(dup)
         bad_uid = json.loads(json.dumps(plants)); bad_uid["plants"][0]["tag_uid"] = "nope"; cases.append(bad_uid)
         missing = json.loads(json.dumps(plants)); del missing["plants"][0]["moves"]["guard"]; cases.append(missing)
-        wrong = json.loads(json.dumps(plants)); wrong["plants"][0]["moves"]["guard"] = "ember-jab"; cases.append(wrong)
+        wrong = json.loads(json.dumps(plants)); wrong["plants"][0]["moves"]["guard"] = "ember-vine-haymaker"; cases.append(wrong)
         skill = json.loads(json.dumps(plants)); skill["plants"][0]["skill"] = "bark_shield"; cases.append(skill)
         for case in cases:
             with self.assertRaises(ValueError):
@@ -103,7 +103,7 @@ class SeedDataTests(TempFiles):
         moves = json.load(open(C.MOVES_FILE))
         cases = []
         for field, value in (("base_hp", 30.5), ("base_hp", True), ("base_hp", 0), ("name", ""),
-                             ("tag_uid", 1234), ("moves", "ember-jab")):
+                             ("tag_uid", 1234), ("moves", "ember-vine-haymaker")):
             c = json.loads(json.dumps(plants)); c["plants"][0][field] = value; cases.append(("plants", c))
         gone = json.loads(json.dumps(plants)); del gone["plants"][0]["species"]; cases.append(("plants", gone))
         extra = json.loads(json.dumps(plants)); extra["plants"][0]["colour"] = "red"; cases.append(("plants", extra))

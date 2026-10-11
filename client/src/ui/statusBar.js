@@ -26,6 +26,7 @@ const css = `
 #hud .timer{margin-top:6px;opacity:.75}
 #hud button{position:absolute;top:8px;right:8px;pointer-events:auto;background:#ff5a6a;color:#0b0d12;border:0;padding:8px 12px;font:bold 12px inherit;cursor:pointer}
 #hud .conn{position:absolute;bottom:6px;right:8px;opacity:.6}
+#hud.in-battle .bar,#hud.in-battle #demoBtn,#hud.in-battle .conn{display:none}
 `;
 
 const meterRow = (label, id) =>

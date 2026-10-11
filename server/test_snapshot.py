@@ -73,7 +73,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(zest["xp_to_next"], 50)
         self.assertEqual(zest["type"], "leaf")
         self.assertEqual(zest["sprite_key"], "plant-zest")
-        self.assertEqual(zest["moves"], ["zest-leaf-slap", "zest-vine-guard", "zest-spore-cloud", "photosynthesis"])
+        self.assertEqual(zest["moves"], ["zest-blade-rush", "zest-stripe-wall", "zest-citrus-volt", "sunburst"])
 
     def test_max_level_has_no_next_threshold(self):
         e = engine()
@@ -98,44 +98,44 @@ class BattleSchemaTests(unittest.TestCase):
         self.assertEqual(battle["active_plant_id"], "ember")
         self.assertTrue(battle["battle_id"])
         moves = battle["moves"]
-        self.assertEqual([m["move_id"] for m in moves], ["ember-jab", "ember-bark-wall", "ember-petal-flare", "thorn-burst"])
-        self.assertEqual(moves[0]["animation"], {"body": "strike", "fx": "punch"})
+        self.assertEqual([m["move_id"] for m in moves], ["ember-vine-haymaker", "ember-petal-aegis", "ember-flamingo-flare", "inferno-bloom"])
+        self.assertEqual(moves[0]["animation"], {"body": "strike", "fx": "haymaker"})
         self.assertTrue(all(m["ready"] for m in moves))
 
     def test_skill_button_shows_not_ready_while_recharging(self):
         e, t = self.into_battle()
-        e.on_player_move("thorn-burst", t)
+        e.on_player_move("inferno-bloom", t)
         skill = [m for m in as_sent(e)["battle"]["moves"] if m["category"] == "skill"][0]
         self.assertFalse(skill["ready"])
 
     def test_last_action_names_the_plant_and_the_animation(self):
         e, t = self.into_battle()
-        e.on_player_move("ember-petal-flare", t)
+        e.on_player_move("ember-flamingo-flare", t)
         last = as_sent(e)["battle"]["last_action"]
         self.assertEqual(last["actor_plant_id"], "ember")
-        self.assertEqual(last["move_id"], "ember-petal-flare")
-        self.assertEqual(last["animation_key"], "ember-petal-flare")
-        self.assertEqual(last["animation"], {"body": "cast", "fx": "petals"})
+        self.assertEqual(last["move_id"], "ember-flamingo-flare")
+        self.assertEqual(last["animation_key"], "ember-flamingo-flare")
+        self.assertEqual(last["animation"], {"body": "cast", "fx": "flare"})
 
     def test_after_a_swap_the_last_move_belongs_to_the_plant_that_left(self):
         e, t = self.into_battle(both=True)
-        e.on_player_move("ember-jab", t)
+        e.on_player_move("ember-vine-haymaker", t)
         e.battle = B._send_in_next(replace(e.battle, creature_hp=0))
         battle = as_sent(e)["battle"]
         self.assertEqual(battle["active_plant_id"], "zest")
         self.assertEqual(battle["last_action"]["actor_plant_id"], "ember")
-        self.assertEqual(battle["moves"][0]["move_id"], "zest-leaf-slap")  # the buttons are now Zest's
+        self.assertEqual(battle["moves"][0]["move_id"], "zest-blade-rush")  # the buttons are now Zest's
         self.assertEqual(battle["team_plants"]["A"]["plant_id"], "ember")
         self.assertEqual(battle["team_plants"]["B"]["plant_id"], "zest")
 
     def test_lifting_the_fighter_keeps_who_made_the_last_move(self):
         e, t = self.into_battle(both=True)
-        e.on_player_move("ember-jab", t)
+        e.on_player_move("ember-vine-haymaker", t)
         e.on_pad("A", "", t + 0.1)  # Ember is lifted, Zest steps in
         battle = as_sent(e)["battle"]
         self.assertEqual(battle["active_plant_id"], "zest")
         self.assertEqual(battle["last_action"]["actor_plant_id"], "ember")
-        self.assertEqual(battle["last_action"]["move_id"], "ember-jab")
+        self.assertEqual(battle["last_action"]["move_id"], "ember-vine-haymaker")
         self.assertEqual(battle["last_move"]["swap"]["reason"], "lifted")
 
     def test_a_lift_before_any_turn_has_no_last_action(self):

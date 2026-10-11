@@ -197,6 +197,8 @@ USE_PLANT_DB = os.environ.get("INCUBE_PLANT_DB", "0") == "1"
 PLANTS_FILE = os.path.join(_HERE, "data", "plants.json")
 MOVES_FILE = os.path.join(_HERE, "data", "moves.json")
 PROGRESS_DB = os.environ.get("INCUBE_PROGRESS_DB", os.path.join(_HERE, "data", "progress.db"))
+# Victory badges, one per won fight (badges.py). Not in git: each cube keeps its own collection.
+BADGES_FILE = os.environ.get("INCUBE_BADGES_FILE", os.path.join(_HERE, "data", "badges.json"))
 MOVE_CATEGORIES = ("attack", "guard", "special", "skill")
 MOVE_POWER_MIN = 50   # percent of the plant's attack
 MOVE_POWER_MAX = 150

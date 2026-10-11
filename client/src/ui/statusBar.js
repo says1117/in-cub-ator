@@ -38,7 +38,7 @@ const css = `
 #hud.in-storage .bar,#hud.in-storage .conn,#hud.in-storage .tip,#hud.in-storage .banner,#hud.in-storage .lost{display:none}
 #hud.in-storage .tools{display:none}
 #hud.empty .bar{display:none}
-#hud.in-battle #storageBtn{display:none}
+#hud.in-battle #storageBtn,#hud.in-battle #badgesBtn{display:none}
 #hud.in-battle .bar,#hud.in-battle .tools #demoBtn,#hud.in-battle .conn,#hud.in-battle .tip,#hud.in-battle .banner{display:none}
 #hud.in-battle .tools{top:9%;bottom:auto;right:auto;left:50%;transform:translateX(-50%)}
 #hud.in-battle .tools button{padding:.35em .6em;opacity:.75}
@@ -49,7 +49,7 @@ const meterRow = (label, id, mark = false) => `
     <div class="track"><div class="fill" id="${id}"></div>${mark ? '<div class="mark"></div>' : ""}</div>
     <span class="num" id="${id}Num"></span></div>`;
 
-export function mountStatusBar(parent, { onDemoBoss, onStorage }) {
+export function mountStatusBar(parent, { onDemoBoss, onStorage, onBadges }) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
@@ -65,6 +65,7 @@ export function mountStatusBar(parent, { onDemoBoss, onStorage }) {
     <div class="banner" id="banner">BOSS ALERT</div>
     <div class="tools">
       <button id="storageBtn" title="See your plants">Storage</button>
+      <button id="badgesBtn" title="Your victory badges">Badges</button>
       <button id="demoBtn" title="Call a boss now, whatever the soil says">Demo boss</button>
       <button id="muteBtn" title="Sound on or off (M)"></button>
     </div>
@@ -92,6 +93,7 @@ export function mountStatusBar(parent, { onDemoBoss, onStorage }) {
   const $ = (id) => hud.querySelector("#" + id);
   $("demoBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onDemoBoss(); };
   $("storageBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onStorage(); };
+  $("badgesBtn").onclick = (event) => { event.currentTarget.blur(); audio.play("pick"); onBadges && onBadges(); };
   const showMute = (muted) => { $("muteBtn").textContent = muted ? "Sound off" : "Sound on"; };
   showMute(audio.isMuted());
   audio.onMute(showMute);

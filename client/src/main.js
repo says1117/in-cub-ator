@@ -5,6 +5,7 @@ import StorageScene from "./scenes/StorageScene.js";
 import CastIronScene from "./scenes/CastIronScene.js";
 import MonsteraScene from "./scenes/MonsteraScene.js";
 import FootageScene from "./scenes/FootageScene.js";
+import CollectionScene from "./scenes/CollectionScene.js";
 import "./style.css";
 import "@fontsource/silkscreen/400.css";
 import "@fontsource/silkscreen/700.css";
@@ -22,7 +23,8 @@ const routes = {
   "/storage": "StorageScene",
   "/cast_iron": "CastIronScene",
   "/monstera": "MonsteraScene",
-  "/footage": "FootageScene"
+  "/footage": "FootageScene",
+  "/collection": "CollectionScene"
 };
 
 function getSceneFromURL() {
@@ -43,7 +45,7 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH
   },
 
-  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, FootageScene, BossScene]
+  scene: [AdventureScene, StorageScene, CastIronScene, MonsteraScene, FootageScene, CollectionScene, BossScene]
 };
 
 // The pixel fonts must be ready before any scene writes with them, or the first words come out
@@ -81,7 +83,7 @@ feedPlants(null);   // example plants until the game server answers
 
 // Navigate between URLs and scenes. The plant screens (Storage and its detail pages) sit on top of
 // the forest, so going anywhere else closes whichever of them is open.
-const PLANT_SCENES = ["StorageScene", "CastIronScene", "MonsteraScene", "FootageScene"];
+const PLANT_SCENES = ["StorageScene", "CastIronScene", "MonsteraScene", "FootageScene", "CollectionScene"];
 function navigate(path) {
   const sceneName = routes[path];
 
@@ -129,6 +131,7 @@ let server;
 const hud = mountStatusBar(document.getElementById("app"), {
   onDemoBoss: () => server && server.sendDemoBoss(),
   onStorage: () => navigate("/storage"),
+  onBadges: () => navigate("/collection"),
 });
 let latest = null;
 const thirst = mountThirstNotifier(document.getElementById("app"), (plant) =>

@@ -996,10 +996,12 @@ export default class BossScene extends Phaser.Scene {
 
   showReward(reward) {
     if (!this.resultPanel) return;
-    if (!reward) { this.resultPanel.setLine("No water sent: the pot is wet, or the cube is offline."); return; }
+    const badge = this.serverState && this.serverState.last_badge;
+    const earned = badge ? ` · Badge: ${badge.name}` : "";
+    if (!reward) { this.resultPanel.setLine(`No water sent: the pot is wet, or the cube is offline.${earned}`); return; }
     if (!this.waterPlayed) { this.waterPlayed = true; this.time.delayedCall(1300, () => audio.play("water", reward.size / 1000)); }
     const seconds = (reward.size / 1000).toFixed(1);
-    this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s`);
+    this.resultPanel.setLine(`Water for plant ${reward.plant}: pump runs ${seconds} s${earned}`);
     this.resultPanel.reward(`Watering plant ${reward.plant}`, reward.size);
   }
 

@@ -7,6 +7,7 @@ import time
 
 import api
 import battle
+from badges import BadgeBook
 import config as C
 import mqtt_io
 from engine import GameEngine
@@ -58,7 +59,8 @@ def load_plant_db():
 
 def make_engine() -> GameEngine:
     # auto_play=False: the game never fights by itself. Only a player's own moves win water.
-    return GameEngine(creatures=battle.load_creatures(), plant_db=load_plant_db(), auto_play=False)
+    return GameEngine(creatures=battle.load_creatures(), plant_db=load_plant_db(), auto_play=False,
+                      badges=BadgeBook(C.BADGES_FILE))
 
 
 async def main():

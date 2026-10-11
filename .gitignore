@@ -75,3 +75,5 @@ server/AGENTS.md
 # Plant progress database (lives on the Jetson only)
 server/data/progress.db
 server/data/progress.db-*
+server/data/badges.json
+server/data/badges.json.tmp

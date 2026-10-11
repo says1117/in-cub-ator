@@ -15,7 +15,7 @@ log = logging.getLogger("engine")
 
 class GameEngine:
     def __init__(self, creatures: Optional[dict] = None, rng: Optional[random.Random] = None,
-                 plant_db=None, need_pads: Optional[bool] = None, auto_play: bool = True):
+                 plant_db=None, need_pads: Optional[bool] = None, auto_play: bool = True, badges=None):
         """plant_db (a plant_db.PlantDB) turns on NFC summoning: only plants whose tag is on a pad are
         in the game. Without it, need_pads decides: a plant is in the game while its pad reads any tag.
         auto_play True lets the game call bosses and play turns with nobody watching (tests and
@@ -34,6 +34,8 @@ class GameEngine:
         self.pads = {p: "" for p in C.PLANTS}
         self.last_reward_at = {p: float("-inf") for p in C.PLANTS}
         self.last_reward = None
+        self.badges = badges         # a badges.BadgeBook: every won fight earns a badge (None: no badges)
+        self.last_badge = None       # the badge the last won fight earned, for the victory panel
         # Won fights' pump commands, sent once the victory screen closes, one pump at a time.
         # Each entry is (command, demo): a demo win may water wet soil.
         self.pending_water = []
@@ -346,6 +348,7 @@ class GameEngine:
         else:
             bench = sorted((p for p in self.present_plants() if p != first), key=lambda p: self.soil_pct[p])
         self.last_reward = None   # nothing has been won yet in this fight
+        self.last_badge = None
         tier = self.game.tier or 1
         charge = C.SKILL_CHARGE_START if self.health >= C.HEALTH_WEARY_BELOW else C.SKILL_CHARGE_START_WEARY
         self.battle = B.start(self.fighter(first), self._boss_stats(tier), plant=first,
@@ -414,6 +417,12 @@ class GameEngine:
             self.health = min(100.0, self.health + C.HEALTH_WIN_BONUS)
             if not demo:
                 self._award_xp(tier)
+            if self.badges is not None and self.battle is not None:
+                # Any win earns one, watered or not (a wet pot or an offline pump still counts).
+                self.last_badge = self.badges.award(self.battle.battle_id, kind,
+                                                    self.battle.creature.plant_id or self.battle.plant)
+                if self.last_badge:
+                    log.info("badge earned: #%d %s", self.last_badge["number"], self.last_badge["name"])
         else:
             self.lost = {"plant": self.battle.plant, "tier": tier, "kind": kind, "until": now + C.LOSS_DISPLAY_SECONDS,
                          "source": C.SOURCE_DEMO if demo else C.SOURCE_SOIL}
@@ -653,6 +662,8 @@ class GameEngine:
             # the Storage screens show it as a live moisture meter.
             "soil": {p: round(self.soil_pct[p], 1) if p in self.soil_heard else None for p in C.PLANTS},
             "thirsty": self.thirsty(),
+            "badges": self.badges.collection() if self.badges is not None else [],
+            "last_badge": self.last_badge,
             "auto_play": self.auto_play,
         }
         snap["schema_version"] = 1 if self.plant_db is None else 2

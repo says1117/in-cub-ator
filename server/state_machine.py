@@ -92,8 +92,9 @@ def on_soil(g: Game, plant: str, pct: float, now: float) -> Game:
     return g
 
 
-def on_tick(g: Game, now: float) -> Game:
-    if g.mode == BOSS and now >= g.mode_until:
+def on_tick(g: Game, now: float, can_fight: bool = True) -> Game:
+    """can_fight is False while no plant is summoned: the boss then waits at the end of its intro."""
+    if g.mode == BOSS and now >= g.mode_until and can_fight:
         return replace(g, mode=BATTLE)
     if g.mode == REWARD and now >= g.mode_until:
         return replace(g, mode=COOLDOWN, boss_plant=None, source=None, tier=0,
@@ -133,4 +134,11 @@ def on_status(g: Game, online: bool) -> Game:
     g = replace(g, stale=not online)
     if not online and g.mode in (BOSS, BATTLE):
         g = _to_walking(g)
+    return g
+
+
+def on_party_empty(g: Game, now: float) -> Game:
+    """Every fighting plant was lifted mid-battle: the boss stays and waits for a plant."""
+    if g.mode == BATTLE:
+        return replace(g, mode=BOSS, mode_until=now)
     return g
